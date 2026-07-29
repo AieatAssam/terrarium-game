@@ -9,7 +9,16 @@ from — see `creditsSectionsToMarkdown()`), so the two can never drift.
 - All Sprout, habitat, structure, path, scenery, particle and UI-icon
   artwork is original vector (SVG) work created for Tiny Terrarium Works —
   no third-party or stock art.
+- All 3D materials (soil, stone, wood, painted-metal, water) and the
+  ambient-lighting environment texture are procedurally generated in-code
+  (Canvas 2D noise/gradients, `src/render/pbrMaterials.ts` and
+  `src/render/environment.ts`) — no third-party textures or HDRIs. The
+  environment texture is six flat-shaded gradient faces (warm "sunlight
+  through conservatory glass" above, cool soil-bounce below) assembled into
+  a cube texture entirely at runtime; see docs/MATERIAL_LIBRARY.md for the
+  full recipe and a known WebGPU-backend limitation.
 - Full palette, silhouette and provenance notes: docs/ART_DIRECTION.md.
+  Material recipes: docs/MATERIAL_LIBRARY.md.
 
 Provenance statement from Subagent C (docs/ART_DIRECTION.md §6), reproduced
 here in full: "100% original. Every asset in `public/assets/` was authored from

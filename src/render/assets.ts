@@ -7,7 +7,8 @@
 // of throwing. Nothing here assumes the manifest exists.
 
 import { Color3 } from '@babylonjs/core/Maths/math.color';
-import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
+import { Material } from '@babylonjs/core/Materials/material';
+import { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
 import type { Scene } from '@babylonjs/core/scene';
@@ -74,6 +75,98 @@ function resolveManifestUrl(key: ManifestKey): string | undefined {
 
 const textureCache = new Map<string, Texture>();
 const pendingLoads = new Map<string, Promise<void>>();
+
+/** Opaque-content bounding box within a rasterized manifest texture, in 0..1
+ * UV fractions of the (square) canvas, top-left origin (v=0 is the top row
+ * as drawn — matches how the source SVG reads visually). Populated once per
+ * key right after rasterization; see `getManifestContentBBox`. */
+export interface ContentBBox {
+  minU: number;
+  minV: number;
+  maxU: number;
+  maxV: number;
+}
+const contentBBoxCache = new Map<string, ContentBBox>();
+const contentBBoxWaiters = new Map<string, Array<(bbox: ContentBBox) => void>>();
+
+/**
+ * Fires `onReady` once `key`'s content bounding box has been computed —
+ * immediately (synchronously) if it already has been, otherwise once
+ * rasterization finishes. Deliberately NOT implemented on top of
+ * `getManifestTexture`'s own onReady/isReady: a `DynamicTexture` reports
+ * `isReady()` true as soon as it's constructed (its GPU texture exists),
+ * well before its canvas actually has real pixels drawn into it, so a
+ * second caller for an in-flight key would otherwise fire before the bbox
+ * exists. This tracks the bbox's own readiness instead.
+ */
+export function onManifestContentBBoxReady(key: ManifestKey, onReady: (bbox: ContentBBox) => void): void {
+  const existing = contentBBoxCache.get(key);
+  if (existing) {
+    onReady(existing);
+    return;
+  }
+  const waiters = contentBBoxWaiters.get(key) ?? [];
+  waiters.push(onReady);
+  contentBBoxWaiters.set(key, waiters);
+}
+
+function resolveContentBBox(key: ManifestKey, bbox: ContentBBox): void {
+  contentBBoxCache.set(key, bbox);
+  const waiters = contentBBoxWaiters.get(key);
+  if (!waiters) return;
+  contentBBoxWaiters.delete(key);
+  for (const waiter of waiters) waiter(bbox);
+}
+
+/**
+ * Scans a rasterized canvas for the tight bounding box of non-transparent
+ * pixels. Several source assets (habitat/nursery/automation "painted card"
+ * illustrations — see docs/ART_DIRECTION.md §1) are authored as top-down
+ * decals with a lot of transparent margin and an off-center baked ground
+ * shadow, meant to be viewed lying flat. When the same texture is placed on
+ * an upright billboarded standee (src/render/flatArt.ts), that margin makes
+ * the art read as a small, oddly-placed blob on an otherwise-empty vertical
+ * card. Callers that want the art to actually fill a standee crop the
+ * texture's UV rect to this box instead of showing the full 0..1 square.
+ * Sampled at a stride for performance — this only needs to be roughly right,
+ * not pixel-perfect.
+ */
+function computeContentBBox(ctx: CanvasRenderingContext2D, size: number): ContentBBox {
+  const stride = Math.max(1, Math.floor(size / 256)); // cap the scan cost on large canvases
+  const { data } = ctx.getImageData(0, 0, size, size);
+  let minX = size;
+  let minY = size;
+  let maxX = 0;
+  let maxY = 0;
+  let found = false;
+  for (let y = 0; y < size; y += stride) {
+    for (let x = 0; x < size; x += stride) {
+      const alpha = data[(y * size + x) * 4 + 3];
+      if (alpha > 12) {
+        found = true;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (!found) return { minU: 0, minV: 0, maxU: 1, maxV: 1 };
+  // Pad outward by half a stride so the crop doesn't clip anti-aliased edges.
+  const pad = stride;
+  minX = Math.max(0, minX - pad);
+  minY = Math.max(0, minY - pad);
+  maxX = Math.min(size, maxX + pad);
+  maxY = Math.min(size, maxY + pad);
+  return { minU: minX / size, minV: minY / size, maxU: maxX / size, maxV: maxY / size };
+}
+
+/** The cropped content bounding box for a manifest key's rasterized texture,
+ * if it has finished loading — see `computeContentBBox`. Undefined until the
+ * texture is ready (or if the key never loaded). */
+export function getManifestContentBBox(key: ManifestKey): ContentBBox | undefined {
+  return contentBBoxCache.get(key);
+}
 
 /**
  * Rasterizes an SVG URL to a square power-of-two canvas via a plain <img>
@@ -146,6 +239,7 @@ export function getManifestTexture(
       ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
       texture.update(false);
       textureCache.set(key, texture);
+      resolveContentBBox(key, computeContentBBox(ctx, canvasSize));
       onReady?.(texture);
     })
     .catch(() => {
@@ -163,23 +257,33 @@ export function getManifestTexture(
 }
 
 /**
- * Builds (or updates) a StandardMaterial for a manifest-keyed sprite/base
- * texture. Applies `fallbackColor` immediately as a flat placeholder, then
- * swaps in the real texture asynchronously if/when it loads. If the manifest
- * key is missing or the image fails to load, the flat color stays — that's
- * the "simple colored placeholder shape" behavior the render module needs
- * to work standalone while assets/ is still being filled in.
+ * Builds (or updates) a PBRMetallicRoughnessMaterial for a manifest-keyed
+ * sprite/base texture (Sprouts, Nursery/habitat/automation standee caps —
+ * see src/render/flatArt.ts and src/render/sprouts.ts). Applies
+ * `fallbackColor` immediately as a flat placeholder, then swaps in the real
+ * texture asynchronously if/when it loads. If the manifest key is missing or
+ * the image fails to load, the flat color stays — that's the "simple
+ * colored placeholder shape" behavior the render module needs to work
+ * standalone while assets/ is still being filled in.
+ *
+ * Moderate roughness/near-zero metallic by default so these read as painted
+ * card/ceramic rather than plastic or metal — callers needing a different
+ * physical character (e.g. an unlit Sprout billboard) adjust the returned
+ * material directly (`disableLighting`, `roughness`, etc.).
  */
-export function createManifestMaterial(
-  scene: Scene,
-  name: string,
-  key: ManifestKey,
-  fallbackColor: Color3,
-): StandardMaterial {
-  const material = new StandardMaterial(name, scene);
-  material.diffuseColor = fallbackColor;
-  material.specularColor = Color3.Black();
+export function createManifestMaterial(scene: Scene, name: string, key: ManifestKey, fallbackColor: Color3): PBRMetallicRoughnessMaterial {
+  const material = new PBRMetallicRoughnessMaterial(name, scene);
+  material.baseColor = fallbackColor;
+  material.metallic = 0;
+  material.roughness = 0.55;
   material.backFaceCulling = false;
+  // PBRMetallicRoughnessMaterial doesn't expose a public
+  // `useAlphaFromAlbedoTexture` setter (only the sibling PBRMaterial class
+  // does) even though the underlying PBRBaseMaterial field it drives is
+  // shared by both — set the internal flag directly rather than switching
+  // material classes just for this one flag.
+  (material as unknown as { _useAlphaFromAlbedoTexture: boolean })._useAlphaFromAlbedoTexture = true;
+  material.transparencyMode = Material.MATERIAL_ALPHABLEND;
 
   getManifestTexture(
     scene,
@@ -189,9 +293,8 @@ export function createManifestMaterial(
       // `const texture` — getManifestTexture can call onReady synchronously
       // on a cache hit, before that outer binding finishes initializing
       // (a real TDZ ReferenceError this hit during manual QA).
-      material.diffuseTexture = loadedTexture;
-      material.diffuseColor = Color3.White();
-      material.useAlphaFromDiffuseTexture = true;
+      material.baseTexture = loadedTexture;
+      material.baseColor = Color3.White();
     },
     () => {
       // keep the flat fallbackColor placeholder
@@ -202,21 +305,19 @@ export function createManifestMaterial(
 }
 
 /** Swaps an existing manifest-backed material to a different manifest key (e.g. sprout idle -> happy). Keeps the flat fallback color already set if the new key is unavailable. */
-export function swapManifestMaterialTexture(scene: Scene, material: StandardMaterial, key: ManifestKey): void {
+export function swapManifestMaterialTexture(scene: Scene, material: PBRMetallicRoughnessMaterial, key: ManifestKey): void {
   const texture = getManifestTexture(
     scene,
     key,
     (tex) => {
-      material.diffuseTexture = tex;
-      material.useAlphaFromDiffuseTexture = true;
+      material.baseTexture = tex;
     },
     () => {
       /* keep whatever texture/color was already showing */
     },
   );
   if (texture?.isReady()) {
-    material.diffuseTexture = texture;
-    material.useAlphaFromDiffuseTexture = true;
+    material.baseTexture = texture;
   }
 }
 
@@ -226,4 +327,6 @@ export function _resetAssetsForTests(): void {
   manifestLoadAttempted = false;
   warnedKeys.clear();
   textureCache.clear();
+  contentBBoxCache.clear();
+  contentBBoxWaiters.clear();
 }

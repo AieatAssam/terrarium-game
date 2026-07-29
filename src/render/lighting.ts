@@ -10,6 +10,7 @@ import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator'
 // shadows can silently fail to appear despite a ShadowGenerator existing.
 import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent';
 import type { Scene } from '@babylonjs/core/scene';
+import { createGardenEnvironment } from './environment';
 import type { QualityLevel } from './motion';
 
 export interface GardenLighting {
@@ -35,10 +36,20 @@ export function createGardenLighting(scene: Scene): GardenLighting {
   fill.groundColor = new Color3(0.25, 0.32, 0.22);
   fill.specular = new Color3(0, 0, 0);
 
+  // Procedural image-based-lighting environment for PBRMaterial ambient/
+  // reflection response (see src/render/environment.ts for provenance/
+  // rationale — original, generated in-code, no third-party HDRI).
+  const environmentTexture = createGardenEnvironment(scene);
+
   const shadowGenerator = new ShadowGenerator(1024, key);
   shadowGenerator.useBlurExponentialShadowMap = true;
   shadowGenerator.blurKernel = 24;
   shadowGenerator.darkness = 0.25;
+  // Slight bias reduction + normal bias so contact points (Sprouts/habitats
+  // meeting the ground) read as grounded soft contact shadows rather than
+  // detached/peter-panned or acne-riddled.
+  shadowGenerator.bias = 0.0015;
+  shadowGenerator.normalBias = 0.02;
 
   const setQuality = (level: QualityLevel): void => {
     const mapSize = level === 'high' ? 1024 : 512;
@@ -48,6 +59,7 @@ export function createGardenLighting(scene: Scene): GardenLighting {
 
   const dispose = (): void => {
     shadowGenerator.dispose();
+    environmentTexture.dispose();
     key.dispose();
     fill.dispose();
   };

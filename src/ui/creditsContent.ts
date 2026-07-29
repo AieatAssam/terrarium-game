@@ -18,7 +18,8 @@ export const CREDITS_SECTIONS: CreditsSection[] = [
     heading: 'Art',
     items: [
       'All Sprout, habitat, structure, path, scenery, particle and UI-icon artwork is original vector (SVG) work created for Tiny Terrarium Works — no third-party or stock art.',
-      'Full palette, silhouette and provenance notes: docs/ART_DIRECTION.md.',
+      'All 3D materials (soil, stone, wood, painted-metal, water) and the ambient-lighting environment texture are procedurally generated in-code (Canvas 2D noise/gradients) — no third-party textures or HDRIs.',
+      'Full palette, silhouette and provenance notes: docs/ART_DIRECTION.md. Material recipes: docs/MATERIAL_LIBRARY.md.',
     ],
   },
   {

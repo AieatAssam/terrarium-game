@@ -6,15 +6,15 @@
 
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
-import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import type { Scene } from '@babylonjs/core/scene';
 import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator';
 
-import { createManifestMaterial } from './assets';
+import { createManifestMaterial, getManifestTexture } from './assets';
 import { GRID_SIZE, tileToWorld } from './coords';
-import { attachDiscCap } from './flatArt';
+import { attachStandee } from './flatArt';
 import { GARDEN_PATH_TILES, NURSERY_TILE, SCENERY_PLACEMENTS } from './layout';
+import { createPathMaterial, createSoilMaterial, createWaterMaterial, createWoodBodyMaterial, type WaterMaterial } from './pbrMaterials';
 
 // Maps a scenery placement to the actual manifest keys Subagent C produced
 // (scenery.rockSmall/rockLarge/fern/bush/waterAccent) — there's no
@@ -30,6 +30,9 @@ export interface GardenWorld {
   ground: Mesh;
   paths: Mesh[];
   scenery: Mesh[];
+  /** Advances animated water-accent ripple normal maps — call once per frame
+   * (wired from src/render/index.ts's render loop). */
+  update: (nowMs: number) => void;
   dispose: () => void;
 }
 
@@ -43,24 +46,28 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator)
   ground.position.set(groundCenter.x, -0.05, groundCenter.z);
   ground.receiveShadows = true;
   // No manifest key for base terrain (C's asset list is creatures/habitats/
-  // structures/scenery pieces, not a ground texture) — flat material is
-  // intentional here, not a missing-asset bug. Flagged as an art-polish item.
-  const groundMaterial = new StandardMaterial('terrarium.ground.mat', scene);
-  groundMaterial.diffuseColor = new Color3(0.22, 0.36, 0.2);
-  groundMaterial.specularColor = Color3.Black();
-  ground.material = groundMaterial;
+  // structures/scenery pieces, not a ground texture), but a real PBR soil
+  // material — mottled albedo, normal-mapped clumps/pebbles, rough matte
+  // response, AO in the "pores" — rather than a flat StandardMaterial fill.
+  // See src/render/pbrMaterials.ts createSoilMaterial.
+  ground.material = createSoilMaterial(scene);
 
+  // ONE shared path material for every tile (not one per tile — see
+  // createPathMaterial's doc comment) carrying C's manifest illustration
+  // plus a PBR detail pass.
+  const pathMaterial = createPathMaterial(scene, 'path.segment.straight', new Color3(0.62, 0.55, 0.42));
   const paths: Mesh[] = [];
   for (const tile of GARDEN_PATH_TILES) {
     const world = tileToWorld(tile);
     const path = MeshBuilder.CreateGround(`terrarium.path.${tile.x}.${tile.z}`, { width: 0.92, height: 0.92 }, scene);
     path.position.set(world.x, 0.01, world.z);
     path.receiveShadows = true;
-    path.material = createManifestMaterial(scene, `terrarium.path.mat.${tile.x}.${tile.z}`, 'path.segment.straight', new Color3(0.62, 0.55, 0.42));
+    path.material = pathMaterial;
     path.isPickable = false;
     paths.push(path);
   }
 
+  const waterMaterials: WaterMaterial[] = [];
   const scenery: Mesh[] = [];
   for (const placement of SCENERY_PLACEMENTS) {
     const world = tileToWorld(placement.tile);
@@ -81,14 +88,24 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator)
         mesh.rotation.y = (placement.variant * Math.PI) / 5;
         mesh.position.set(world.x, 0.02, world.z);
         mesh.material = createManifestMaterial(scene, `${key}.mat`, key, new Color3(0.5, 0.48, 0.46));
-        (mesh.material as StandardMaterial).backFaceCulling = false;
+        mesh.material.backFaceCulling = false;
         break;
-      case 'water':
+      case 'water': {
         mesh = MeshBuilder.CreateDisc(`terrarium.scenery.water.${placement.tile.x}.${placement.tile.z}`, { radius: 0.4, tessellation: 20 }, scene);
         mesh.rotation.x = Math.PI / 2;
         mesh.position.set(world.x, 0.015, world.z);
-        mesh.material = createManifestMaterial(scene, `${key}.mat`, key, new Color3(0.3, 0.55, 0.7));
+        // Water accent gets the glossy animated-ripple PBR water material
+        // (src/render/pbrMaterials.ts createWaterMaterial), with C's
+        // manifest illustration (water-lily/reflection linework) layered on
+        // as the albedo once it finishes rasterizing.
+        const water = createWaterMaterial(scene, `${key}.mat.${placement.tile.x}.${placement.tile.z}`);
+        getManifestTexture(scene, key, (tex) => {
+          water.material.baseTexture = tex;
+        });
+        mesh.material = water.material;
+        waterMaterials.push(water);
         break;
+      }
       case 'foliage':
       default:
         // Same "flat painted card" fix as rocks above — previously a cone
@@ -99,7 +116,7 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator)
         mesh.rotation.x = Math.PI / 2;
         mesh.position.set(world.x, 0.02, world.z);
         mesh.material = createManifestMaterial(scene, `${key}.mat`, key, new Color3(0.28, 0.5, 0.24));
-        (mesh.material as StandardMaterial).backFaceCulling = false;
+        mesh.material.backFaceCulling = false;
         break;
     }
     mesh.isPickable = false;
@@ -112,28 +129,33 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator)
   const nursery = MeshBuilder.CreateCylinder('terrarium.nursery', { height: 0.7, diameter: 1.6, tessellation: 24 }, scene);
   nursery.position.set(nurseryWorld.x, 0.35, nurseryWorld.z);
   const nurseryFallback = new Color3(0.55, 0.4, 0.28);
-  const nurseryBodyMaterial = new StandardMaterial('terrarium.nursery.body.mat', scene);
-  nurseryBodyMaterial.diffuseColor = nurseryFallback;
-  nurseryBodyMaterial.specularColor = Color3.Black();
-  nursery.material = nurseryBodyMaterial;
+  // Warm wood/soil-mound PBR body (src/render/pbrMaterials.ts
+  // createWoodBodyMaterial) rather than a flat StandardMaterial fill.
+  nursery.material = createWoodBodyMaterial(scene, 'terrarium.nursery.body.mat', nurseryFallback);
   nursery.receiveShadows = true;
   nursery.metadata = { kind: 'nursery' };
   shadowGenerator.addShadowCaster(nursery);
-  // Top-down pod illustration on a flat cap disc, not wrapped around the
-  // drum — see src/render/flatArt.ts for why (this was the specific
-  // "Nursery mesh gets distorted" defect flagged in QA).
-  const nurseryCap = attachDiscCap(
+  // Pod illustration standing upright as a billboarded card, not lying flat
+  // on top of the drum — see src/render/flatArt.ts's attachStandee doc
+  // comment. localY = drum half-height (0.35) + standee half-height (0.5).
+  const nurseryCap = attachStandee(
     scene,
     nursery,
     'terrarium.nursery.cap',
     'structure.nursery.base',
     nurseryFallback,
-    0.72,
-    0.351,
+    1.0,
+    1.0,
+    0.85,
   );
+
+  const update = (nowMs: number): void => {
+    for (const water of waterMaterials) water.update(nowMs);
+  };
 
   const dispose = (): void => {
     ground.dispose();
+    pathMaterial.dispose(); // one shared instance across every path tile — dispose once, not per-tile
     for (const p of paths) p.dispose();
     for (const s of scenery) s.dispose();
     nurseryCap.mesh.dispose();
@@ -141,5 +163,5 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator)
     nursery.dispose();
   };
 
-  return { nursery, ground, paths, scenery, dispose };
+  return { nursery, ground, paths, scenery, update, dispose };
 }

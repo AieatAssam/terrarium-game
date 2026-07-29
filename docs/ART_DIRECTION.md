@@ -169,3 +169,68 @@ third-party or AI-referenced assets."
   `ui.icon.upgrade.dewdropMultiplier`,
   `ui.icon.upgrade.decorativeExpansion1`,
   `ui.icon.upgrade.colourGateUnlock`.
+
+## 8. Standee presentation fix (owner: E, this pass)
+
+The Nursery/habitat/automation "painted card" illustrations in §1/§5/§7 are
+authored as **top-down decals** — a wide, short ellipse (roughly 2:1) with a
+baked ground shadow, offset toward the bottom of their square canvas,
+designed to be viewed lying flat on a surface. When `src/render/flatArt.ts`
+converted these from flat ground-parallel cards to upright billboarded
+standees (matching Sprouts' presentation), that top-down composition became
+a problem: rasterized as-is onto a vertical card, the artwork's content only
+occupied the lower ~60% of the card's height, in a wide low shape, reading
+as "a flat colored blob barely bigger than the drum it stands on" rather
+than a legible standee — confirmed as a real rendering defect via browser
+QA, not a geometry/billboard bug (the billboard math itself was verified
+correct via world-matrix inspection during this pass).
+
+**Fix**: `src/render/assets.ts` now computes each rasterized texture's tight
+opaque-content bounding box once (`getManifestContentBBox` /
+`onManifestContentBBoxReady`), and `attachStandee` crops the standee's UV to
+that box and resizes/re-anchors the card to the content's real aspect ratio
+— so the card is sized to what the art actually draws, sitting flush on the
+surface it stands on, instead of showing a mostly-empty square with the
+illustration crammed in one corner. This is a **render-side presentation
+fix**, not a change to the source SVGs — C's art is untouched; it's simply
+framed correctly when displayed upright. See `docs/MATERIAL_LIBRARY.md` and
+`docs/ART_QA_REPORT.md` for the full before/after investigation.
+
+Habitat standee maximum footprint was also reduced from `topRadius * 1.5` to
+`topRadius * 0.9` (`src/render/habitats.ts`) so a fully-content-filled card
+can't grow tall enough to visually compete with or occlude a settled Sprout
+resting on top of the habitat (`SPROUT_FLOAT_HEIGHT`/settle offset,
+`src/render/sprouts.ts`).
+
+## 9. Lighting and PBR material plan (owner: E, this pass)
+
+Every major world material converted from `StandardMaterial` to
+`PBRMetallicRoughnessMaterial` — see `docs/MATERIAL_LIBRARY.md` for the
+per-material recipe (albedo variation, normal/bump, roughness, AO, metallic,
+emissive) and performance notes (shared procedural texture families, not
+one texture per object).
+
+- **Key light**: warm directional light simulating sun through conservatory
+  glass (`src/render/lighting.ts`, unchanged from prior pass).
+- **Fill light**: cool hemispheric light for colour-separated shadow sides
+  (unchanged).
+- **Environment/IBL**: a procedural cube-map environment texture
+  (`src/render/environment.ts`) — six flat-shaded canvas gradients (warm sky
+  above, cool soil-bounce below), assembled entirely in-code, no third-party
+  HDRI. Provenance recorded in `docs/ASSET_CREDITS.md`.
+  - **Known limitation**: assigning this texture to
+    `scene.environmentTexture` causes a full black-screen render failure
+    specifically on this project's WebGPU backend (verified by isolated
+    on/off bisection — see `docs/ART_QA_REPORT.md` and the long comment in
+    `src/render/environment.ts`). It is therefore only wired up on the
+    WebGL fallback path (`!scene.getEngine().isWebGPU`) until the
+    underlying Babylon.js issue is fixed or re-investigated. The directional
+    key + hemispheric fill remain the dominant, WebGPU-safe lighting read.
+- **Shadows**: soft blurred exponential shadow map (unchanged setup), with a
+  small bias/normal-bias tune this pass so contact points (Sprouts/habitats
+  meeting the ground) read as grounded soft contact shadows.
+- **Sprouts stay lit, not unlit-disableLighting**, per the brief's rule
+  against unlit planes for interactive focal assets — see the doc comment in
+  `src/render/sprouts.ts` for why this is safe here specifically (the
+  garden camera's yaw never rotates at runtime, so a Y-billboarded sprite's
+  lit response to the fixed key light is constant, not per-frame-varying).

@@ -8,13 +8,14 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
-import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
+import type { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
 import type { Scene } from '@babylonjs/core/scene';
 import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator';
 
 import { tileToWorld, type TileCoord } from './coords';
-import { attachPlaneCap, type FlatCap } from './flatArt';
+import { attachStandee, type FlatCap } from './flatArt';
 import { AUTOMATION_SITE_TILES, isReservedTile } from './layout';
+import { createPaintedMetalMaterial } from './pbrMaterials';
 import type { EventBus } from '../events/bus';
 import type { AutomationId } from '../core/ids';
 
@@ -30,8 +31,8 @@ interface SiteMarker {
    * flatArt.ts: a CreateBox's default UV wraps a single flat illustration
    * around all 6 faces instead of showing it top-down, which is what made
    * these markers look like plain dark cubes). */
-  material: StandardMaterial;
-  bodyMaterial: StandardMaterial;
+  material: PBRMetallicRoughnessMaterial;
+  bodyMaterial: PBRMetallicRoughnessMaterial;
   built: boolean;
 }
 
@@ -50,13 +51,16 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     const mesh = MeshBuilder.CreateBox(`terrarium.automation.${id}`, { width: 0.8, height: 0.5, depth: 0.8 }, scene);
     mesh.position.set(world.x, 0.25, world.z);
     mesh.isPickable = false;
-    const bodyMaterial = new StandardMaterial(`terrarium.automation.${id}.body.mat`, scene);
-    bodyMaterial.diffuseColor = SITE_FALLBACK_COLOR[id];
-    bodyMaterial.specularColor = Color3.Black();
+    const bodyMaterial = createPaintedMetalMaterial(scene, `terrarium.automation.${id}.body.mat`, SITE_FALLBACK_COLOR[id]);
     bodyMaterial.alpha = 0.4; // "not yet built" site marker
     mesh.material = bodyMaterial;
 
-    const cap = attachPlaneCap(scene, mesh, `terrarium.automation.${id}.cap`, `structure.${id}.base`, SITE_FALLBACK_COLOR[id], 0.72, 0.72, 0.26);
+    // Structure illustration standing upright as a billboarded card (see
+    // src/render/flatArt.ts's attachStandee), not lying flat on the box top.
+    // width:height ~1.54:1 roughly matches the source art's real 400x260
+    // aspect (the texture itself is also letterboxed within its canvas, so
+    // this doesn't need to be exact).
+    const cap = attachStandee(scene, mesh, `terrarium.automation.${id}.cap`, `structure.${id}.base`, SITE_FALLBACK_COLOR[id], 1.0, 0.68, 0.59);
     cap.material.alpha = 0.4;
 
     sites[id] = { id, mesh, material: cap.material, bodyMaterial, built: false };
@@ -72,7 +76,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
   });
 
   let previewMesh: Mesh | undefined;
-  let previewBodyMaterial: StandardMaterial | undefined;
+  let previewBodyMaterial: PBRMetallicRoughnessMaterial | undefined;
   let previewCap: FlatCap | undefined;
 
   const previewAt = (automationId: AutomationId, tile: TileCoord, valid: boolean): void => {
@@ -82,14 +86,12 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     mesh.position.set(world.x, 0.28, world.z);
     mesh.isPickable = false;
     const tint = valid ? new Color3(0.2, 0.7, 0.3) : new Color3(0.6, 0.15, 0.15);
-    const bodyMaterial = new StandardMaterial('terrarium.automation.preview.body.mat', scene);
-    bodyMaterial.diffuseColor = SITE_FALLBACK_COLOR[automationId];
-    bodyMaterial.specularColor = Color3.Black();
+    const bodyMaterial = createPaintedMetalMaterial(scene, 'terrarium.automation.preview.body.mat', SITE_FALLBACK_COLOR[automationId]);
     bodyMaterial.alpha = 0.55;
     bodyMaterial.emissiveColor = tint;
     mesh.material = bodyMaterial;
 
-    const cap = attachPlaneCap(scene, mesh, 'terrarium.automation.preview.cap', `structure.${automationId}.base`, SITE_FALLBACK_COLOR[automationId], 0.76, 0.76, 0.29);
+    const cap = attachStandee(scene, mesh, 'terrarium.automation.preview.cap', `structure.${automationId}.base`, SITE_FALLBACK_COLOR[automationId], 1.05, 0.71, 0.63);
     cap.material.alpha = 0.55;
     cap.material.emissiveColor = tint;
 

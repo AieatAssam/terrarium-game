@@ -11,7 +11,7 @@
 import type { Scene } from '@babylonjs/core/scene';
 import type { AbstractEngine } from '@babylonjs/core/Engines/abstractEngine';
 
-import { loadManifest, reloadManifest } from './assets';
+import { getManifestContentBBox, loadManifest, reloadManifest } from './assets';
 import { createAutomationManager, isBuildableTile, type AutomationManager } from './automation';
 import { createGardenBackground, type GardenBackground } from './background';
 import { createGardenCamera, type GardenCamera } from './camera';
@@ -71,11 +71,94 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
   const camera = createGardenCamera(scene, canvas);
   if (isDev) {
     const { Vector3, Matrix } = await import('@babylonjs/core/Maths/math.vector');
+    const { Frustum } = await import('@babylonjs/core/Maths/math.frustum');
     (window as unknown as { __debug: unknown }).__debug = {
       project: (x: number, y: number, z: number) => {
         const vp = camera.camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight());
         const v = Vector3.Project(new Vector3(x, y, z), Matrix.Identity(), scene.getTransformMatrix(), vp);
         return v.asArray();
+      },
+      // Scene-graph inspector for diagnosing "mesh present but not visibly
+      // rendering" bugs (missing vs. mispositioned vs. invisible vs. unlit)
+      // without guessing from a screenshot alone.
+      meshInfo: (name: string) => {
+        const m = scene.getMeshByName(name);
+        return (
+          m && {
+            pos: m.getAbsolutePosition().asArray(),
+            scaling: m.scaling.asArray(),
+            visibility: m.visibility,
+            isVisible: m.isVisible,
+            enabled: m.isEnabled(),
+            ready: m.material?.isReady(m),
+            hasTexture: !!(m.material as { diffuseTexture?: unknown; albedoTexture?: unknown })?.diffuseTexture ||
+              !!(m.material as { diffuseTexture?: unknown; albedoTexture?: unknown })?.albedoTexture,
+            billboardMode: m.billboardMode,
+            parent: m.parent?.name ?? null,
+          }
+        );
+      },
+      meshInfoDeep: (name: string) => {
+        const m = scene.getMeshByName(name);
+        if (!m) return null;
+        m.computeWorldMatrix(true);
+        const bi = m.getBoundingInfo();
+        const mat = m.material as {
+          alpha?: number;
+          needAlphaBlending?: () => boolean;
+          backFaceCulling?: boolean;
+          diffuseTexture?: { isReady: () => boolean; getSize: () => { width: number; height: number } };
+        } | null;
+        return {
+          worldMatrixRow3: m.getWorldMatrix().getRow(3)?.asArray(),
+          boundingBoxMin: bi.boundingBox.minimumWorld.asArray(),
+          boundingBoxMax: bi.boundingBox.maximumWorld.asArray(),
+          renderingGroupId: m.renderingGroupId,
+          alphaIndex: m.alphaIndex,
+          isReallyVisible: (m as unknown as { isVisible: boolean }).isVisible && m.isEnabled() && m.material != null,
+          totalVertices: m.getTotalVertices(),
+          matAlpha: mat?.alpha,
+          matNeedsAlphaBlending: mat?.needAlphaBlending?.(),
+          matBackFaceCulling: mat?.backFaceCulling,
+          texReady: mat?.diffuseTexture?.isReady?.(),
+          texSize: mat?.diffuseTexture?.getSize?.(),
+          layerMask: (m as unknown as { layerMask?: number }).layerMask,
+          cameraLayerMask: camera.camera.layerMask,
+          isInFrustum: m.isInFrustum(Frustum.GetPlanes(scene.getTransformMatrix())),
+        };
+      },
+      // Content-crop inspector for the standee texture-cropping fix in
+      // flatArt.ts (attachStandee) — reports the opaque-content bounding box
+      // computed for a manifest key's rasterized texture, in 0..1 UV
+      // fractions. Undefined until that key's texture has finished loading.
+      contentBBox: (key: string) => getManifestContentBBox(key),
+      sceneInfo: () => ({
+        clearColor: scene.clearColor.asArray(),
+        ambientColor: scene.ambientColor.asArray(),
+        lights: scene.lights.map((l) => ({ name: l.name, intensity: l.intensity })),
+        environmentTexture: scene.environmentTexture
+          ? { ready: scene.environmentTexture.isReady(), intensity: scene.environmentIntensity }
+          : null,
+        meshCount: scene.meshes.length,
+        activeCamera: scene.activeCamera?.name,
+      }),
+      // QA helper: reposition the ArcRotateCamera directly (bypassing the
+      // camera's own clamped pan/zoom API) so a close-up/side-on inspection
+      // shot can be taken without dragging the mouse through it — used for
+      // art QA passes (docs/ART_QA_REPORT.md).
+      qaCamera: (alpha: number, beta: number, radius: number, targetX?: number, targetY?: number, targetZ?: number) => {
+        camera.camera.alpha = alpha;
+        camera.camera.beta = beta;
+        camera.camera.radius = radius;
+        if (targetX !== undefined && targetY !== undefined && targetZ !== undefined) {
+          camera.camera.target.set(targetX, targetY, targetZ);
+        }
+        return {
+          alpha: camera.camera.alpha,
+          beta: camera.camera.beta,
+          radius: camera.camera.radius,
+          target: camera.camera.target.asArray(),
+        };
       },
     };
   }
@@ -104,6 +187,7 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
     const motion = getMotionConfig(reducedMotion, getQualityLevel());
     background.update(motion);
     sprouts.update(motion, performance.now());
+    world.update(performance.now());
   });
 
   // Subagent C's assets/manifest.json may not exist yet when this session

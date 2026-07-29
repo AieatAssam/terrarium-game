@@ -13,7 +13,7 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
-import type { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
+import type { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
 import type { Scene } from '@babylonjs/core/scene';
 
 import { createManifestMaterial, swapManifestMaterialTexture } from './assets';
@@ -41,7 +41,7 @@ export interface SproutVisual {
   id: string;
   sproutType: SproutTypeId;
   mesh: Mesh;
-  material: StandardMaterial;
+  material: PBRMetallicRoughnessMaterial;
   state: SproutVisualState;
   tile: TileCoord;
   held: boolean;
@@ -99,8 +99,20 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
 
     const fallback = parseHexColor(SPROUT_TYPES[sproutType]?.primaryColor, TYPE_FALLBACK_COLOR[sproutType]);
     const material = createManifestMaterial(scene, `terrarium.sprout.${id}.mat`, textureKey(sproutType, 'reveal'), fallback);
-    material.disableLighting = true;
-    material.emissiveColor = fallback.scale(0.9);
+    // Lit, not unlit-disableLighting — the brief explicitly calls out Sprouts
+    // as an "interactive focal asset" that must not be a flat unlit sticker.
+    // This is safe from the inconsistent-billboard-lighting risk that would
+    // normally make a lit camera-facing sprite look odd as the camera
+    // orbits: src/render/camera.ts's ArcRotateCamera alpha (yaw) is never
+    // rotated by any input path (pan/zoom only), so a BILLBOARDMODE_Y
+    // sprite's world-facing direction — and therefore its lit response to
+    // the fixed key light — is constant for the whole session, not
+    // per-frame-varying. Roughness/metallic stay at PBRMetallicRoughnessMaterial
+    // defaults (waxy/matte, non-metal); a modest emissive keeps the design
+    // readable even in the fill light's cooler shadow side.
+    material.roughness = 0.55;
+    material.metallic = 0;
+    material.emissiveColor = fallback.scale(0.35);
     mesh.material = material;
 
     const visual: SproutVisual = {

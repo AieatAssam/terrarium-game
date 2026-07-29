@@ -6,16 +6,17 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
-import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
+import type { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
 import type { Scene } from '@babylonjs/core/scene';
 import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator';
 
 import { swapManifestMaterialTexture } from './assets';
 import { tileToWorld, tileDistance, type TileCoord } from './coords';
-import { attachDiscCap } from './flatArt';
+import { attachStandee } from './flatArt';
 import { HABITAT_TILES } from './layout';
 import type { MotionConfig } from './motion';
 import { createRippleRing, createSparkleBurst } from './particles';
+import { createStoneBodyMaterial } from './pbrMaterials';
 import type { HabitatId } from '../core/ids';
 
 const HABITAT_FALLBACK_COLOR: Record<HabitatId, Color3> = {
@@ -36,11 +37,12 @@ interface HabitatVisual {
   /** The flat cap disc's material — this is what actually shows C's habitat
    * illustration (see buildHabitatMesh / flatArt.ts) and what reactive glow
    * pulses/hover highlights are applied to. */
-  material: StandardMaterial;
-  /** The drum body's plain (untextured) material — kept in sync with
+  material: PBRMetallicRoughnessMaterial;
+  /** The drum body's procedural stone/ceramic PBR material (see
+   * src/render/pbrMaterials.ts createStoneBodyMaterial) — kept in sync with
    * `material`'s emissive tint so the glow/wobble reads as "the whole
    * habitat," not just its lid. */
-  bodyMaterial: StandardMaterial;
+  bodyMaterial: PBRMetallicRoughnessMaterial;
   tile: TileCoord;
   worldCenter: { x: number; y: number; z: number };
   baseEmissive: Color3;
@@ -91,24 +93,36 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
     mesh.metadata = { kind: 'habitat', habitatId: id, tile };
     shadowGenerator.addShadowCaster(mesh);
 
-    // Drum body: plain flat color, no manifest texture — see flatArt.ts for
-    // why (default CreateCylinder UV wraps a single flat illustration around
-    // the side wall instead of showing it top-down).
-    const bodyMaterial = new StandardMaterial(`terrarium.habitat.${id}.body.mat`, scene);
-    bodyMaterial.diffuseColor = HABITAT_FALLBACK_COLOR[id];
-    bodyMaterial.specularColor = Color3.Black();
+    // Drum body: no manifest texture (see flatArt.ts for why — default
+    // CreateCylinder UV wraps a single flat illustration around the side
+    // wall instead of showing it top-down) but a real PBR stone/ceramic
+    // material — rounded bevels + bump + roughness variation + AO rather
+    // than a flat StandardMaterial fill.
+    const bodyMaterial = createStoneBodyMaterial(scene, `terrarium.habitat.${id}.body.mat`, HABITAT_FALLBACK_COLOR[id]);
     bodyMaterial.emissiveColor = Color3.Black();
     mesh.material = bodyMaterial;
 
+    // Habitat scene illustration standing upright as a billboarded card
+    // (see src/render/flatArt.ts's attachStandee) rather than lying flat on
+    // top of the drum. Sized relative to the drum's own top radius so
+    // bigger habitats get a proportionally bigger card. attachStandee crops
+    // to the source art's real content aspect ratio, so this is a maximum
+    // bounding footprint, not the final rendered size — kept modest (0.9x
+    // rather than an earlier 1.5x) so the card can't grow tall enough to
+    // occlude a settled Sprout resting on top at SPROUT_FLOAT_HEIGHT
+    // (src/render/sprouts.ts, y=0.55-0.8) — verified in browser QA, see
+    // docs/ART_QA_REPORT.md.
     const dims = HABITAT_DIMS[id];
-    const cap = attachDiscCap(
+    const standeeSize = dims.topRadius * 0.9;
+    const cap = attachStandee(
       scene,
       mesh,
       `terrarium.habitat.${id}.cap`,
       `habitat.${id}.base`,
       HABITAT_FALLBACK_COLOR[id],
-      dims.topRadius * 0.92,
-      dims.halfHeight + 0.01,
+      standeeSize,
+      standeeSize,
+      dims.halfHeight + standeeSize / 2,
     );
     cap.material.emissiveColor = Color3.Black();
 
