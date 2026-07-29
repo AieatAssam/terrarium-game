@@ -1,0 +1,144 @@
+project: tiny-terrarium-works
+plan_version: 1
+authority: docs/CONTRACTS.md   # any conflict resolves to CONTRACTS.md; agents report needed changes, never redefine
+
+global_constraints:
+  - Only Subagent A edits root config or package.json. Others report dep names back to integrator.
+  - Agents write ONLY inside their owned paths (see CONTRACTS.md ownership table). No exceptions.
+  - src/sim imports nothing from src/render, src/ui, src/audio. Architecture test enforces.
+  - No third-party art or audio. Original SVG + Web Audio synthesis only.
+  - Debug panel gated by import.meta.env.DEV; must be absent from dist/ output, not merely unrendered.
+  - Docs record observed results only. No QA verdict, screenshot path, or "AA quality" claim written before the run that produced it.
+  - No fail states, no pressure timers, no accounts/ads/payments/multiplayer.
+
+phases:
+
+  - id: 0
+    name: foundation-contracts
+    owner: integrator
+    parallel: false
+    status: done
+    tasks:
+      - write docs/CONTRACTS.md
+      - patch CONTRACTS.md with grid contract, transport events, journal count
+      - git init, initial commit of docs/
+    acceptance:
+      - CONTRACTS.md contains grid coord model, full event union incl. transport, 12/4 journal split
+      - git log shows one baseline commit
+
+  - id: 1
+    name: technical-foundation
+    agents: [A]
+    parallel: false
+    run_in_background: false
+    tasks:
+      A:
+        - Scaffold Vite + TypeScript + Babylon.js. WebGL baseline, WebGPU when available with clean fallback.
+        - Configure ESLint, Prettier, Vitest, Playwright, npm scripts: dev, build, preview, typecheck, lint, test, test:e2e
+        - Implement src/events/ typed bus over the GameEvent union in CONTRACTS.md, verbatim.
+        - Implement src/sim/ fixed-step loop (100ms tick), pure functions over serializable SimState.
+        - Implement src/sim/grid.ts — tile coord type + tileToWorld() as the single shared mapping.
+        - Implement src/persistence/ IndexedDB save/load, versioned envelope, v1 migration stub.
+        - Implement src/core/ bootstrap, error boundary, loading state, DEV flag plumbing.
+        - Stub src/data/ modules with correct types and TODO values (B fills them) so downstream compiles.
+        - Create .claude/launch.json for preview_start (npm run dev, correct port).
+    tests:
+      - unit: sim determinism — same seed + same input sequence produces identical SimState (run twice, deep-equal)
+      - unit: fixed-step accumulator handles variable frame delta without drift
+      - unit: event bus subscribe/unsubscribe/emit typing and delivery order
+      - unit: save round-trip through IndexedDB (fake-indexeddb) preserves SimState
+      - arch: grep-based test fails if src/sim contains an import from render/ui/audio
+    acceptance:
+      - npm run dev serves a page; npm run build succeeds; typecheck and lint clean
+      - npm test passes with the five suites above
+      - src/data stubs export the exact ids from CONTRACTS.md
+
+  - id: 2
+    name: parallel-build
+    agents: [B, C, E, F]
+    parallel: true
+    tasks:
+      B:
+        - Write docs/GAME_DESIGN.md — player experience, first-session beat sheet, progression, accessibility decisions, art direction ref, explicit out-of-scope list.
+        - Fill src/data/ with real values: spawn cadence, habitat capacity, dewdrop rates, six upgrade cost curves, unlock thresholds, star rarity, offline cap, achievement conditions.
+        - Tune so first automation unlock lands ~4-6 min into play and full arc fits 15-25 min.
+      C:
+        - Original SVG sources under assets/ for 3 basic Sprouts + Star Sprout (idle, walk, happy, reveal, icon each), 3 habitats, nursery, garden slide, colour gate, paths, scenery, particles, UI icons.
+        - assets/manifest.json using the exact key pattern in CONTRACTS.md.
+        - docs/ART_DIRECTION.md — palette, silhouette rules, animation timing, scale, export format, provenance.
+        - Each SVG self-contained: explicit width/height on root, no external fonts, no external hrefs.
+      E:
+        - src/render/ Babylon 2.5D isometric scene, camera pan/zoom (mouse + touch), lighting, soft shadows, particles, ambient background animation.
+        - Load assets via manifest keys; rasterize SVG to Babylon textures.
+        - src/input/ drag-and-drop with world picking, ghost placement preview, valid/invalid feedback, path presentation.
+        - Render transport events (sprout riding slide/gate) using tileToWorld from sim/grid.
+        - Quality settings, reduced-motion honoring, background-tab throttle.
+      F:
+        - src/ui/ original-styled onboarding (one action at a time), HUD, build menu, Garden Journal (12 slots / 4 fillable), upgrades, achievements, settings, return dialog, Credits.
+        - src/audio/ Web Audio synthesized ambient loop + UI/placement/success/rare-reveal/ambient SFX; volume, music/SFX split, mute.
+        - Map audio + UI reactions to bus events only.
+        - docs/ASSET_CREDITS.md; Credits panel mirrors it in-game.
+        - Keyboard nav, ARIA labels, focus handling, high-contrast mode, colour+shape encoding, large targets.
+    tests:
+      B: [unit progression - upgrade cost curves monotonic and affordable, unit unlock conditions fire at exact thresholds, unit offline calc respects cap, unit achievement conditions map to correct events]
+      E: [unit tileToWorld round-trip, unit reduced-motion flag disables tweens]
+      F: [unit audio graph builds and mutes without throwing, unit journal slot model reports 12 total / 4 discoverable]
+    acceptance:
+      - Game is playable end to end in dev: pod spawns, drag to habitat, correct = reward, incorrect = friendly retry
+      - Slide unlocks from placement count and visibly carries a Sprout
+      - Journal, settings, credits, upgrades all open and are keyboard reachable
+      - No agent touched a path it does not own
+
+  - id: 3
+    name: art-qa
+    agents: [D]
+    parallel: false
+    depends_on: [2]
+    tasks:
+      D:
+        - Run the game in browser, capture representative screenshots.
+        - Score against docs/ART_DIRECTION.md and the brief: readability at normal zoom, red/blue/yellow distinct by SHAPE not only colour, consistent line weight/scale/lighting/shadow/proportion, habitat-match clarity, no broken transparent edges, no blurry scaling, no unreadable UI, no placeholder feel.
+        - Write docs/ART_QA_REPORT.md with pass/fail per criterion, scores, screenshot paths, required remediations, acceptance status.
+        - Fix focused issues in assets/ only, or return a remediation list.
+    acceptance:
+      - Every required criterion marked pass, OR remediation applied and re-run
+      - "AA quality" language appears only if all criteria passed
+
+  - id: 4
+    name: automated-qa
+    agents: [G]
+    parallel: false
+    depends_on: [2]
+    tasks:
+      G:
+        - Playwright specs against DEV server: first load, first manual placement, incorrect-placement recovery, earning Dewdrops, unlock+build Garden Slide, unlock+build Colour Gate, journal/settings/credits open, persistence after reload, reduced motion, keyboard flow, debug Star Sprout spawn, zero unhandled console errors.
+        - SEPARATE spec against `npm run build && npm run preview`: debug panel absent, no debug globals, no console errors.
+        - Write docs/QA_REPORT.md from actual runs.
+    constraints:
+      - The debug-spawn test REQUIRES the dev server; the debug-absent test REQUIRES the production preview. Two projects in playwright.config.ts, different baseURL. Do not write one suite for both.
+    acceptance:
+      - All specs pass; both projects run in npm run test:e2e
+      - QA_REPORT.md contains only observed results
+
+  - id: 5
+    name: integration-and-validation
+    owner: integrator
+    depends_on: [3, 4]
+    tasks:
+      - Review every agent report; merge; resolve conflicts; delete any out-of-scope additions.
+      - Run in order: npm install, npm run typecheck, npm run lint, npm test, npm run build, npm run test:e2e
+      - Verify dist/ contains no debug panel code (grep the bundle).
+      - preview_start; play first 10 minutes via normal controls in the in-app browser.
+      - Confirm first interaction is available and obvious within 5s of load, with no text explanation needed.
+      - Check console + network for errors, broken textures, audio exceptions.
+      - Capture screenshots: initial garden, first automation, upgrade menu, Star Sprout reveal, settings/credits.
+      - Capture GIF of pod -> sort -> habitat reward -> Garden Slide automation.
+      - Test desktop width and narrow mobile width.
+      - Re-run art QA post-integration; fix and re-run if it fails.
+      - Write README.md and docs/ARCHITECTURE.md; update all docs to final observed results.
+      - Final commit; repo clean and runnable.
+    acceptance:
+      - build, lint, unit, e2e all green
+      - one documented command launches the game
+      - screenshots + GIF exist in repo and are referenced from QA_REPORT.md
+      - every asset original with documented provenance, credited in-game and in ASSET_CREDITS.md
