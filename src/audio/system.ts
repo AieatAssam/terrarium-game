@@ -51,6 +51,12 @@ export interface AudioSystem {
   /** Mirrored 0..1 target for the master gain — stable to assert on in tests
    * even against a fake context that doesn't simulate AudioParam ramps. */
   getMasterGainTarget(): number;
+
+  /** The underlying AudioContext's state ('suspended' until `resume()` is
+   * called from a real user gesture, then 'running'). Exists so integration
+   * code/tests can verify audio actually unlocked, not just that resume()
+   * was called without throwing. */
+  getContextState(): AudioContextState;
 }
 
 const DEFAULT_DEWDROP_THROTTLE_SECONDS = 2;
@@ -181,6 +187,10 @@ export function createAudioSystem(bus: EventBus, options: AudioSystemOptions = {
 
     getMasterGainTarget() {
       return masterGainTarget;
+    },
+
+    getContextState() {
+      return ctx.state;
     },
   };
 

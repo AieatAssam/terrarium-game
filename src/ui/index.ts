@@ -59,11 +59,16 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
   const layer = el('div', { className: 'tt-root' });
   root.appendChild(layer);
 
-  // Unlock/resume audio on the first real user gesture, per autoplay policy.
-  // Also starts the ambient loop. Safe to call repeatedly.
+  // Unlock/resume audio on the first real user gesture anywhere on the page,
+  // per autoplay policy. Also starts the ambient loop. Bound to `window`, NOT
+  // `layer`: `.tt-root` is `pointer-events: none` (so it's outside the hit-test
+  // path) and lives outside #app as a sibling of the canvas anyway, so a
+  // listener on `layer` would never see pointerdowns on the canvas — the
+  // primary interaction surface. A player who only ever drags Sprouts must
+  // still unlock audio.
   const resumeAudio = () => audio.resume();
-  layer.addEventListener('pointerdown', resumeAudio, { once: true });
-  layer.addEventListener('keydown', resumeAudio, { once: true });
+  window.addEventListener('pointerdown', resumeAudio, { once: true });
+  window.addEventListener('keydown', resumeAudio, { once: true });
 
   const onboarding = createOnboarding(bus);
   const hud = createHud(store);
@@ -137,8 +142,8 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
   return {
     audio,
     dispose: () => {
-      layer.removeEventListener('pointerdown', resumeAudio);
-      layer.removeEventListener('keydown', resumeAudio);
+      window.removeEventListener('pointerdown', resumeAudio);
+      window.removeEventListener('keydown', resumeAudio);
       onboarding.dispose();
       hud.dispose();
       buildMenu.dispose();

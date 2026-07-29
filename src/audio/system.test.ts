@@ -114,6 +114,13 @@ describe('audio system', () => {
     expect(system.getMasterGainTarget()).toBe(1);
   });
 
+  it('starts suspended and resume() unlocks the context', () => {
+    const { system } = makeSystem();
+    expect(system.getContextState()).toBe('suspended');
+    system.resume();
+    expect(system.getContextState()).toBe('running');
+  });
+
   it('reacts to bus events without throwing', () => {
     const { bus, system } = makeSystem();
     system.resume();

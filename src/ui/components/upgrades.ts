@@ -5,6 +5,7 @@
 // hasn't confirmed.
 
 import type { UpgradeId } from '../../core/ids';
+import { isDev } from '../../core/env';
 import { UPGRADE_LIST } from '../../data/upgrades';
 import { el } from '../dom';
 import { icons } from '../icons';
@@ -14,6 +15,22 @@ import type { UiStateStore } from '../uiState';
 
 function upgradeManifestKey(id: UpgradeId): string {
   return `ui.icon.upgrade.${id}`;
+}
+
+/**
+ * As with build-mode selection (buildMenu.ts), there's no `upgrade:
+ * purchaseRequested`-shaped event in docs/CONTRACTS.md's GameEvent union —
+ * purchasing an upgrade is a sim-state mutation nothing currently exposes a
+ * command channel for. Same two-part answer: an `onPurchaseUpgrade` callback
+ * (primary, discoverable) plus this CustomEvent as a zero-import fallback
+ * whoever ends up owning the purchase command path can listen for without
+ * depending on src/ui. Reported back for integration, not added to
+ * CONTRACTS.md unilaterally.
+ */
+export const PURCHASE_UPGRADE_EVENT = 'terrarium:purchaseUpgrade';
+
+export interface PurchaseUpgradeEventDetail {
+  upgradeId: UpgradeId;
 }
 
 export interface UpgradesPanelHooks {
@@ -55,7 +72,21 @@ export function createUpgradesPanel(store: UiStateStore, hooks: UpgradesPanelHoo
           [maxed ? 'Max' : `${Math.max(0, Math.floor(cost)).toLocaleString()}`],
         );
         if (!maxed) {
-          buyBtn.addEventListener('click', () => hooks.onPurchaseUpgrade?.(upgrade.id));
+          buyBtn.addEventListener('click', () => {
+            dispatchEvent(
+              new CustomEvent<PurchaseUpgradeEventDetail>(PURCHASE_UPGRADE_EVENT, {
+                detail: { upgradeId: upgrade.id },
+              }),
+            );
+            if (hooks.onPurchaseUpgrade) {
+              hooks.onPurchaseUpgrade(upgrade.id);
+            } else if (isDev) {
+              console.warn(
+                `[terrarium/ui] Buy clicked for "${upgrade.id}" but no onPurchaseUpgrade hook is wired — ` +
+                  `listen for the "${PURCHASE_UPGRADE_EVENT}" window CustomEvent instead, or pass the hook into mountUI().`,
+              );
+            }
+          });
         }
 
         return el('div', { className: 'tt-upgrade-row' }, [
