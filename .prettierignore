@@ -1,0 +1,7 @@
+dist
+node_modules
+playwright-report
+test-results
+
+# Owned by other agents/phases; not this repo's code style domain.
+docs
