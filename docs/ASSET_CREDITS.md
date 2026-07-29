@@ -12,7 +12,7 @@ from — see `creditsSectionsToMarkdown()`), so the two can never drift.
 - Full palette, silhouette and provenance notes: docs/ART_DIRECTION.md.
 
 Provenance statement from Subagent C (docs/ART_DIRECTION.md §6), reproduced
-here in full: "100% original. Every asset in `assets/` was authored from
+here in full: "100% original. Every asset in `public/assets/` was authored from
 scratch for Tiny Terrarium Works as parametric SVG source (hand-designed
 palettes, hand-designed silhouette/pose rules, procedurally-assembled
 bezier/gradient geometry written for this project). No traced, downloaded,

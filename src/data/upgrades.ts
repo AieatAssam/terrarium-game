@@ -93,8 +93,8 @@ export const UPGRADES: Record<UpgradeId, UpgradeDefinition> = {
     displayName: 'Colour Gate',
     description:
       'Builds the Colour Gate: a second automation that sorts Sprouts to their correct habitat by colour, ' +
-      "freeing the Garden Slide from being the garden's only route. Only purchasable once you've felt the " +
-      'limitation of a single Garden Slide (see docs/GAME_DESIGN.md).',
+      "freeing the Garden Slide from being the garden's only route. Only purchasable once your Garden Slide " +
+      "has been busy for a while and a few other Sprouts are waiting for a home.",
     maxLevel: 1,
     effect: { kind: 'automationUnlock', magnitudePerLevel: 1 },
     costForLevel: flatCost(450),

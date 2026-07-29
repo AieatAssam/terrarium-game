@@ -1,0 +1,57 @@
+# Architecture — Tiny Terrarium Works
+
+This is the as-built architecture, kept in sync with the actual code (not the original design intent — see docs/CONTRACTS.md for the contracts multiple contributors built against, and docs/QA_REPORT.md for where reality diverged from the original plan and why).
+
+## Module boundaries
+
+```
+src/core/         bootstrap (engine/scene creation, error boundary, loading state), DEV flag (isDev), shared string ids
+src/events/       typed pub/sub bus (EventBus) over the GameEvent union — the ONLY channel simulation uses to talk to everything else
+src/sim/          deterministic gameplay: fixed-step loop, gameplay systems, live runtime, tile layout, save-relevant state shape
+src/data/         data-driven definitions (sprout types, habitats, upgrades, unlocks, achievements, spawning/offline-progress math) — plain typed tables + pure helper functions, no side effects
+src/persistence/  IndexedDB save/load + versioned migration
+src/render/       Babylon.js scene: camera, lighting, world geometry, habitats, Sprouts, automation visuals, particles — reacts to bus events, never simulates
+src/input/        pointer/touch handling: picking, drag-and-drop, camera pan/zoom — emits `sprout:dropped` onto the bus, nothing else
+src/ui/           plain DOM/CSS UI layer: onboarding, HUD, build menu, Journal, Upgrades, Achievements, Settings, Credits, debug panel — mirrors bus events into its own local state store, never reaches into sim internals
+src/audio/        Web Audio synthesis (music + SFX) — reacts to bus events
+```
+
+**The hard rule, enforced by a test** (`tests/unit/architecture.sim-boundary.test.ts`): nothing under `src/sim/` may import from `src/render`, `src/ui`, `src/audio`, or `src/input`. Simulation is fully testable headless, with no Babylon/DOM/canvas dependency.
+
+## State model
+
+`SimState` (`src/sim/state.ts`) is the single source of gameplay truth: a plain, JSON-serializable object (no classes, no Maps/Sets/functions as fields) covering the tick counter, RNG seed, Dewdrops, every Sprout instance, per-habitat counts/capacity, every automation instance, unlock/upgrade/achievement/journal progress, and small bookkeeping fields (spawn accumulator, per-habitat Dewdrop fraction). `SIM_SHAPE_VERSION` is bumped whenever this shape changes; `src/persistence/save.ts` carries a matching migration (currently v1→v2, backfilling the fields added when gameplay systems were implemented during integration).
+
+`src/ui/uiState.ts` holds a *separate*, UI-only mirror (`UiState`) built purely by reducing over bus events — it never reads `SimState` directly. On a restored save, `save:loaded` carries a `snapshot` of the relevant `SimState` fields specifically so this mirror can hydrate correctly on load (see docs/QA_REPORT.md, finding #8, for why this needed fixing).
+
+## Event model
+
+`src/events/types.ts` defines one flat `GameEvent` union — every state change simulation cares to announce (`sprout:spawned`, `sprout:placed:correct/incorrect`, `sprout:settled`, `sprout:transportStarted/Completed`, `habitat:dewdropTick`, `habitat:full`, `currency:dewdropsChanged`, `automation:unlocked/built`, `upgrade:purchased`, `achievement:unlocked`, `journal:entryDiscovered`, `save:loaded/written`). `src/events/bus.ts` is a small typed pub/sub (`EventBus`): `subscribe`/`unsubscribe`/`emit`, snapshotting listeners on emit so mid-emit unsubscribes can't affect delivery order.
+
+Inbound player intent (a drop, a purchase) also flows over this same bus/direct-call boundary: `src/input/` emits `sprout:dropped` for `src/sim/runtime.ts` to adjudicate; UI purchase/debug actions call plain functions the runtime exposes (`SimRuntime.purchaseUpgrade`, `SimRuntime.debug.*`) since there's no dedicated "player wants to buy X" event in the union (a gap noted during integration; the plain-function-call path was the pragmatic choice over expanding the union further).
+
+## Simulation loop
+
+`src/sim/loop.ts` is a fixed-step accumulator (100ms tick): feed it a real elapsed frame delta, it returns how many 100ms ticks to run so gameplay never drifts with frame rate (clamped to a max single delta so a backgrounded tab can't produce a huge synchronous tick burst on resume — offline progress is handled separately, see below). `src/sim/tick.ts`'s `runTick` composes an ordered list of pure `SimSystem` functions (`(state) => { state, events }`) and advances the tick counter/RNG exactly once per tick regardless of how many systems ran.
+
+`src/sim/systems.ts` holds the actual gameplay systems, run in this order every tick: `spawnSystem` (pod cadence, respects the podRhythm upgrade), `dewdropSystem` (per-habitat accrual, flushes whole Dewdrop units as they cross 1.0), `unlockSystem` (Garden Slide's auto-unlock-and-build once the placement threshold is hit), `automationSystem` (advances in-flight transports, starts new ones for whichever automation is free and has an eligible Sprout waiting). Two more functions are called directly (not part of the tick composition) for immediate player-intent reactions: `adjudicatePlacement` (a drop) and `purchaseUpgrade` (a purchase, including Colour Gate's behavioral gate). `checkAchievements` runs after every batch of events, from either source, so achievements react uniformly regardless of what triggered them.
+
+`src/sim/runtime.ts` is the composition root: owns the one live `SimState`, drives the loop via its own `requestAnimationFrame` (deliberately independent of Babylon's render loop), subscribes to `sprout:dropped` for immediate adjudication, exposes `purchaseUpgrade`/`debug.*`/`resetSave`, and owns load (including offline-progress calculation) and periodic autosave.
+
+## World grid and coordinates
+
+`src/sim/layout.ts` (not `src/render/`) owns the canonical tile positions for the Nursery, the three habitats, and the two automation sites — simulation needs these to compute transport distance/duration, and simulation must never import from render, so the positions live on the sim side and `src/render/layout.ts` re-exports them for the renderer's own path/scenery-scatter concerns. `src/sim/grid.ts`'s `tileToWorld()` is the single shared coordinate mapping; the renderer never invents its own screen-space placement.
+
+## Rendering notes
+
+Babylon's `CreateCylinder`/`CreateBox` apply one UV rect across every face by default, which is wrong for the flat, top-down illustrations this game uses throughout (Nursery, habitats, automation sites, scenery). `src/render/flatArt.ts` provides `attachDiscCap`/`attachPlaneCap`: a plain untextured "volume" mesh plus a separate flat disc/plane child mesh carrying the actual texture, whose default UV is already a clean, unwrapped rect. SVG source is rasterized to a Babylon `DynamicTexture` via `<img>` → `<canvas>`, not Babylon's plain `Texture` loader — Chromium's `createImageBitmap` (which Babylon's WebGPU path uses internally) cannot decode SVG, throwing `InvalidStateError`, even though `<img>` decodes the same SVG fine.
+
+## Save format
+
+`src/persistence/save.ts`: a versioned envelope `{ version, sim: SimState, meta: { lastSavedAt } }` in a single IndexedDB object store (`src/persistence/db.ts`, hand-rolled, no `idb` dependency). `loadGame()` runs the persisted envelope through `migrateEnvelope()`, which upgrades older shapes and falls through to the current version. Offline progress is a **separate closed-form calculation** (`src/data/offlineProgress.ts`), not a huge delta fed through the normal tick loop (which would be silently clamped by the loop's max-delta guard) — it estimates Dewdrops earned from the settled-Sprout counts and rates at close time, capped both by elapsed real time (2 hours) and an absolute ceiling (200 Dewdrops).
+
+## Test strategy
+
+- **Unit (Vitest)**: everything under `src/sim/`, `src/data/`, `src/persistence/`, `src/events/`, plus the UI state store and audio graph, is tested headless with no Babylon/DOM dependency beyond what jsdom provides.
+- **Architecture**: a dependency-free grep-based test enforces the sim import boundary.
+- **End-to-end (Playwright)**: two projects, `dev` (against the Vite dev server, using the dev-only debug panel and console hook to drive real gameplay scenarios against the live sim) and `preview` (against a production build, confirming debug affordances are genuinely absent). See docs/QA_REPORT.md for full coverage details.

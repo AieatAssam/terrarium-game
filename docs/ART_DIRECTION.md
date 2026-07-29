@@ -1,6 +1,6 @@
 # Tiny Terrarium Works — Art Direction
 
-Owner: Subagent C. This is the art bible for `assets/`. Any agent
+Owner: Subagent C. This is the art bible for `public/assets/`. Any agent
 touching rendering (E) or UI (F) should treat palette/scale/timing notes
 here as authoritative for how the source SVGs are meant to be interpreted.
 
@@ -126,14 +126,14 @@ scale factor:
 
 ## 6. Provenance statement
 
-**100% original.** Every asset in `assets/` was authored from scratch
+**100% original.** Every asset in `public/assets/` was authored from scratch
 for Tiny Terrarium Works as parametric SVG source (hand-designed
 palettes, hand-designed silhouette/pose rules, procedurally-assembled
 bezier/gradient geometry written for this project). No traced,
 downloaded, AI-generated-from-reference-image, or copyrighted source
 material was used at any point. No existing game, character, or
 franchise was referenced or imitated. All 55 files are static vector
-source committed directly under `assets/` and are free of external
+source committed directly under `public/assets/` and are free of external
 network references (fonts, images, hrefs) — Subagent E rasterizes them
 to Babylon textures at runtime with no separate build-time step.
 
@@ -144,7 +144,7 @@ third-party or AI-referenced assets."
 
 ## 7. Asset manifest / integration notes for Subagent E & F
 
-- `assets/manifest.json` maps every stable string key to its SVG path,
+- `public/assets/manifest.json` maps every stable string key to its SVG path,
   exactly per `docs/CONTRACTS.md` §"Asset manifest". 55 keys total.
 - Habitat "filled/reactive" variant is keyed `habitat.<id>.full` (not
   `.happy`) — chosen to match the existing `habitat:full` event name in
