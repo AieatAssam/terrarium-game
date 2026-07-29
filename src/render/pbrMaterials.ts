@@ -23,14 +23,19 @@
 //     Canvas 2D noise/gradients at module load, never fetched or imported
 //     from a file. No third-party textures.
 //   - Shared, reusable materials/textures — a handful of procedural texture
-//     *families* (soil, stone, wood, painted-metal, water) are generated
-//     ONCE and reused across every object of that family (all 3 habitat
-//     bodies share the "stone" normal/roughness/AO trio and differ only by
-//     `baseColor` tint), per the brief's "don't create one unique texture
-//     per repeated object" performance rule.
+//     *families* (soil, stone, wood, painted-metal, water, path, foliage)
+//     are generated ONCE per (family, tiling) pair and reused across every
+//     object that wants that exact family/tiling combo (all 3 habitat
+//     bodies share the "stone@3" normal/roughness/AO trio and differ only
+//     by `baseColor` tint), per the brief's "don't create one unique
+//     texture per repeated object" performance rule.
 //   - Roughness/normal intensity tuned to read at normal gameplay camera
-//     distance without looking noisy or embossed — these are small (128px)
-//     textures tiled several times across each surface, not hero assets.
+//     distance without looking noisy or embossed. Textures are 256x256 (up
+//     from an original 128px pass) and combine two blotch octaves (a macro
+//     layer for large-scale clumps/chips/grain-streaks plus a finer micro
+//     layer for pores/scuffs/vein-like detail) with a per-pixel fine "grain"
+//     jitter, so surface detail reads at both normal gameplay distance and
+//     close-up instead of only being visible pressed up against the mesh.
 
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
@@ -42,6 +47,15 @@ import { createManifestMaterial, type ManifestKey } from './assets';
 // ---------------------------------------------------------------------------
 // Procedural texture generation helpers
 // ---------------------------------------------------------------------------
+
+/** Shared texture resolution for every procedural material family. Raised
+ * from an original 128px pass to 256px specifically so higher-frequency
+ * detail (fine grain/pores/scuffs, not just the original large soft
+ * blotches) has enough pixels to read as detail rather than blur once
+ * tiled across a surface — see docs/MATERIAL_LIBRARY.md "Procedural texture
+ * families" for the before/after reasoning and the perf note on generation
+ * cost (one-time, at material-family creation, not per-frame). */
+const TEXTURE_SIZE = 256;
 
 /** Simple deterministic PRNG (mulberry32) so repeated texture-family builds
  * are stable across reloads instead of re-rolling random noise every time a
@@ -64,42 +78,112 @@ function makeCanvas(size: number): CanvasRenderingContext2D {
   return canvas.getContext('2d') as CanvasRenderingContext2D;
 }
 
-/**
- * Renders a tileable-ish grayscale "height" field (mottled blotches at a
- * given feature scale) used both as the source for a derived normal map and
- * — reusing the same luminance — as a cheap ambient-occlusion mask (dark
- * blotches read as soil clumps/pores/contact darkening).
- */
-function drawHeightField(size: number, seed: number, blotches: number, blotchRadius: number): ImageData {
-  const ctx = makeCanvas(size);
-  const rand = mulberry32(seed);
-  ctx.fillStyle = '#808080';
-  ctx.fillRect(0, 0, size, size);
-  for (let i = 0; i < blotches; i++) {
+/** Unit offsets (in whole-tile multiples) covering the full 3x3 neighborhood
+ * around a tile — used to wrap every blotch/streak draw so a feature near
+ * any edge OR corner of the canvas also gets drawn in the tiles that would
+ * be adjacent to it once the texture repeats. The original pass only wrapped
+ * the 4 edge-adjacent offsets (plus center); that was fine for the original
+ * few large, soft, low-density blotches, but this pass's higher blotch
+ * density (finer grain/pore/scuff detail) meaningfully raises the odds of a
+ * feature landing near a corner, where a 4-neighbor wrap leaves a visible
+ * seam. Full 3x3 wrap costs 9x fill calls per feature (still cheap — this
+ * only runs once per family at material-creation time) and eliminates that
+ * class of seam entirely. */
+const WRAP_OFFSET_UNITS: ReadonlyArray<readonly [number, number]> = [
+  [0, 0],
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+  [1, 1],
+  [1, -1],
+  [-1, 1],
+  [-1, -1],
+];
+
+/** One layer of randomly-placed soft blotches/streaks contributing to a
+ * height field. Multiple layers (e.g. a sparse "macro" layer of large
+ * blotches plus a dense "micro" layer of small ones) combine into a single
+ * multi-scale height field — the mechanism behind every family's
+ * grain/chip/pore/scuff/vein look below. */
+interface BlotchSpec {
+  seed: number;
+  count: number;
+  /** Base radius in pixels (of a 256px canvas); each instance jitters this by 0.5x-1.5x. */
+  radius: number;
+  /** Peak alpha of a blotch at its center. Defaults to 0.55. */
+  alpha?: number;
+  /** 'blob' (default) is a round soft blotch (clumps/chips/pores/ripple swells).
+   * 'streak' stretches it into an elongated ellipse along a (randomized) axis —
+   * used for wood grain lines, scuff/scratch marks, and leaf-vein-like detail. */
+  shape?: 'blob' | 'streak';
+  /** Length multiplier applied to the radius along the streak's long axis. */
+  streakLength?: number;
+  /** Base rotation (radians) for streaks; 0 = along the +X axis. */
+  baseAngle?: number;
+  /** Random rotation jitter (radians) added around baseAngle per-instance —
+   * e.g. Math.PI for "scattered in every direction" scuffs/veins, a small
+   * value for "mostly aligned" wood grain. */
+  angleJitter?: number;
+}
+
+function paintBlotchLayer(ctx: CanvasRenderingContext2D, size: number, spec: BlotchSpec): void {
+  const rand = mulberry32(spec.seed);
+  const alpha = spec.alpha ?? 0.55;
+  const stretch = spec.shape === 'streak' ? (spec.streakLength ?? 4) : 1;
+  for (let i = 0; i < spec.count; i++) {
     const x = rand() * size;
     const y = rand() * size;
-    const r = blotchRadius * (0.5 + rand());
+    const r = spec.radius * (0.5 + rand());
     const dark = rand() > 0.5;
     const shade = dark ? 60 + rand() * 40 : 170 + rand() * 50;
-    // Wrap around edges (including the center draw) so the tile doesn't show
-    // a hard seam when repeated across a large surface.
-    for (const [dx, dy] of [
-      [0, 0],
-      [size, 0],
-      [-size, 0],
-      [0, size],
-      [0, -size],
-    ]) {
-      const grad = ctx.createRadialGradient(x + dx, y + dy, 0, x + dx, y + dy, r);
-      grad.addColorStop(0, `rgba(${shade},${shade},${shade},0.55)`);
+    const angle = (spec.baseAngle ?? 0) + (rand() - 0.5) * (spec.angleJitter ?? 0);
+    for (const [ux, uy] of WRAP_OFFSET_UNITS) {
+      ctx.save();
+      ctx.translate(x + ux * size, y + uy * size);
+      ctx.rotate(angle);
+      ctx.scale(stretch, 1);
+      const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+      grad.addColorStop(0, `rgba(${shade},${shade},${shade},${alpha})`);
       grad.addColorStop(1, 'rgba(128,128,128,0)');
       ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.arc(x + dx, y + dy, r, 0, Math.PI * 2);
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
       ctx.fill();
+      ctx.restore();
     }
   }
-  return ctx.getImageData(0, 0, size, size);
+}
+
+/**
+ * Renders a tileable grayscale "height" field by compositing one or more
+ * blotch/streak layers (see BlotchSpec) over a neutral mid-gray base, then
+ * optionally adding a fine per-pixel "grain" jitter on top (independent
+ * random noise reads as sand/pore/sandpaper grain and — being per-pixel and
+ * statistically uniform — needs no seam-wrapping of its own). Used both as
+ * the source for a derived normal map and — reusing the same luminance — as
+ * a cheap ambient-occlusion mask (dark blotches read as soil clumps/stone
+ * pores/contact darkening) and as the modulation source for the albedo
+ * variation texture, so albedo/normal/AO all visibly correlate with the same
+ * physical surface detail instead of reading as three unrelated overlays.
+ */
+function drawHeightField(size: number, layers: BlotchSpec[], grain?: { seed: number; amount: number }): ImageData {
+  const ctx = makeCanvas(size);
+  ctx.fillStyle = '#808080';
+  ctx.fillRect(0, 0, size, size);
+  for (const layer of layers) paintBlotchLayer(ctx, size, layer);
+  const imageData = ctx.getImageData(0, 0, size, size);
+  if (grain) {
+    const rand = mulberry32(grain.seed);
+    for (let i = 0; i < imageData.data.length; i += 4) {
+      const jitter = (rand() - 0.5) * grain.amount * 255;
+      const v = Math.max(0, Math.min(255, imageData.data[i] + jitter));
+      imageData.data[i] = v;
+      imageData.data[i + 1] = v;
+      imageData.data[i + 2] = v;
+    }
+  }
+  return imageData;
 }
 
 /** Converts a grayscale height field into a tangent-space normal map (simple
@@ -158,11 +242,51 @@ function heightFieldToOcclusionTexture(scene: Scene, name: string, height: Image
   return texture;
 }
 
+/** Sparse radial mask (0..1 per pixel) used to make metallic response
+ * spatially sparse rather than a flat scalar over an entire surface — e.g.
+ * a handful of small "exposed brass fitting" specks on painted garden
+ * equipment, not a uniform metallic tint across the whole body. Wrapped the
+ * same way as the height-field blotches so it tiles cleanly. */
+function computeSparseMask(size: number, seed: number, count: number, radius: number): Float32Array {
+  const ctx = makeCanvas(size);
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, size, size);
+  const rand = mulberry32(seed);
+  for (let i = 0; i < count; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const r = radius * (0.6 + rand() * 0.8);
+    for (const [ux, uy] of WRAP_OFFSET_UNITS) {
+      const cx = x + ux * size;
+      const cy = y + uy * size;
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  const data = ctx.getImageData(0, 0, size, size).data;
+  const mask = new Float32Array(size * size);
+  for (let i = 0; i < mask.length; i++) mask[i] = data[i * 4] / 255;
+  return mask;
+}
+
 /** glTF-convention combined texture: G channel = roughness, B channel =
  * metallic (per PBRMetallicRoughnessMaterial.metallicRoughnessTexture).
- * Roughness gets the same low-frequency mottling as the albedo/normal so
- * rough and smooth patches visually correlate with the bump (wear on raised
- * areas, roughness in recesses) instead of reading as an unrelated overlay. */
+ * Roughness combines a low-frequency macro pattern (unrelated patches of
+ * "wear" reading rough/smooth at a glance) with a higher-frequency micro
+ * pattern (fine per-area variation so no single patch is a perfectly flat
+ * roughness value — the brief's "controlled micro-variation" rule) — both
+ * independent of the height field's own blotch layout so roughness doesn't
+ * just mechanically retrace the bump, but still generally correlated in
+ * character (wear tends to show up as both a bump and a roughness change).
+ * Metallic defaults to a flat `metallicBase` but can be pushed up to
+ * `metallicPeak` inside a sparse mask (see computeSparseMask) — the
+ * mechanism behind painted-metal's "small exposed brass fitting" accents,
+ * so metallic response stays a true accent rather than a uniform tint. */
 function drawMetallicRoughnessTexture(
   scene: Scene,
   name: string,
@@ -170,16 +294,23 @@ function drawMetallicRoughnessTexture(
   seed: number,
   roughnessBase: number,
   roughnessSpread: number,
-  metallic: number,
+  roughnessMicroSpread: number,
+  metallicBase: number,
+  metallicPeak: number,
+  metallicMask?: { seed: number; count: number; radius: number },
 ): DynamicTexture {
   const texture = new DynamicTexture(name, size, scene, false, Texture.TRILINEAR_SAMPLINGMODE);
   const ctx = texture.getContext() as CanvasRenderingContext2D;
   const out = ctx.createImageData(size, size);
+  const mask = metallicMask ? computeSparseMask(size, metallicMask.seed, metallicMask.count, metallicMask.radius) : undefined;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const n = Math.sin(x * 0.05 + seed * 2) * Math.cos(y * 0.06 + seed) * 0.5 + 0.5;
-      const roughness = Math.max(0.05, Math.min(1, roughnessBase + (n - 0.5) * roughnessSpread));
+      const macro = Math.sin(x * 0.05 + seed * 2) * Math.cos(y * 0.06 + seed) * 0.5 + 0.5;
+      const micro = Math.sin(x * 0.34 + seed * 3.1) * Math.cos(y * 0.31 - seed * 1.3) * 0.5 + 0.5;
+      const roughness = Math.max(0.04, Math.min(1, roughnessBase + (macro - 0.5) * roughnessSpread + (micro - 0.5) * roughnessMicroSpread));
       const idx = (y * size + x) * 4;
+      const maskValue = mask ? mask[y * size + x] : 0;
+      const metallic = Math.max(0, Math.min(1, metallicBase + maskValue * (metallicPeak - metallicBase)));
       out.data[idx] = 255; // R unused (occlusion supplied separately via occlusionTexture)
       out.data[idx + 1] = Math.round(roughness * 255); // G = roughness
       out.data[idx + 2] = Math.round(metallic * 255); // B = metallic
@@ -193,28 +324,24 @@ function drawMetallicRoughnessTexture(
   return texture;
 }
 
-/** Tints a base color with small per-pixel variation so the albedo isn't a
- * single flat RGB fill — subtle edge tinting / wear, per the brief's
- * "avoid pure flat RGB fills" rule. */
-function drawAlbedoVariation(scene: Scene, name: string, size: number, seed: number, base: Color3, variation: number): DynamicTexture {
+/** Tints a base color using the SAME height field driving the normal/AO maps
+ * (plus a touch of independent per-pixel jitter) so albedo variation isn't a
+ * flat RGB fill AND visibly correlates with the surface's bump/AO detail —
+ * darker recesses and raised grain/chips read consistently across all three
+ * maps instead of as unrelated overlays. */
+function drawAlbedoVariation(scene: Scene, name: string, size: number, height: ImageData, base: Color3, variation: number, seed: number): DynamicTexture {
   const texture = new DynamicTexture(name, size, scene, false, Texture.TRILINEAR_SAMPLINGMODE);
   const ctx = texture.getContext() as CanvasRenderingContext2D;
   const rand = mulberry32(seed + 1);
   const out = ctx.createImageData(size, size);
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      // Low-frequency variation: sample a handful of overlapping sine waves
-      // rather than pure per-pixel noise, so it reads as soft mottling
-      // rather than static/grain.
-      const n = Math.sin(x * 0.09 + seed) * Math.cos(y * 0.07 + seed * 0.5) * 0.5 + Math.sin(x * 0.21 - y * 0.13 + seed * 1.7) * 0.5;
-      const jitter = (rand() - 0.5) * 0.15;
-      const t = Math.max(-1, Math.min(1, n + jitter)) * variation;
-      const idx = (y * size + x) * 4;
-      out.data[idx] = Math.max(0, Math.min(255, (base.r + t) * 255));
-      out.data[idx + 1] = Math.max(0, Math.min(255, (base.g + t) * 255));
-      out.data[idx + 2] = Math.max(0, Math.min(255, (base.b + t) * 255));
-      out.data[idx + 3] = 255;
-    }
+  for (let i = 0; i < height.data.length; i += 4) {
+    const h = (height.data[i] - 128) / 128; // -1..1
+    const jitter = (rand() - 0.5) * 0.1;
+    const t = Math.max(-1, Math.min(1, h + jitter)) * variation;
+    out.data[i] = Math.max(0, Math.min(255, (base.r + t) * 255));
+    out.data[i + 1] = Math.max(0, Math.min(255, (base.g + t) * 255));
+    out.data[i + 2] = Math.max(0, Math.min(255, (base.b + t) * 255));
+    out.data[i + 3] = 255;
   }
   ctx.putImageData(out, 0, 0);
   texture.update(false);
@@ -230,57 +357,83 @@ interface TextureFamily {
   metallicRoughness: DynamicTexture;
 }
 
+/** Per-family generation recipe, independent of tiling (tiling is folded
+ * into the cache key by getOrCreateFamily — see its doc comment for why). */
+interface FamilyRecipe {
+  seed: number;
+  baseColor: Color3;
+  heightLayers: BlotchSpec[];
+  grain?: { seed: number; amount: number };
+  bumpStrength: number;
+  roughnessBase: number;
+  roughnessSpread: number;
+  roughnessMicroSpread?: number;
+  albedoVariation: number;
+  metallic: number;
+  metallicPeak?: number;
+  metallicMask?: { seed: number; count: number; radius: number };
+}
+
 const familyCache = new Map<string, TextureFamily>();
 
 /**
- * Builds (once, cached by name) a shared albedo/normal/AO/metallic-roughness
- * texture quartet for a material *family* (soil, stone, wood, painted-metal,
- * ...). Every material in that family reuses the exact same four textures
- * and just tints baseColor — this is the "shared PBR materials, not one
- * texture per object" performance rule in practice.
+ * Builds (once, cached by `${familyName}@${tiling}`) a shared albedo/normal/
+ * AO/metallic-roughness texture quartet for a material *family* (soil,
+ * stone, wood, painted-metal, water, path, foliage, ...). Every material
+ * that requests the same family AND the same tiling factor reuses the exact
+ * same four textures and just tints baseColor — this is the "shared PBR
+ * materials, not one texture per object" performance rule in practice.
+ *
+ * Tiling is baked into the cache key (and each texture's uScale/vScale is
+ * set once here, at creation) rather than mutated afterwards by callers —
+ * an earlier version of this module set uScale/vScale on an already-shared
+ * DynamicTexture from `applyFamily`, which is safe only as long as every
+ * consumer of a family wants the same tiling. That happened to hold (each
+ * family had exactly one tiling value in practice) but was a latent bug:
+ * two consumers wanting different tiling of the "same" family would have
+ * had the second caller's uScale silently override the first's. Keying the
+ * cache by tiling makes that impossible by construction, at the cost of a
+ * (still cheap, one-time) regenerated texture set per distinct tiling value
+ * — e.g. the "stone" family exists both at tiling=3 (habitat drum bodies)
+ * and tiling=1 (scenery rock detail overlay, see applyRockDetail below).
  */
-function getOrCreateFamily(
-  scene: Scene,
-  familyName: string,
-  opts: {
-    seed: number;
-    baseColor: Color3;
-    blotches: number;
-    blotchRadius: number;
-    bumpStrength: number;
-    roughnessBase: number;
-    roughnessSpread: number;
-    albedoVariation: number;
-    metallic: number;
-  },
-): TextureFamily {
-  const cached = familyCache.get(familyName);
+function getOrCreateFamily(scene: Scene, familyName: string, recipe: FamilyRecipe & { tiling: number }): TextureFamily {
+  const cacheKey = `${familyName}@${recipe.tiling}`;
+  const cached = familyCache.get(cacheKey);
   if (cached) return cached;
-  const size = 128;
-  const height = drawHeightField(size, opts.seed, opts.blotches, opts.blotchRadius);
+  const size = TEXTURE_SIZE;
+  const height = drawHeightField(size, recipe.heightLayers, recipe.grain);
   const family: TextureFamily = {
-    albedo: drawAlbedoVariation(scene, `terrarium.pbr.${familyName}.albedo`, size, opts.seed, opts.baseColor, opts.albedoVariation),
-    normal: heightFieldToNormalTexture(scene, `terrarium.pbr.${familyName}.normal`, height, size, opts.bumpStrength),
+    albedo: drawAlbedoVariation(scene, `terrarium.pbr.${familyName}.albedo`, size, height, recipe.baseColor, recipe.albedoVariation, recipe.seed),
+    normal: heightFieldToNormalTexture(scene, `terrarium.pbr.${familyName}.normal`, height, size, recipe.bumpStrength),
     occlusion: heightFieldToOcclusionTexture(scene, `terrarium.pbr.${familyName}.ao`, height, size),
     metallicRoughness: drawMetallicRoughnessTexture(
       scene,
       `terrarium.pbr.${familyName}.metallicRoughness`,
       size,
-      opts.seed,
-      opts.roughnessBase,
-      opts.roughnessSpread,
-      opts.metallic,
+      recipe.seed,
+      recipe.roughnessBase,
+      recipe.roughnessSpread,
+      recipe.roughnessMicroSpread ?? 0,
+      recipe.metallic,
+      recipe.metallicPeak ?? recipe.metallic,
+      recipe.metallicMask,
     ),
   };
-  familyCache.set(familyName, family);
+  for (const tex of [family.albedo, family.normal, family.occlusion, family.metallicRoughness]) {
+    tex.uScale = recipe.tiling;
+    tex.vScale = recipe.tiling;
+  }
+  familyCache.set(cacheKey, family);
   return family;
 }
 
-function applyFamily(material: PBRMetallicRoughnessMaterial, family: TextureFamily, tiling: number): void {
-  for (const tex of [family.albedo, family.normal, family.occlusion, family.metallicRoughness]) {
-    tex.uScale = tiling;
-    tex.vScale = tiling;
-  }
+/** Applies a family's normal/AO/metallic-roughness maps to a material.
+ * Does NOT touch tiling (baked into the family's textures at creation, see
+ * getOrCreateFamily) or baseTexture (each caller decides whether that's the
+ * family's own tinted albedo or a manifest-art texture with this family's
+ * detail maps layered on top — see e.g. createPathMaterial/applyRockDetail). */
+function applyFamily(material: PBRMetallicRoughnessMaterial, family: TextureFamily): void {
   material.normalTexture = family.normal;
   material.occlusionTexture = family.occlusion;
   material.metallicRoughnessTexture = family.metallicRoughness;
@@ -292,6 +445,161 @@ function applyFamily(material: PBRMetallicRoughnessMaterial, family: TextureFami
 }
 
 // ---------------------------------------------------------------------------
+// Per-family recipes
+// ---------------------------------------------------------------------------
+// Every recipe below layers a sparse "macro" blotch/streak pass (large-scale
+// clumps/chips/grain lines/ripple swells — the main silhouette-scale detail
+// visible at normal gameplay distance) with a denser "micro" pass (small
+// pores/scuffs/vein-like flecks that read as fine surface character on
+// closer inspection) plus a subtle per-pixel grain jitter. Roughness gets a
+// matching macro+micro split (see drawMetallicRoughnessTexture). This is
+// what "grain, chips, pores, weave, ripples ... visible at the default
+// gameplay camera distance, not just at extreme close-up" (brief) is built
+// from — see docs/MATERIAL_LIBRARY.md for the full per-material writeup and
+// before/after browser QA notes.
+
+const SOIL_RECIPE: FamilyRecipe = {
+  seed: 7,
+  baseColor: new Color3(0.24, 0.37, 0.21),
+  heightLayers: [
+    { seed: 7, count: 90, radius: 20 }, // macro clumps
+    { seed: 71, count: 260, radius: 4, alpha: 0.35 }, // fine pebbles/crumb grain
+  ],
+  grain: { seed: 72, amount: 0.05 },
+  bumpStrength: 1.6,
+  roughnessBase: 0.88,
+  roughnessSpread: 0.18,
+  roughnessMicroSpread: 0.08,
+  albedoVariation: 0.09,
+  metallic: 0,
+};
+
+const STONE_RECIPE: FamilyRecipe = {
+  seed: 13,
+  baseColor: new Color3(1, 1, 1),
+  heightLayers: [
+    { seed: 13, count: 70, radius: 16 }, // macro chips
+    { seed: 131, count: 220, radius: 3, alpha: 0.3 }, // fine pores
+  ],
+  grain: { seed: 132, amount: 0.04 },
+  bumpStrength: 1.3,
+  roughnessBase: 0.6,
+  roughnessSpread: 0.22,
+  roughnessMicroSpread: 0.1,
+  albedoVariation: 0.07,
+  metallic: 0,
+};
+
+const WOOD_RECIPE: FamilyRecipe = {
+  seed: 29,
+  baseColor: new Color3(1, 1, 1),
+  heightLayers: [
+    { seed: 29, count: 16, radius: 9, shape: 'streak', streakLength: 9, angleJitter: 0.25 }, // long grain lines
+    { seed: 291, count: 55, radius: 2.5, shape: 'streak', streakLength: 5, alpha: 0.3, angleJitter: 0.3 }, // fine grain lines
+  ],
+  grain: { seed: 292, amount: 0.03 },
+  bumpStrength: 1.0,
+  roughnessBase: 0.45,
+  roughnessSpread: 0.15,
+  roughnessMicroSpread: 0.08,
+  albedoVariation: 0.08,
+  metallic: 0,
+};
+
+const PAINTED_METAL_RECIPE: FamilyRecipe = {
+  seed: 41,
+  baseColor: new Color3(1, 1, 1),
+  heightLayers: [
+    { seed: 41, count: 22, radius: 14, alpha: 0.4 }, // worn/repainted patches
+    { seed: 411, count: 70, radius: 2, shape: 'streak', streakLength: 7, alpha: 0.3, angleJitter: Math.PI }, // scuffs/scratches, random angle
+  ],
+  grain: { seed: 412, amount: 0.04 },
+  bumpStrength: 0.9,
+  roughnessBase: 0.4,
+  roughnessSpread: 0.2,
+  roughnessMicroSpread: 0.12,
+  albedoVariation: 0.07,
+  // Near-zero paint base; metallic only appears as small exposed-fitting
+  // specks via the sparse mask below — "small brass-fitting-like glints",
+  // never a uniform metal tint across the whole painted body.
+  //
+  // metallicPeak kept conservative (0.4, not the more dramatic ~0.75 a
+  // "brass fitting" might suggest) on purpose: browser QA on the live
+  // WebGPU scene (this project's default backend, which has no environment/
+  // IBL contribution — see environment.ts) showed a higher peak reading as
+  // faint DARK speckling rather than a warm glint on close inspection of a
+  // full-alpha built automation site. That's the physically-expected
+  // outcome, not a bug: a metallic surface's only real light response is
+  // specular/environment reflection (metals have ~zero diffuse albedo), so
+  // without IBL and without a specular highlight landing exactly on a given
+  // speck at a given camera angle, "metallic" mostly just means "darker,"
+  // which is the opposite of the intended accent. 0.4 was chosen as a
+  // compromise that stays visibly distinct from the 0.03 paint base without
+  // pushing hard into that dark-speckle failure mode on the IBL-less
+  // backend; it has NOT been visually re-confirmed as a positive "glint" on
+  // WebGL (where IBL specular response would exist) — a known gap, not a
+  // silently-assumed win. See docs/MATERIAL_LIBRARY.md's "Metallic is a
+  // true accent" section for the full note.
+  metallic: 0.03,
+  metallicPeak: 0.4,
+  metallicMask: { seed: 413, count: 10, radius: 3 },
+};
+
+const WATER_RECIPE: FamilyRecipe = {
+  seed: 53,
+  baseColor: new Color3(1, 1, 1),
+  heightLayers: [
+    { seed: 53, count: 14, radius: 26 }, // broad swells
+    { seed: 531, count: 44, radius: 5, shape: 'streak', streakLength: 5, alpha: 0.3, angleJitter: 0.6 }, // ripple crests
+  ],
+  grain: { seed: 532, amount: 0.02 },
+  bumpStrength: 1.1,
+  roughnessBase: 0.12,
+  roughnessSpread: 0.08,
+  roughnessMicroSpread: 0.05,
+  albedoVariation: 0.03,
+  metallic: 0,
+};
+
+const PATH_RECIPE: FamilyRecipe = {
+  seed: 21,
+  baseColor: new Color3(1, 1, 1),
+  heightLayers: [
+    { seed: 21, count: 40, radius: 20 }, // worn tread patches
+    { seed: 211, count: 140, radius: 3, alpha: 0.3 }, // grit/pebble grain
+  ],
+  grain: { seed: 212, amount: 0.04 },
+  bumpStrength: 0.9,
+  roughnessBase: 0.55,
+  roughnessSpread: 0.15,
+  roughnessMicroSpread: 0.08,
+  albedoVariation: 0.05,
+  metallic: 0,
+};
+
+/** New this pass: foliage detail overlay (leaf-cluster shadow pockets +
+ * fine vein-like streaks in randomized directions) — layered on top of
+ * scenery foliage cards' manifest art the same way PATH_RECIPE layers onto
+ * path tile art. Addresses the brief's explicit call-out that foliage
+ * needs its own richer albedo/normal/roughness/AO pass, not just the flat
+ * roughness=0.55 default every other manifest-art card gets. */
+const FOLIAGE_RECIPE: FamilyRecipe = {
+  seed: 61,
+  baseColor: new Color3(1, 1, 1),
+  heightLayers: [
+    { seed: 61, count: 26, radius: 14 }, // leaf-cluster shadow pockets
+    { seed: 611, count: 90, radius: 2, shape: 'streak', streakLength: 6, alpha: 0.3, angleJitter: Math.PI }, // vein-like flecks, random direction
+  ],
+  grain: { seed: 612, amount: 0.05 },
+  bumpStrength: 0.85,
+  roughnessBase: 0.4,
+  roughnessSpread: 0.15,
+  roughnessMicroSpread: 0.1,
+  albedoVariation: 0.05,
+  metallic: 0,
+};
+
+// ---------------------------------------------------------------------------
 // Material recipes
 // ---------------------------------------------------------------------------
 
@@ -299,21 +607,11 @@ function applyFamily(material: PBRMetallicRoughnessMaterial, family: TextureFami
  * albedo, small bump for clumps/pebbles, rough matte response, gentle AO in
  * the "pores". Shared by the single ground mesh (world.ts). */
 export function createSoilMaterial(scene: Scene): PBRMetallicRoughnessMaterial {
-  const family = getOrCreateFamily(scene, 'soil', {
-    seed: 7,
-    baseColor: new Color3(0.24, 0.37, 0.21),
-    blotches: 90,
-    blotchRadius: 10,
-    bumpStrength: 1.1,
-    roughnessBase: 0.88,
-    roughnessSpread: 0.18,
-    albedoVariation: 0.07,
-    metallic: 0,
-  });
+  const family = getOrCreateFamily(scene, 'soil', { ...SOIL_RECIPE, tiling: 10 });
   const material = new PBRMetallicRoughnessMaterial('terrarium.ground.mat', scene);
   material.baseColor = Color3.White();
   material.baseTexture = family.albedo;
-  applyFamily(material, family, 10);
+  applyFamily(material, family);
   return material;
 }
 
@@ -325,27 +623,13 @@ export function createSoilMaterial(scene: Scene): PBRMetallicRoughnessMaterial {
  * cost for what is visually the same repeated surface; see
  * docs/MATERIAL_LIBRARY.md). */
 export function createPathMaterial(scene: Scene, manifestKey: ManifestKey, fallbackColor: Color3): PBRMetallicRoughnessMaterial {
-  const family = getOrCreateFamily(scene, 'path', {
-    seed: 21,
-    baseColor: new Color3(1, 1, 1),
-    blotches: 40,
-    blotchRadius: 14,
-    bumpStrength: 0.6,
-    roughnessBase: 0.55,
-    roughnessSpread: 0.15,
-    albedoVariation: 0.05,
-    metallic: 0,
-  });
+  // tiling=1: path art is one illustration per tile, not a tiled repeat —
+  // only the detail maps' own generation frequency matters, not a repeat
+  // count (see getOrCreateFamily's doc comment on why tiling is baked into
+  // the family rather than mutated post-hoc).
+  const family = getOrCreateFamily(scene, 'path', { ...PATH_RECIPE, tiling: 1 });
   const material = createManifestMaterial(scene, 'terrarium.path.mat', manifestKey, fallbackColor);
-  material.normalTexture = family.normal;
-  material.occlusionTexture = family.occlusion;
-  material.metallicRoughnessTexture = family.metallicRoughness;
-  for (const tex of [family.normal, family.occlusion, family.metallicRoughness]) {
-    tex.uScale = 1; // path art is one illustration per tile, not tiled repeat — only detail maps repeat
-    tex.vScale = 1;
-  }
-  material.metallic = 1;
-  material.roughness = 1;
+  applyFamily(material, family);
   return material;
 }
 
@@ -354,67 +638,37 @@ export function createPathMaterial(scene: Scene, manifestKey: ManifestKey, fallb
  * texture family across all 3 habitat bodies + the Nursery mound, tinted
  * per-habitat via baseColor. */
 export function createStoneBodyMaterial(scene: Scene, name: string, tint: Color3): PBRMetallicRoughnessMaterial {
-  const family = getOrCreateFamily(scene, 'stone', {
-    seed: 13,
-    baseColor: new Color3(1, 1, 1),
-    blotches: 70,
-    blotchRadius: 8,
-    bumpStrength: 0.9,
-    roughnessBase: 0.6,
-    roughnessSpread: 0.22,
-    albedoVariation: 0.05,
-    metallic: 0,
-  });
+  const family = getOrCreateFamily(scene, 'stone', { ...STONE_RECIPE, tiling: 3 });
   const material = new PBRMetallicRoughnessMaterial(name, scene);
   material.baseColor = tint;
   material.baseTexture = family.albedo;
-  material.baseTexture.level = 0.35; // subtle variation over the flat tint, not a competing pattern
-  applyFamily(material, family, 3);
+  material.baseTexture.level = 0.5; // real, visible variation over the flat tint (raised from an earlier 0.35 pass now that the underlying texture carries genuinely richer chip/pore detail worth showing)
+  applyFamily(material, family);
   return material;
 }
 
-/** Warm painted-wood/soil Nursery mound the Pod stands on — wood-grain-ish
+/** Warm painted-wood/soil Nursery mound the Pod stands on — wood-grain
  * streaked bump, satin roughness. */
 export function createWoodBodyMaterial(scene: Scene, name: string, tint: Color3): PBRMetallicRoughnessMaterial {
-  const family = getOrCreateFamily(scene, 'wood', {
-    seed: 29,
-    baseColor: new Color3(1, 1, 1),
-    blotches: 26,
-    blotchRadius: 18,
-    bumpStrength: 0.5,
-    roughnessBase: 0.45,
-    roughnessSpread: 0.15,
-    albedoVariation: 0.06,
-    metallic: 0,
-  });
+  const family = getOrCreateFamily(scene, 'wood', { ...WOOD_RECIPE, tiling: 2 });
   const material = new PBRMetallicRoughnessMaterial(name, scene);
   material.baseColor = tint;
   material.baseTexture = family.albedo;
-  material.baseTexture.level = 0.3;
-  applyFamily(material, family, 2);
+  material.baseTexture.level = 0.45;
+  applyFamily(material, family);
   return material;
 }
 
 /** Painted garden-equipment metal/wood for automation site bodies — soft
- * satin roughness with a touch of metallic on scuffed highlight areas (small
- * brass-fitting-like glints, not a full metal look). */
+ * satin roughness with sparse true-metal accents (small brass-fitting-like
+ * glints via a metallic mask, not a uniform metal tint across the body). */
 export function createPaintedMetalMaterial(scene: Scene, name: string, tint: Color3): PBRMetallicRoughnessMaterial {
-  const family = getOrCreateFamily(scene, 'paintedMetal', {
-    seed: 41,
-    baseColor: new Color3(1, 1, 1),
-    blotches: 34,
-    blotchRadius: 9,
-    bumpStrength: 0.55,
-    roughnessBase: 0.4,
-    roughnessSpread: 0.2,
-    albedoVariation: 0.05,
-    metallic: 0.12,
-  });
+  const family = getOrCreateFamily(scene, 'paintedMetal', { ...PAINTED_METAL_RECIPE, tiling: 2 });
   const material = new PBRMetallicRoughnessMaterial(name, scene);
   material.baseColor = tint;
   material.baseTexture = family.albedo;
-  material.baseTexture.level = 0.25;
-  applyFamily(material, family, 2);
+  material.baseTexture.level = 0.42;
+  applyFamily(material, family);
   return material;
 }
 
@@ -426,21 +680,11 @@ export interface WaterMaterial {
   update: (nowMs: number) => void;
 }
 export function createWaterMaterial(scene: Scene, name: string): WaterMaterial {
-  const family = getOrCreateFamily(scene, 'water', {
-    seed: 53,
-    baseColor: new Color3(1, 1, 1),
-    blotches: 18,
-    blotchRadius: 22,
-    bumpStrength: 0.8,
-    roughnessBase: 0.12,
-    roughnessSpread: 0.08,
-    albedoVariation: 0.03,
-    metallic: 0,
-  });
+  const family = getOrCreateFamily(scene, 'water', { ...WATER_RECIPE, tiling: 2 });
   const material = new PBRMetallicRoughnessMaterial(name, scene);
   material.baseColor = new Color3(0.3, 0.55, 0.68);
   material.alpha = 0.88;
-  applyFamily(material, family, 2);
+  applyFamily(material, family);
   const update = (nowMs: number): void => {
     const t = nowMs / 4000;
     const normalTexture = material.normalTexture as Texture;
@@ -448,4 +692,32 @@ export function createWaterMaterial(scene: Scene, name: string): WaterMaterial {
     normalTexture.vOffset = Math.cos(t * 0.8) * 0.05;
   };
   return { material, update };
+}
+
+/** Layers the shared 'stone' family's normal/AO/roughness detail (at
+ * tiling=1, a separate cache entry from the habitat drums' tiling=3 stone)
+ * onto a scenery rock card's existing manifest-art material — same pattern
+ * as createPathMaterial, applied after the fact since scenery meshes are
+ * built via the generic createManifestMaterial helper in world.ts. Rocks
+ * were previously "manifest art only" with no PBR detail pass at all (see
+ * docs/MATERIAL_LIBRARY.md's prior "Scenery: rocks/foliage" note); this
+ * gives them the same chip/pore bump and roughness variation as the stone
+ * habitat bodies instead of a flat roughness=0.55 card. */
+export function applyRockDetail(scene: Scene, material: PBRMetallicRoughnessMaterial): void {
+  const family = getOrCreateFamily(scene, 'stone', { ...STONE_RECIPE, tiling: 1 });
+  applyFamily(material, family);
+}
+
+/** Layers the 'foliage' family's normal/AO/roughness detail onto a scenery
+ * foliage card's manifest-art material — see FOLIAGE_RECIPE and
+ * applyRockDetail's doc comment for the pattern this follows. */
+export function applyFoliageDetail(scene: Scene, material: PBRMetallicRoughnessMaterial): void {
+  const family = getOrCreateFamily(scene, 'foliage', { ...FOLIAGE_RECIPE, tiling: 1 });
+  applyFamily(material, family);
+}
+
+/** Test-only: clears the module-level texture-family cache between test
+ * runs (mirrors the _reset helpers in assets.ts/environment.ts). */
+export function _resetPbrMaterialsForTests(): void {
+  familyCache.clear();
 }

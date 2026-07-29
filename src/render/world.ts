@@ -7,6 +7,7 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
+import type { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
 import type { Scene } from '@babylonjs/core/scene';
 import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator';
 
@@ -14,7 +15,15 @@ import { createManifestMaterial, getManifestTexture } from './assets';
 import { GRID_SIZE, tileToWorld } from './coords';
 import { attachStandee } from './flatArt';
 import { GARDEN_PATH_TILES, NURSERY_TILE, SCENERY_PLACEMENTS } from './layout';
-import { createPathMaterial, createSoilMaterial, createWaterMaterial, createWoodBodyMaterial, type WaterMaterial } from './pbrMaterials';
+import {
+  applyFoliageDetail,
+  applyRockDetail,
+  createPathMaterial,
+  createSoilMaterial,
+  createWaterMaterial,
+  createWoodBodyMaterial,
+  type WaterMaterial,
+} from './pbrMaterials';
 
 // Maps a scenery placement to the actual manifest keys Subagent C produced
 // (scenery.rockSmall/rockLarge/fern/bush/waterAccent) — there's no
@@ -89,6 +98,10 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator)
         mesh.position.set(world.x, 0.02, world.z);
         mesh.material = createManifestMaterial(scene, `${key}.mat`, key, new Color3(0.5, 0.48, 0.46));
         mesh.material.backFaceCulling = false;
+        // Layer the shared stone family's normal/AO/roughness detail on top
+        // of the manifest-art albedo (see pbrMaterials.ts applyRockDetail) —
+        // previously these were manifest art with no PBR detail pass at all.
+        applyRockDetail(scene, mesh.material as PBRMetallicRoughnessMaterial);
         break;
       case 'water': {
         mesh = MeshBuilder.CreateDisc(`terrarium.scenery.water.${placement.tile.x}.${placement.tile.z}`, { radius: 0.4, tessellation: 20 }, scene);
@@ -117,6 +130,12 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator)
         mesh.position.set(world.x, 0.02, world.z);
         mesh.material = createManifestMaterial(scene, `${key}.mat`, key, new Color3(0.28, 0.5, 0.24));
         mesh.material.backFaceCulling = false;
+        // Leaf-cluster shadow pockets + vein-like fine streaks layered on
+        // top of the manifest bush/fern art (see pbrMaterials.ts
+        // applyFoliageDetail) — the brief explicitly calls out foliage as
+        // needing its own richer detail pass, not the flat roughness=0.55
+        // every other manifest-art card gets.
+        applyFoliageDetail(scene, mesh.material as PBRMetallicRoughnessMaterial);
         break;
     }
     mesh.isPickable = false;

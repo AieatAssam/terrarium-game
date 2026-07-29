@@ -202,35 +202,77 @@ can't grow tall enough to visually compete with or occlude a settled Sprout
 resting on top of the habitat (`SPROUT_FLOAT_HEIGHT`/settle offset,
 `src/render/sprouts.ts`).
 
-## 9. Lighting and PBR material plan (owner: E, this pass)
+## 9. Lighting and PBR material plan
 
-Every major world material converted from `StandardMaterial` to
-`PBRMetallicRoughnessMaterial` — see `docs/MATERIAL_LIBRARY.md` for the
-per-material recipe (albedo variation, normal/bump, roughness, AO, metallic,
-emissive) and performance notes (shared procedural texture families, not
-one texture per object).
+Every major world material is `PBRMetallicRoughnessMaterial` — see
+`docs/MATERIAL_LIBRARY.md` for the per-material recipe (albedo variation,
+normal/bump, roughness, AO, metallic, emissive) and performance notes
+(shared procedural texture families, not one texture per object; 256×256
+two-octave textures as of this pass, up from an original 128×128
+single-octave pass — see MATERIAL_LIBRARY.md's "Resolution and detail
+increase").
 
 - **Key light**: warm directional light simulating sun through conservatory
-  glass (`src/render/lighting.ts`, unchanged from prior pass).
-- **Fill light**: cool hemispheric light for colour-separated shadow sides
-  (unchanged).
+  glass (`src/render/lighting.ts`).
+- **Fill light**: cool hemispheric light for colour-separated shadow sides.
 - **Environment/IBL**: a procedural cube-map environment texture
   (`src/render/environment.ts`) — six flat-shaded canvas gradients (warm sky
   above, cool soil-bounce below), assembled entirely in-code, no third-party
   HDRI. Provenance recorded in `docs/ASSET_CREDITS.md`.
-  - **Known limitation**: assigning this texture to
-    `scene.environmentTexture` causes a full black-screen render failure
-    specifically on this project's WebGPU backend (verified by isolated
-    on/off bisection — see `docs/ART_QA_REPORT.md` and the long comment in
-    `src/render/environment.ts`). It is therefore only wired up on the
-    WebGL fallback path (`!scene.getEngine().isWebGPU`) until the
-    underlying Babylon.js issue is fixed or re-investigated. The directional
-    key + hemispheric fill remain the dominant, WebGPU-safe lighting read.
-- **Shadows**: soft blurred exponential shadow map (unchanged setup), with a
-  small bias/normal-bias tune this pass so contact points (Sprouts/habitats
-  meeting the ground) read as grounded soft contact shadows.
+  - **Known limitation, re-investigated this pass**: assigning this texture
+    to `scene.environmentTexture` causes a full black-screen render failure
+    specifically on this project's WebGPU backend. A prior pass found this
+    and gated it to WebGL only; this pass re-investigated with a much
+    sharper bisection (six live-browser probes against the actual running
+    scene) to see if a different construction path could avoid it. Result:
+    it can't, currently. The precise trigger — confirmed empirically, not
+    guessed — is that **the cube texture must be perfectly uniform (the
+    same single color on literally every texel, every face) to avoid the
+    crash**. `RawCubeTexture` (raw pixel upload, bypassing the loader/
+    ImageBitmap/extension-lookup path entirely — the most different
+    construction path this Babylon version offers) does NOT avoid it: fed
+    the exact same content as `CubeTexture`, it crashes identically. Even a
+    cube where each face is internally flat but a DIFFERENT flat color
+    per-face (no gradient, no within-face variation at all) still crashes.
+    Only a single color across the entire cube survives — and that carries
+    zero directional information over the existing HemisphericLight fill,
+    so shipping it wouldn't add anything real. `EquiRectangularCubeTexture`
+    was considered and ruled out BY INFERENCE (not a live test — it
+    re-derives 6 faces via a similar path, and the probes already showed
+    the trigger is content-uniformity, not construction path, so it's
+    expected but not confirmed to hit the same wall). `CreateFromPrefilteredData`
+    was ruled out on a different, harder constraint: it needs a pre-baked
+    `.env` file, which conflicts with the "original, procedurally
+    generated" asset constraint regardless of whether it would work. Full
+    probe-by-probe results in
+    `docs/ART_QA_REPORT.md` and the complete writeup in
+    `src/render/environment.ts`'s doc comment. It remains wired up on the
+    WebGL fallback path only (`!scene.getEngine().isWebGPU`) until Babylon
+    fixes the underlying spherical-harmonics/irradiance computation this
+    points to. The directional key + hemispheric fill remain the dominant,
+    WebGPU-safe lighting read.
+- **Shadows**: soft blurred exponential shadow map, with `bias`/
+  `normalBias` tuned so contact points (Sprouts/habitats meeting the
+  ground) read as grounded soft contact shadows.
 - **Sprouts stay lit, not unlit-disableLighting**, per the brief's rule
   against unlit planes for interactive focal assets — see the doc comment in
   `src/render/sprouts.ts` for why this is safe here specifically (the
   garden camera's yaw never rotates at runtime, so a Y-billboarded sprite's
   lit response to the fixed key light is constant, not per-frame-varying).
+- **Metallic response audited this pass**: only `paintedMetal` (automation
+  site bodies) uses non-zero metallic, and it's now a sparse accent (0.03
+  base, up to 0.4 inside a small radial mask covering a handful of pixels)
+  rather than a flat scalar applied to the whole surface. Every other
+  material family (soil, stone, wood, water, path, foliage) stays at
+  metallic 0. The peak was kept conservative and is NOT confirmed to read
+  as a positive "warm glint" — browser QA on the default WebGPU backend
+  (no IBL/specular environment response, see the known limitation above)
+  showed a higher peak reading as faint dark speckling instead; see
+  `docs/MATERIAL_LIBRARY.md`'s "Metallic is a true accent" section for the
+  full caveat.
+- **Emissive response audited this pass**: confirmed reserved to Sprouts
+  (always-on, modest, readability-driven) and transient interaction
+  feedback (habitat correct/incorrect placement glow pulses, automation
+  placement-preview tint) — no procedural PBR material family sets a
+  resting-state emissive color. See `docs/MATERIAL_LIBRARY.md`'s "Emissive
+  audit" section.

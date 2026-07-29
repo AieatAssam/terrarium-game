@@ -99,36 +99,100 @@ let cached: CubeTexture | undefined;
  * ==========================================================================
  * KNOWN LIMITATION — scene.environmentTexture disabled on WebGPU
  * ==========================================================================
- * Verified via isolated browser testing during this pass (docs/
- * ART_QA_REPORT.md has the full writeup): assigning ANY CubeTexture built
- * from in-memory image data (data URLs, exactly this project's "no
- * third-party assets" constraint requires) to `scene.environmentTexture`
- * causes every mesh in the scene to stop rendering entirely — a full black
- * canvas, clear color only, with no console error or exception of any
- * kind — specifically on this project's WebGPU backend (Babylon.js
- * v7.54.3, src/core/engine.ts's WebGPU-when-available path). Confirmed by
- * bisection, not guesswork:
- *   - Constructing the CubeTexture without assigning it to
- *     `scene.environmentTexture`: renders fine.
- *   - Assigning it: full black screen, reproducible on every reload.
- *   - Toggling `createPolynomials` (spherical-harmonics diffuse IBL) on/off:
- *     no change, still black either way.
- *   - Toggling `noMipmap` on/off: no change, still black either way.
- * This points at a WebGPU-backend PBR shader/bind-group codepath for
- * `REFLECTIONMAP_CUBIC`-style environment sampling that this Babylon
- * version doesn't handle correctly for a manually-constructed (non-.env/
- * non-prefiltered) cube texture — not a mistake in how this texture is
- * authored. The same texture is confirmed to *not* recreate this failure
- * when environmentTexture is left unassigned (i.e. everything else in the
- * PBR conversion — albedo/normal/roughness/AO/emissive — is unaffected).
+ * Re-investigated this pass with a much more targeted bisection than the
+ * original finding (docs/ART_QA_REPORT.md has the full writeup with every
+ * probe result). Short version: this is NOT about how the cube texture is
+ * constructed — it's about whether its pixel content is perfectly uniform.
+ *
+ * Six live-browser probes against the actual running WebGPU scene (not a
+ * synthetic test harness), each assigning a cube texture to
+ * `scene.environmentTexture` and screenshotting the result:
+ *
+ *   1. Real production texture (this file's actual 64px gradient faces),
+ *      assigned synchronously like createGardenLighting does: BLACK SCREEN.
+ *      Confirms the documented bug still reproduces.
+ *   2. `RawCubeTexture` (raw `Uint8Array` RGBA pixel data, bypassing
+ *      `createCubeTextureBase`, the ImageBitmap loader, AND the
+ *      extension-based texture-loader lookup entirely — the most different
+ *      construction path available in this Babylon version) with the same
+ *      64px gradient content: BLACK SCREEN. Rules out "the loader/decode
+ *      path is the bug" — an earlier hypothesis (a silently-unresolved
+ *      `createImageBitmap` load) that seemed plausible from reading
+ *      Babylon's source, but empirically wrong: `__probeCubeTexture`
+ *      separately confirmed every face DOES finish loading
+ *      (`isReady() === true`, `onLoad` fires) before the black screen even
+ *      appears.
+ *   3. `RawCubeTexture`, 8px instead of 64px, mipmaps OFF instead of ON,
+ *      same gradient content: still BLACK SCREEN. Rules out size and
+ *      mipmap generation as the trigger.
+ *   4. `RawCubeTexture`, 8px, no mipmaps, but a FLAT single solid color on
+ *      every face (`#ff0000`, fully saturated): renders FINE — scene stays
+ *      lit, and the flat red tint is visibly reflected in the habitat
+ *      bodies' ambient response. Same result with a flat pastel color
+ *      (`#fff3d9`, matching one of the real gradient's color stops) — rules
+ *      out "bright/saturated colors specifically" as the trigger.
+ *   5. `RawCubeTexture`, 8px, a HARD two-color split within a single face
+ *      (opaque top half one color, bottom half another — spatial variation,
+ *      but no smooth interpolation): BLACK SCREEN. Rules out "smooth
+ *      gradient interpolation specifically" — any non-uniform content
+ *      within a face is enough.
+ *   6. `RawCubeTexture`, 8px, each face internally uniform but a DIFFERENT
+ *      flat color per face (warm top / cool-green bottom / mid-green
+ *      sides — a coarse flat-banded approximation of the real gradient):
+ *      still BLACK SCREEN. So the trigger isn't even "variation within a
+ *      face" specifically — a perfectly-uniform-per-face-but-varying-
+ *      across-faces cube ALSO crashes. Only a cube that is the same single
+ *      color on literally every texel, on every face, survives.
+ *
+ * Conclusion: the crash isn't triggered by texture *construction* (data URL
+ * vs. raw pixels), *size*, *mipmaps*, or *color values* — it's triggered by
+ * the cube having ANY non-uniform content at all. That strongly points to
+ * Babylon's environment-texture spherical-harmonics/irradiance computation
+ * (which reduces all 6 faces into one set of coefficients for the PBR
+ * shader's diffuse IBL term) hitting a broken codepath on this project's
+ * WebGPU backend specifically when there's real per-texel variation to
+ * reduce — a uniform cube is a degenerate trivial case (the "reduction" is
+ * just the one color, no real compute pass needed) that likely takes a
+ * different, working codepath. This held true even for `RawCubeTexture`,
+ * which doesn't expose a `createPolynomials` flag — so `scene.
+ * environmentTexture`'s setter (or the PBR shader's first use of it) must
+ * be triggering that computation internally regardless of texture class.
+ *
+ * This also answers whether a uniform-color cube is worth shipping as a
+ * partial fix: no. A same-color-on-every-texel cube carries zero directional
+ * information — it's indistinguishable from the existing HemisphericLight
+ * fill (src/render/lighting.ts) already providing a single ambient color.
+ * Shipping it would add a texture binding and material complexity for a
+ * visual result players already get for free from the fill light. The
+ * entire point of an environment texture — a warm-sky-above/cool-ground-
+ * below directional ambient split — requires non-uniform content, which is
+ * exactly the condition that crashes.
+ *
+ * `EquiRectangularCubeTexture` was considered and ruled out WITHOUT a live
+ * test — by inference from probes 2-6 above, not empirically confirmed the
+ * same way the black screen itself was reproduced: it takes a URL and
+ * internally reconstructs 6 cube faces via a `createCubeTextureBase`-
+ * derived path, and probes 2-6 already showed the trigger is the cube's
+ * *content* (uniform vs. non-uniform), not which construction path built
+ * it — CubeTexture, RawCubeTexture, size, and mipmap settings all varied
+ * across those probes with content held non-uniform, and all crashed
+ * identically. EquiRectangularCubeTexture would need genuinely non-uniform
+ * content to be useful (same as the cube-based approach), so by that
+ * inference it's expected to hit the same wall — but this specific class
+ * was not itself constructed and tested live, so treat this one conclusion
+ * as reasoned-from-evidence rather than directly observed.
+ * `CreateFromPrefilteredData` was also ruled out: it loads a
+ * pre-baked `.env` file, which requires either a third-party asset or an
+ * offline baking tool this project has no engine-side authority to run
+ * against a procedural texture at runtime — incompatible with the "original
+ * assets, generated in-code" constraint (docs/ASSET_CREDITS.md).
  *
  * Given a broken game is a strictly worse outcome than a missing ambient
- * reflection contribution, this gates the assignment to WebGL only
- * (`!scene.getEngine().isWebGPU`) until Babylon ships a fix or this is
- * re-investigated with more time. The tuned directional key + hemispheric
- * fill lights (src/render/lighting.ts) remain the dominant, WebGPU-safe
- * lighting read in the meantime and were re-balanced with this limitation
- * in mind.
+ * reflection contribution, and no genuinely useful (non-uniform) content
+ * survives the WebGPU codepath, this keeps gating the assignment to WebGL
+ * only (`!scene.getEngine().isWebGPU`) until Babylon ships a fix. The tuned
+ * directional key + hemispheric fill lights (src/render/lighting.ts) remain
+ * the dominant, WebGPU-safe lighting read in the meantime.
  */
 export function createGardenEnvironment(scene: Scene): CubeTexture {
   if (cached) return cached;
