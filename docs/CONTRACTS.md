@@ -99,7 +99,7 @@ Each in `src/data/`, plain typed objects/arrays, no class logic:
 
 ## Asset manifest (owned by C, consumed by E/F)
 
-`assets/manifest.json` — every asset keyed by a stable string the renderer/UI look up by, e.g.:
+Source SVGs live under `public/assets/` (Vite's publicDir — served at `/assets/...` in both dev and the production build; NOT top-level `assets/`, which Vite never copies into `dist/`). `public/assets/manifest.json` keys every asset by a stable string the renderer/UI look up by, e.g.:
 ```json
 {
   "sprout.ember.idle": "assets/sprouts/ember/idle.svg",
@@ -111,7 +111,7 @@ Each in `src/data/`, plain typed objects/arrays, no class logic:
   "ui.icon.gardenSlide": "assets/ui/icons/gardenSlide.svg"
 }
 ```
-Same key pattern for dew/sun/star sprouts, all three habitats, garden slide, colour gate, paths, scenery, particles, UI icons. C delivers SVG source; E rasterizes/loads at runtime. Pipeline: SVG source committed under `assets/`, loaded as Babylon dynamic textures / sprite sheets at runtime — no separate build-time raster step required for Phase 1.
+Same key pattern for dew/sun/star sprouts, all three habitats, garden slide, colour gate, paths, scenery, particles, UI icons. C delivers SVG source; E rasterizes it at runtime (`src/render/assets.ts`: `<img>` decode -> canvas -> Babylon `DynamicTexture`, NOT Babylon's plain `Texture` loader — Chromium's `createImageBitmap`, which Babylon's WebGPU path uses internally, cannot decode SVG and throws `InvalidStateError`; `<img>` decodes the same SVG fine). No separate build-time raster step is needed — rasterization happens client-side on first use.
 
 ## Audio
 

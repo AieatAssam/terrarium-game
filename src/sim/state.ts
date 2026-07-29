@@ -28,6 +28,14 @@ export interface AutomationInstance {
   automationId: AutomationId;
   fromTile: TileCoord;
   toTile: TileCoord;
+  /** Tick this instance was built — `singleHabitatFeedTicks` (unlocks.ts) is derived as `tickCount - builtAtTick`. */
+  builtAtTick: number;
+  /** gardenSlide only: the one habitat it feeds. colourGate routes dynamically per-sprout and leaves this undefined. */
+  targetHabitatId?: HabitatId;
+  /** Sprout currently riding this automation, if any — one in flight at a time per instance. */
+  carryingSproutId: string | null;
+  /** Tick at which the in-flight transport completes, if carrying. */
+  completesAtTick: number | null;
 }
 
 export interface SimState {
@@ -45,9 +53,15 @@ export interface SimState {
   upgradeLevels: Partial<Record<UpgradeId, number>>;
   unlockedAchievements: AchievementId[];
   journalDiscovered: SproutTypeId[];
+  /** Accumulated ms toward the next nursery pod spawn (podRhythm-adjusted). */
+  spawnAccumulatorMs: number;
+  /** Correct manual-or-automated placements ever made; gates gardenSlide's unlock. */
+  correctPlacementCount: number;
+  /** Fractional Dewdrop remainder per habitat not yet flushed into `dewdrops` as a whole unit. */
+  habitatDewdropFraction: Partial<Record<HabitatId, number>>;
 }
 
-export const SIM_SHAPE_VERSION = 1;
+export const SIM_SHAPE_VERSION = 2;
 
 export function createInitialSimState(seed: number): SimState {
   return {
@@ -62,5 +76,8 @@ export function createInitialSimState(seed: number): SimState {
     upgradeLevels: {},
     unlockedAchievements: [],
     journalDiscovered: [],
+    spawnAccumulatorMs: 0,
+    correctPlacementCount: 0,
+    habitatDewdropFraction: {},
   };
 }

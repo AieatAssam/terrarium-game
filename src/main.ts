@@ -2,6 +2,7 @@ import { bootstrap } from './core/bootstrap';
 import { EventBus } from './events';
 import { initInput } from './input/index';
 import { initRenderer } from './render/index';
+import { startSimRuntime } from './sim/runtime';
 import { mountUI } from './ui';
 
 const root = document.getElementById('app');
@@ -10,17 +11,28 @@ if (!root) {
 }
 
 // Composition root. Kept intentionally tiny: bootstrap() builds
-// {engine, scene}; render/index.ts + input/index.ts (Subagent E) do the
-// rest. `bus` is hoisted above bootstrap() (was previously created inside
-// the .then() below) so Subagent F's UI/audio can mount synchronously on the
-// SAME bus instance sim/render will use, without waiting on Babylon engine
-// setup — the onboarding callout must be visible well within 5s regardless
-// of asset/engine load time.
+// {engine, scene}; render/index.ts + input/index.ts (Subagent E) render and
+// pick against it; src/sim/runtime.ts owns all gameplay (spawning,
+// placement, Dewdrops, automation, upgrades, achievements), driven purely
+// over the shared bus — nothing here simulates anything itself. `bus` is
+// hoisted above bootstrap() so Subagent F's UI/audio can mount synchronously
+// on the SAME bus instance sim/render will use, without waiting on Babylon
+// engine setup — the onboarding callout must be visible well within 5s
+// regardless of asset/engine/sim-load time.
 const bus = new EventBus();
+
+// Sim doesn't need the Babylon engine/scene at all — start it immediately,
+// in parallel with bootstrap()/UI mount, so Dewdrops/spawns/automation begin
+// on their own clock rather than waiting on asset or engine load.
+const simRuntimePromise = startSimRuntime(bus);
 
 // F: onboarding/HUD/build menu/panels + the Web Audio synth system. Mounted
 // immediately, before the async bootstrap() below, on purpose.
-const ui = mountUI(document.body, bus);
+const ui = mountUI(document.body, bus, {
+  onPurchaseUpgrade: (upgradeId) => {
+    void simRuntimePromise.then((sim) => sim.purchaseUpgrade(upgradeId));
+  },
+});
 
 void bootstrap(root).then((result) => {
   if (!result) return; // bootstrap already showed the fatal-error UI
@@ -34,6 +46,7 @@ void bootstrap(root).then((result) => {
       renderer.dispose();
       dispose();
       ui.dispose();
+      void simRuntimePromise.then((sim) => sim.dispose());
     });
   });
 });

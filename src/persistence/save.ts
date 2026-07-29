@@ -6,7 +6,7 @@
 import type { SimState } from '../sim/state';
 import { idbDelete, idbGet, idbSet } from './db';
 
-export const CURRENT_SAVE_VERSION = 1;
+export const CURRENT_SAVE_VERSION = 2;
 
 const SAVE_KEY = 'default';
 
@@ -38,13 +38,37 @@ export async function clearSave(): Promise<void> {
 }
 
 /**
- * v1 -> v1 is a no-op. When SimState shape changes, bump
- * CURRENT_SAVE_VERSION, add a `case N` here that upgrades an (N)-envelope to
- * an (N+1)-envelope, and let it fall through to the next case.
+ * When SimState shape changes, bump CURRENT_SAVE_VERSION, add a `case N`
+ * here that upgrades an (N)-envelope to an (N+1)-envelope, and let it fall
+ * through to the next case.
  */
 function migrateEnvelope(envelope: SaveEnvelope): SaveEnvelope {
   switch (envelope.version) {
-    case 1:
+    case 1: {
+      // v1 SimState predates spawnAccumulatorMs/correctPlacementCount/
+      // habitatDewdropFraction and AutomationInstance's builtAtTick/
+      // targetHabitatId/carryingSproutId/completesAtTick (added in v2's
+      // gameplay-systems pass). Backfill defaults and fall through.
+      const sim = envelope.sim as unknown as Omit<SimState, 'automations'> &
+        Partial<Pick<SimState, 'spawnAccumulatorMs' | 'correctPlacementCount' | 'habitatDewdropFraction'>> & {
+          automations: Array<Partial<SimState['automations'][number]>>;
+        };
+      const migratedSim: SimState = {
+        ...sim,
+        shapeVersion: 2,
+        spawnAccumulatorMs: sim.spawnAccumulatorMs ?? 0,
+        correctPlacementCount: sim.correctPlacementCount ?? 0,
+        habitatDewdropFraction: sim.habitatDewdropFraction ?? {},
+        automations: sim.automations.map((a) => ({
+          builtAtTick: 0,
+          carryingSproutId: null,
+          completesAtTick: null,
+          ...a,
+        })) as SimState['automations'],
+      };
+      return migrateEnvelope({ ...envelope, version: 2, sim: migratedSim });
+    }
+    case 2:
       return envelope;
     default:
       // Unknown version (older pre-migration save, or a newer one this build

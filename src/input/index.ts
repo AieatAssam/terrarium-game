@@ -1,0 +1,283 @@
+// Pointer/touch input: single owner of every raw pointer/wheel event on the
+// canvas, so there's exactly one place deciding "is this gesture a camera
+// pan/pinch, or a Sprout drag" (src/render/camera.ts intentionally exposes
+// only an imperative pan/zoom API, no listeners of its own — see its
+// top-of-file comment). Also drives the automation build-menu ghost preview
+// on behalf of Subagent F's UI (which owns the menu chrome itself).
+//
+// Outbound intent: per docs/CONTRACTS.md, `sprout:dropped { sproutId,
+// overHabitat }` IS the "player attempted to place X here" event — there's
+// no separate contract member for it, so this module emits that (plus
+// `sprout:pickedUp` on drag start) directly onto the shared bus. See this
+// session's report for why nothing currently adjudicates it into
+// placed:correct/incorrect without src/render/gameplayStopgap.ts's DEV-only
+// stand-in.
+
+import { Matrix, Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Plane } from '@babylonjs/core/Maths/math.plane';
+// Side-effect import: without this, Scene.prototype.createPickingRay is a
+// stub that throws — deep-imported Babylon modules don't auto-register this
+// extension (see the equivalent gotcha documented in src/render/particles.ts
+// for createDynamicTexture).
+import '@babylonjs/core/Culling/ray';
+
+import type { AutomationId, HabitatId } from '../core/ids';
+import { HABITATS } from '../data/habitats';
+import type { EventBus } from '../events/bus';
+import type { RendererHandle } from '../render/index';
+import { worldToTile, type TileCoord } from '../render/coords';
+
+const GROUND_PLANE = new Plane(0, 1, 0, 0); // y = 0
+const DRAG_HEIGHT_PLANE = new Plane(0, 1, 0, -0.8); // matches SPROUT_FLOAT_HEIGHT in sprouts.ts
+const HOVER_RADIUS_TILES = 1;
+const PAN_SPEED = 0.0026;
+const WHEEL_ZOOM_SENSITIVITY = 0.01;
+const PINCH_ZOOM_SENSITIVITY = 1;
+
+export interface InputHandle {
+  /** Screen point -> tile, for Subagent F's build menu to track where a ghost preview should appear. Null if the ray doesn't hit the ground plane (shouldn't normally happen with this camera). */
+  screenToTile: (clientX: number, clientY: number) => TileCoord | null;
+  previewAutomation: (automationId: AutomationId, tile: TileCoord) => void;
+  clearAutomationPreview: () => void;
+  dispose: () => void;
+}
+
+interface PointerState {
+  x: number;
+  y: number;
+}
+
+export function initInput(renderer: RendererHandle, bus: EventBus): InputHandle {
+  const { scene, canvas, camera, habitats, sprouts, automation, isBuildableTile } = renderer;
+
+  canvas.style.touchAction = 'none';
+
+  const activePointers = new Map<number, PointerState>();
+  let dragSproutId: string | null = null;
+  let dragPointerId: number | null = null;
+  let panPointerId: number | null = null;
+  let pinching = false;
+  let pinchStartDistance = 0;
+  let pinchStartRadius = 0;
+
+  const canvasPoint = (event: PointerEvent): { x: number; y: number } => {
+    const rect = canvas.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  };
+
+  const groundPointAt = (x: number, y: number, plane: Plane): { x: number; z: number } | null => {
+    const ray = scene.createPickingRay(x, y, Matrix.Identity(), camera.camera);
+    const distance = ray.intersectsPlane(plane);
+    console.debug(
+      '[terrarium/debug ray] ' +
+        JSON.stringify({
+          x,
+          y,
+          rayOrigin: ray.origin.asArray(),
+          rayDir: ray.direction.asArray(),
+          camPos: camera.camera.position.asArray(),
+          camTarget: camera.camera.target.asArray(),
+          renderW: scene.getEngine().getRenderWidth(),
+          renderH: scene.getEngine().getRenderHeight(),
+          canvasClientW: canvas.clientWidth,
+          canvasClientH: canvas.clientHeight,
+          distance,
+        }),
+    );
+    if (distance === null) return null;
+    const point = ray.origin.add(ray.direction.scale(distance));
+    return { x: point.x, z: point.z };
+  };
+
+  // Sprout sprites are thin BILLBOARDMODE_Y planes — `scene.pick`'s
+  // triangle-intersection test against a billboarded mesh's world matrix
+  // turned out unreliable in manual QA (the ray consistently sailed past the
+  // plane and hit the ground behind it instead, even dead-center on the
+  // visible sprite). Instead: cast the ray against the same fixed height
+  // plane Sprouts float at (SPROUT_FLOAT_HEIGHT, mirrored here as
+  // DRAG_HEIGHT_PLANE) and pick whichever live Sprout's XZ position is
+  // closest to that point, within a generous radius — simpler, and more
+  // forgiving for touch besides.
+  const SPROUT_PICK_RADIUS = 0.55;
+
+  const pickSproutId = (x: number, y: number): string | null => {
+    const ground = groundPointAt(x, y, DRAG_HEIGHT_PLANE);
+    if (!ground) return null;
+    let closestId: string | null = null;
+    let closestDist = SPROUT_PICK_RADIUS;
+    const all = sprouts.all().map((v) => ({
+      id: v.id,
+      pos: { x: v.mesh.position.x, z: v.mesh.position.z },
+      dist: Math.hypot(v.mesh.position.x - ground.x, v.mesh.position.z - ground.z),
+    }));
+    console.debug('[terrarium/debug pick] ' + JSON.stringify({ x, y, ground, all }));
+    for (const visual of sprouts.all()) {
+      if (visual.held || visual.state === 'settled') continue;
+      const dist = Math.hypot(visual.mesh.position.x - ground.x, visual.mesh.position.z - ground.z);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestId = visual.id;
+      }
+    }
+    return closestId;
+  };
+
+  const habitatMatch = (habitatId: HabitatId | null, sproutId: string | null): boolean | null => {
+    if (!habitatId || !sproutId) return null;
+    const visual = sprouts.get(sproutId);
+    if (!visual) return null;
+    return HABITATS[habitatId].matchSproutType === visual.sproutType;
+  };
+
+  const endDrag = (x: number, y: number): void => {
+    if (!dragSproutId) return;
+    const ground = groundPointAt(x, y, GROUND_PLANE);
+    const overHabitat = ground ? habitats.nearestWithin(ground, HOVER_RADIUS_TILES) : null;
+    bus.emit({ type: 'sprout:dropped', sproutId: dragSproutId, overHabitat });
+    habitats.setHover(null, null);
+    sprouts.setDragValidity(dragSproutId, null);
+    dragSproutId = null;
+    dragPointerId = null;
+  };
+
+  const handlePointerDown = (event: PointerEvent): void => {
+    const { x, y } = canvasPoint(event);
+    console.debug('[terrarium/debug pointerdown] ' + JSON.stringify({ x, y, activeBefore: activePointers.size }));
+    activePointers.set(event.pointerId, { x, y });
+    canvas.setPointerCapture(event.pointerId);
+
+    if (activePointers.size === 2 && dragSproutId === null) {
+      const pts = Array.from(activePointers.values());
+      pinching = true;
+      panPointerId = null;
+      pinchStartDistance = distanceBetween(pts[0], pts[1]);
+      pinchStartRadius = camera.camera.radius;
+      return;
+    }
+
+    if (activePointers.size === 1) {
+      const sproutId = pickSproutId(x, y);
+      if (sproutId) {
+        const visual = sprouts.get(sproutId);
+        if (visual && !visual.held && visual.state !== 'settled') {
+          dragSproutId = sproutId;
+          dragPointerId = event.pointerId;
+          visual.held = true;
+          bus.emit({ type: 'sprout:pickedUp', sproutId });
+          const ground = groundPointAt(x, y, DRAG_HEIGHT_PLANE);
+          if (ground) sprouts.setDragPosition(sproutId, ground.x, ground.z);
+          return;
+        }
+      }
+      panPointerId = event.pointerId;
+    }
+  };
+
+  const handlePointerMove = (event: PointerEvent): void => {
+    if (!activePointers.has(event.pointerId)) return;
+    const { x, y } = canvasPoint(event);
+    activePointers.set(event.pointerId, { x, y });
+
+    if (pinching && activePointers.size >= 2) {
+      const pts = Array.from(activePointers.values()).slice(0, 2);
+      const distance = distanceBetween(pts[0], pts[1]);
+      if (distance > 0 && pinchStartDistance > 0) {
+        const scale = distance / pinchStartDistance;
+        camera.setRadius(pinchStartRadius / Math.max(0.05, scale) ** PINCH_ZOOM_SENSITIVITY);
+      }
+      return;
+    }
+
+    if (dragSproutId && event.pointerId === dragPointerId) {
+      const ground = groundPointAt(x, y, DRAG_HEIGHT_PLANE);
+      if (!ground) return;
+      sprouts.setDragPosition(dragSproutId, ground.x, ground.z);
+      const habitatId = habitats.nearestWithin(ground, HOVER_RADIUS_TILES);
+      const valid = habitatMatch(habitatId, dragSproutId);
+      habitats.setHover(habitatId, valid);
+      sprouts.setDragValidity(dragSproutId, habitatId ? valid : null);
+      return;
+    }
+
+    if (panPointerId !== null && event.pointerId === panPointerId) {
+      const prev = lastPanPoint;
+      if (prev) {
+        const dx = x - prev.x;
+        const dy = y - prev.y;
+        const right = camera.camera.getDirection(Vector3.Right());
+        const forward = camera.camera.getDirection(Vector3.Forward());
+        const rightGround = normalizeGround(right.x, right.z);
+        const forwardGround = normalizeGround(forward.x, forward.z);
+        const speed = PAN_SPEED * camera.camera.radius;
+        camera.panBy(
+          -(rightGround.x * dx + forwardGround.x * dy) * speed,
+          -(rightGround.z * dx + forwardGround.z * dy) * speed,
+        );
+      }
+      lastPanPoint = { x, y };
+    }
+  };
+
+  let lastPanPoint: PointerState | null = null;
+
+  const handlePointerUp = (event: PointerEvent): void => {
+    const { x, y } = canvasPoint(event);
+    if (dragSproutId && event.pointerId === dragPointerId) {
+      endDrag(x, y);
+    }
+    if (panPointerId === event.pointerId) {
+      panPointerId = null;
+      lastPanPoint = null;
+    }
+    activePointers.delete(event.pointerId);
+    if (activePointers.size < 2) pinching = false;
+    if (canvas.hasPointerCapture?.(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+
+    // If a pointer remains after ending a pinch/drag, let it resume panning.
+    if (activePointers.size === 1 && !dragSproutId && !pinching) {
+      const [[id, pt]] = Array.from(activePointers.entries());
+      panPointerId = id;
+      lastPanPoint = pt;
+    }
+  };
+
+  const handleWheel = (event: WheelEvent): void => {
+    event.preventDefault();
+    camera.zoomBy(-event.deltaY * WHEEL_ZOOM_SENSITIVITY);
+  };
+
+  canvas.addEventListener('pointerdown', handlePointerDown);
+  canvas.addEventListener('pointermove', handlePointerMove);
+  canvas.addEventListener('pointerup', handlePointerUp);
+  canvas.addEventListener('pointercancel', handlePointerUp);
+  canvas.addEventListener('wheel', handleWheel, { passive: false });
+
+  const screenToTile = (clientX: number, clientY: number): TileCoord | null => {
+    const rect = canvas.getBoundingClientRect();
+    const ground = groundPointAt(clientX - rect.left, clientY - rect.top, GROUND_PLANE);
+    return ground ? worldToTile(ground) : null;
+  };
+
+  const previewAutomation = (automationId: AutomationId, tile: TileCoord): void => {
+    automation.previewAt(automationId, tile, isBuildableTile(tile));
+  };
+
+  const dispose = (): void => {
+    canvas.removeEventListener('pointerdown', handlePointerDown);
+    canvas.removeEventListener('pointermove', handlePointerMove);
+    canvas.removeEventListener('pointerup', handlePointerUp);
+    canvas.removeEventListener('pointercancel', handlePointerUp);
+    canvas.removeEventListener('wheel', handleWheel);
+  };
+
+  return { screenToTile, previewAutomation, clearAutomationPreview: automation.clearPreview, dispose };
+}
+
+function distanceBetween(a: PointerState, b: PointerState): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function normalizeGround(x: number, z: number): { x: number; z: number } {
+  const len = Math.hypot(x, z) || 1;
+  return { x: x / len, z: z / len };
+}
