@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+<defs><radialGradient id="sprouts-star-walk-bodyGrad" cx="35%" cy="28%" r="80%"><stop offset="0%" stop-color="#FDE8FF"/><stop offset="55%" stop-color="#B98CFF"/><stop offset="100%" stop-color="#7C4FD1"/></radialGradient><linearGradient id="sprouts-star-walk-accentGrad" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="#B98CFF"/><stop offset="100%" stop-color="#FFD9F5"/></linearGradient><radialGradient id="sprouts-star-walk-shadowGrad" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#5E37A8" stop-opacity="0.35"/><stop offset="100%" stop-color="#5E37A8" stop-opacity="0"/></radialGradient><filter id="sprouts-star-walk-softBlur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3"/></filter></defs>
+<ellipse cx="120.00" cy="176.17" rx="42.18" ry="10.66" fill="url(#sprouts-star-walk-shadowGrad)"/>
+<g opacity="0.45" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" fill="none"><path d="M 66.72,119.56 l -12.43,0"/><path d="M 57.84,129.33 l -12.43,0"/><path d="M 48.96,139.10 l -12.43,0"/></g>
+<g transform="translate(120.00 124.00) rotate(-6) scale(1.04 0.95) translate(-120.00 -124.00)">
+<path d="M 84.48,124.00 L 61.53,115.65" stroke="#7C4FD1" stroke-width="7.1" stroke-linecap="round" fill="none"/>
+<path d="M 155.52,124.00 L 178.47,115.65" stroke="#7C4FD1" stroke-width="7.1" stroke-linecap="round" fill="none"/>
+<path d="M 107.57,161.74 L 105.10,175.73" stroke="#7C4FD1" stroke-width="7.1" stroke-linecap="round" fill="none"/>
+<path d="M 132.43,161.74 L 139.54,174.04" stroke="#7C4FD1" stroke-width="7.1" stroke-linecap="round" fill="none"/>
+<path d="M 118.59,46.07 Q 120.00,41.86 121.41,46.07 L 134.57,85.50 Q 138.79,98.14 152.11,98.25 L 193.68,98.58 Q 198.12,98.62 194.55,101.26 L 161.12,125.96 Q 150.40,133.88 154.42,146.58 L 166.94,186.22 Q 168.28,190.45 164.67,187.87 L 130.84,163.71 Q 120.00,155.97 109.16,163.71 L 75.33,187.87 Q 71.72,190.45 73.06,186.22 L 85.58,146.58 Q 89.60,133.88 78.88,125.96 L 45.45,101.26 Q 41.88,98.62 46.32,98.58 L 87.89,98.25 Q 101.21,98.14 105.43,85.50 Z" fill="#7C4FD1" stroke="#5E37A8" stroke-width="2" stroke-linejoin="round"/>
+<path d="M 151.70,124.00 C 151.70,129.09 149.12,134.74 146.45,139.27 C 143.78,143.80 140.10,148.55 135.70,151.19 C 131.29,153.82 125.18,155.17 120.00,155.08 C 114.82,154.99 109.18,153.19 104.62,150.65 C 100.05,148.10 95.13,144.25 92.62,139.81 C 90.11,135.37 89.54,129.27 89.54,124.00 C 89.54,118.73 90.11,112.63 92.62,108.19 C 95.13,103.75 100.05,99.90 104.62,97.35 C 109.18,94.81 114.82,93.01 120.00,92.92 C 125.18,92.83 131.29,94.18 135.70,96.81 C 140.10,99.45 143.78,104.20 146.45,108.73 C 149.12,113.26 151.70,118.91 151.70,124.00 Z" fill="url(#sprouts-star-walk-bodyGrad)" stroke="#5E37A8" stroke-width="3" stroke-linejoin="round"/>
+<ellipse cx="110.23" cy="106.24" rx="15.10" ry="8.88" fill="#FFFFFF" opacity="0.28"/>
+<ellipse cx="96.91" cy="130.22" rx="5.77" ry="3.55" fill="#FFD9F5" opacity="0.6"/><ellipse cx="143.09" cy="130.22" rx="5.77" ry="3.55" fill="#FFD9F5" opacity="0.6"/>
+<circle cx="104.90" cy="121.34" r="5.33" fill="#4A3728"/><circle cx="106.77" cy="119.47" r="1.70" fill="#FFFFFF"/><circle cx="135.10" cy="121.34" r="5.33" fill="#4A3728"/><circle cx="136.96" cy="119.47" r="1.70" fill="#FFFFFF"/>
+<path d="M 112.90,135.54 Q 120.00,141.76 127.10,135.54" stroke="#4A3728" stroke-width="2.00" stroke-linecap="round" fill="none"/>
+</g>
+</svg>
