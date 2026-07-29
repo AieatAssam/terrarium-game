@@ -1,4 +1,9 @@
-// Stub — types + ids are final, values are placeholders for Subagent B.
+// Real balance values (Subagent B, Phase 2). Each achievement's `condition`
+// narrows the GameEvent for its `triggerEvent` type — the achievement system
+// (whoever wires it up) should call `condition(event)` only when
+// `event.type === triggerEvent` AND the achievement isn't already unlocked;
+// "first X" semantics come from that already-unlocked check, not from state
+// tracked here (this module stays a pure, stateless table).
 
 import type { AchievementId } from '../core/ids';
 import type { GameEvent, GameEventType } from '../events/types';
@@ -8,9 +13,8 @@ export interface AchievementDefinition {
   displayName: string;
   /** Which bus event type can possibly satisfy this achievement. */
   triggerEvent: GameEventType;
-  /** TODO(B): real condition logic. Placeholder always fires on trigger. */
+  /** Extra condition beyond "this event type happened" (e.g. which sprout/upgrade). */
   condition: (event: GameEvent) => boolean;
-  /** TODO(B): copy. */
   rewardText: string;
 }
 
@@ -19,38 +23,43 @@ const alwaysTrue = (_event: GameEvent): boolean => true;
 export const ACHIEVEMENTS: Record<AchievementId, AchievementDefinition> = {
   firstPlacement: {
     id: 'firstPlacement',
-    displayName: 'TODO(B): First Placement',
+    displayName: 'First Placement',
     triggerEvent: 'sprout:placed:correct',
+    // Any correct placement qualifies — "first" comes from the unlocked-check, not this condition.
     condition: alwaysTrue,
-    rewardText: 'TODO(B)',
+    rewardText: 'You guided your first Sprout home. The garden remembers.',
   },
   firstAutomation: {
     id: 'firstAutomation',
-    displayName: 'TODO(B): First Automation',
+    displayName: 'First Automation',
     triggerEvent: 'automation:built',
+    // Any automation instance being built qualifies (in practice this is always Garden Slide first).
     condition: alwaysTrue,
-    rewardText: 'TODO(B)',
+    rewardText: 'The Garden Slide is built — your Sprouts can find their own way now.',
   },
   firstFullHabitat: {
     id: 'firstFullHabitat',
-    displayName: 'TODO(B): First Full Habitat',
+    displayName: 'First Full Habitat',
     triggerEvent: 'habitat:full',
+    // Any habitat reaching capacity qualifies, whichever one it is.
     condition: alwaysTrue,
-    rewardText: 'TODO(B)',
+    rewardText: "A habitat is full to the brim — maybe it's time to make more room.",
   },
   firstRareSprout: {
     id: 'firstRareSprout',
-    displayName: 'TODO(B): First Rare Sprout',
+    displayName: 'First Rare Sprout',
     triggerEvent: 'sprout:spawned',
-    condition: alwaysTrue,
-    rewardText: 'TODO(B)',
+    // Not every spawn is rare: only fires for the Star Sprout specifically.
+    condition: (event) => event.type === 'sprout:spawned' && event.sproutType === 'star',
+    rewardText: 'A Star Sprout! It settles happily in any habitat you choose.',
   },
   firstExpansion: {
     id: 'firstExpansion',
-    displayName: 'TODO(B): First Expansion',
+    displayName: 'First Expansion',
     triggerEvent: 'upgrade:purchased',
-    condition: alwaysTrue,
-    rewardText: 'TODO(B)',
+    // Specifically the decorative expansion upgrade, not just any purchase.
+    condition: (event) => event.type === 'upgrade:purchased' && event.upgradeId === 'decorativeExpansion1',
+    rewardText: 'New scenery takes root. The garden is starting to feel like yours.',
   },
 };
 

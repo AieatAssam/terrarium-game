@@ -1,40 +1,59 @@
-// Stub — types + ids are final, values are placeholders for Subagent B.
+// Real balance values (Subagent B, Phase 2). See docs/GAME_DESIGN.md
+// ("Progression math") for how baseCapacity/baseDewdropRate were derived and
+// how they interact with the habitatCapacity and dewdropMultiplier upgrades.
 
 import type { HabitatId, SproutTypeId } from '../core/ids';
+import { UPGRADES } from './upgrades';
 
 export interface HabitatDefinition {
   id: HabitatId;
   displayName: string;
-  /** TODO(B): balance. Max Sprouts this habitat can hold before "full". */
+  /** Max Sprouts this habitat can hold before "full", before upgrades. */
   baseCapacity: number;
-  /** TODO(B): balance. Dewdrops produced per occupied habitat per tick. */
+  /** Dewdrops produced per occupied (settled) Sprout per 100ms sim tick. */
   baseDewdropRate: number;
   /** The one Sprout type that correctly belongs here. */
   matchSproutType: SproutTypeId;
 }
 
+// All three habitats share the same capacity/rate on purpose — Phase 1 has
+// no reason to make one biome objectively better than another; asymmetry
+// would just bias which corner of the garden players rush toward first.
+const BASE_CAPACITY = 6;
+const BASE_DEWDROP_RATE = 0.02; // per settled Sprout per tick == 12 Dewdrops/min/Sprout at 10 ticks/sec
+
 export const HABITATS: Record<HabitatId, HabitatDefinition> = {
   emberNook: {
     id: 'emberNook',
-    displayName: 'TODO(B): Ember Nook',
-    baseCapacity: 0,
-    baseDewdropRate: 0,
+    displayName: 'Ember Nook',
+    baseCapacity: BASE_CAPACITY,
+    baseDewdropRate: BASE_DEWDROP_RATE,
     matchSproutType: 'ember',
   },
   dewPond: {
     id: 'dewPond',
-    displayName: 'TODO(B): Dew Pond',
-    baseCapacity: 0,
-    baseDewdropRate: 0,
+    displayName: 'Dew Pond',
+    baseCapacity: BASE_CAPACITY,
+    baseDewdropRate: BASE_DEWDROP_RATE,
     matchSproutType: 'dew',
   },
   sunflowerMeadow: {
     id: 'sunflowerMeadow',
-    displayName: 'TODO(B): Sunflower Meadow',
-    baseCapacity: 0,
-    baseDewdropRate: 0,
+    displayName: 'Sunflower Meadow',
+    baseCapacity: BASE_CAPACITY,
+    baseDewdropRate: BASE_DEWDROP_RATE,
     matchSproutType: 'sun',
   },
 };
 
 export const HABITAT_LIST: HabitatDefinition[] = Object.values(HABITATS);
+
+/**
+ * Effective capacity for a habitat once the (single, garden-wide)
+ * habitatCapacity upgrade is factored in. The upgrade applies uniformly to
+ * all three habitats — Phase 1 has no per-habitat upgrade instances.
+ */
+export function getEffectiveHabitatCapacity(habitatId: HabitatId, habitatCapacityLevel: number): number {
+  const base = HABITATS[habitatId].baseCapacity;
+  return base + habitatCapacityLevel * UPGRADES.habitatCapacity.effect.magnitudePerLevel;
+}
