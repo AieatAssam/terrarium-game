@@ -226,6 +226,58 @@ export const UI_CSS = /* css */ `
   height: 24px;
 }
 
+/* ---------- Dev-only debug panel ---------- */
+
+.tt-debug-panel {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: var(--tt-radius-lg);
+  border: 2px dashed #ff5c8a;
+  background: rgba(20, 10, 20, 0.82);
+  max-width: 260px;
+}
+
+.tt-debug-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #ff8fb3;
+}
+
+.tt-debug-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tt-debug-btn {
+  font-size: 12px;
+  padding: 6px 8px;
+  min-height: 32px;
+  border-radius: 8px;
+  border: 1px solid #ff8fb3;
+  background: #2a1420;
+  color: #fff;
+  cursor: pointer;
+}
+
+.tt-debug-btn-danger {
+  border-color: #ff4d4d;
+  color: #ffb3b3;
+}
+
+.tt-debug-status {
+  font-size: 11px;
+  color: #cbb;
+  min-height: 14px;
+}
+
 /* ---------- Onboarding callout ---------- */
 
 .tt-onboarding {

@@ -6,11 +6,13 @@
 // next tick, and owns load/autosave. This module — not src/render or
 // src/ui — is the only place SimState is mutated.
 
-import type { UpgradeId } from '../core/ids';
+import type { SproutTypeId, UpgradeId } from '../core/ids';
+import { isDev } from '../core/env';
 import type { EventBus } from '../events/bus';
 import type { GameEvent } from '../events/types';
 import { computeOfflineProgress } from '../data/offlineProgress';
 import { clearSave, loadGame, saveGame } from '../persistence';
+import { NURSERY_TILE } from './layout';
 import { advanceClock, createSimClock } from './loop';
 import { createInitialSimState, type SimState } from './state';
 import { adjudicatePlacement, checkAchievements, purchaseUpgrade as purchaseUpgradeSystem, TICK_SYSTEMS } from './systems';
@@ -23,6 +25,12 @@ export interface SimRuntime {
   resetSave: () => Promise<void>;
   getState: () => SimState;
   dispose: () => void;
+  /** Dev-only debug controls (brief: "spawning each Sprout type, including Star Sprout; granting Dewdrops; speeding simulation; and resetting save data"). No-ops in production — gated by isDev here, not just by whether a debug panel is mounted, so there's no live control surface even if something held a reference to this object in a prod build. */
+  debug: {
+    spawnSprout: (sproutType: SproutTypeId) => void;
+    grantDewdrops: (amount: number) => void;
+    setSpeedMultiplier: (multiplier: number) => void;
+  };
 }
 
 /** Applies a batch of events to `state` via the achievement checker, emits every event (originals + any achievement unlocks) onto the bus in order, and returns the final state. Centralizing this means achievements react identically regardless of whether the batch came from a tick or an immediate player action. */
@@ -62,6 +70,11 @@ export async function startSimRuntime(bus: EventBus, seed: number = Date.now()):
   let lastFrameTime = performance.now();
   let disposed = false;
   let rafHandle = 0;
+  // Dev-only "speed up simulation" debug control. Multiplies ticks-per-frame
+  // rather than the delta fed into advanceClock, so determinism/replay of
+  // the underlying tick sequence is unaffected — it just runs more of them
+  // per animation frame.
+  let speedMultiplier = 1;
 
   const step = (now: number): void => {
     if (disposed) return;
@@ -70,7 +83,8 @@ export async function startSimRuntime(bus: EventBus, seed: number = Date.now()):
     const advanced = advanceClock(clock, realDeltaMs);
     clock = advanced.clock;
 
-    for (let i = 0; i < advanced.ticksToRun; i += 1) {
+    const ticksToRun = advanced.ticksToRun * speedMultiplier;
+    for (let i = 0; i < ticksToRun; i += 1) {
       const result = runTick(state, TICK_SYSTEMS);
       state = commit(bus, result.state, result.events);
     }
@@ -97,6 +111,25 @@ export async function startSimRuntime(bus: EventBus, seed: number = Date.now()):
       await clearSave();
     },
     getState: () => state,
+    debug: {
+      spawnSprout: (sproutType) => {
+        if (!isDev) return;
+        const sprout = { id: `debug-sprout-${state.tickCount}-${state.sprouts.length}`, sproutType, tile: NURSERY_TILE, state: 'idle' as const };
+        state = { ...state, sprouts: [...state.sprouts, sprout] };
+        const event: GameEvent = { type: 'sprout:spawned', sproutId: sprout.id, sproutType, podId: 'debug' };
+        state = commit(bus, state, [event]);
+      },
+      grantDewdrops: (amount) => {
+        if (!isDev) return;
+        const total = state.dewdrops + amount;
+        state = { ...state, dewdrops: total };
+        state = commit(bus, state, [{ type: 'currency:dewdropsChanged', total, delta: amount }]);
+      },
+      setSpeedMultiplier: (multiplier) => {
+        if (!isDev) return;
+        speedMultiplier = Math.max(1, Math.round(multiplier));
+      },
+    },
     dispose: () => {
       disposed = true;
       cancelAnimationFrame(rafHandle);

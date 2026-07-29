@@ -32,6 +32,18 @@ const ui = mountUI(document.body, bus, {
   onPurchaseUpgrade: (upgradeId) => {
     void simRuntimePromise.then((sim) => sim.purchaseUpgrade(upgradeId));
   },
+  debug: {
+    spawnSprout: (sproutType) => {
+      void simRuntimePromise.then((sim) => sim.debug.spawnSprout(sproutType));
+    },
+    grantDewdrops: (amount) => {
+      void simRuntimePromise.then((sim) => sim.debug.grantDewdrops(amount));
+    },
+    setSpeedMultiplier: (multiplier) => {
+      void simRuntimePromise.then((sim) => sim.debug.setSpeedMultiplier(multiplier));
+    },
+    resetSave: () => simRuntimePromise.then((sim) => sim.resetSave()),
+  },
 });
 
 void bootstrap(root).then((result) => {

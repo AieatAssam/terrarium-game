@@ -17,6 +17,7 @@ import { createAudioSystem, type AudioSystem } from '../audio';
 import { createAchievementsPanel, createAchievementToastRegion } from './components/achievements';
 import { createBuildMenu, type BuildMenuHooks } from './components/buildMenu';
 import { createCreditsPanel } from './components/credits';
+import { createDebugPanel, type DebugPanelHooks } from './components/debugPanel';
 import { createHud } from './components/hud';
 import { createJournalPanel } from './components/journal';
 import { createNav } from './components/nav';
@@ -34,6 +35,8 @@ export interface MountUIOptions extends BuildMenuHooks {
   /** Inject an AudioSystem (e.g. in tests); otherwise one is created. */
   audio?: AudioSystem;
   onPurchaseUpgrade?: (upgradeId: UpgradeId) => void;
+  /** Dev-only debug controls — only rendered when isDev is true AND this is provided. */
+  debug?: DebugPanelHooks;
 }
 
 export interface UIHandle {
@@ -84,6 +87,7 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
   const settingsPanel = createSettingsPanel(audio);
   const creditsPanel = createCreditsPanel();
   const returnDialog = createReturnDialog(bus);
+  const debugPanel = isDev && options.debug ? createDebugPanel(options.debug) : undefined;
 
   preloadManifestIcons(['ui.icon.journal', 'ui.icon.settings', 'ui.icon.credits']);
 
@@ -138,6 +142,7 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
     creditsPanel.overlay,
     returnDialog.overlay,
   );
+  if (debugPanel) layer.append(debugPanel.element);
 
   return {
     audio,
@@ -153,6 +158,7 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
       achievementsPanel.dispose();
       settingsPanel.dispose();
       returnDialog.dispose();
+      debugPanel?.dispose();
       nav.dispose();
       store.dispose();
       if (!options.audio) audio.dispose();
