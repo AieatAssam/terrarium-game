@@ -85,6 +85,15 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
     })),
     on('save:loaded', (prev, event) => ({
       ...prev,
+      // Silent hydration from the restored save — deliberately does NOT
+      // touch lastAchievementUnlocked/lastBuiltAutomation, so old history
+      // doesn't replay a toast/SFX on load (see the GameEvent doc comment
+      // on save:loaded's snapshot field).
+      dewdropTotal: event.snapshot.dewdrops,
+      unlockedAutomations: new Set(event.snapshot.unlockedAutomations),
+      upgradeLevels: { ...event.snapshot.upgradeLevels },
+      unlockedAchievements: new Set(event.snapshot.unlockedAchievements),
+      journalDiscovered: new Set(event.snapshot.journalDiscovered),
       lastOfflineReturn:
         event.offlineDewdrops > 0
           ? { offlineSeconds: event.offlineSeconds, offlineDewdrops: event.offlineDewdrops }

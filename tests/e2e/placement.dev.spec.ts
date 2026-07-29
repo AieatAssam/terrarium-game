@@ -1,0 +1,85 @@
+import { expect, test } from '@playwright/test';
+import {
+  collectConsoleErrors,
+  dragNurseryToHabitat,
+  getRecordedEvents,
+  getUiState,
+  installBusRecorder,
+  waitForDevHooks,
+} from './helpers';
+
+test.describe('manual placement via real pointer drag', () => {
+  test('dragging a Sprout to its matching habitat settles it and earns Dewdrops', async ({ page }) => {
+    const console_ = collectConsoleErrors(page);
+    await page.goto('/');
+    await waitForDevHooks(page);
+    await installBusRecorder(page, ['sprout:placed:correct', 'sprout:placed:incorrect', 'sprout:settled']);
+
+    const before = await getUiState(page);
+    expect(before.dewdropTotal).toBe(0);
+    expect(before.journalDiscovered).toEqual([]);
+
+    await page.click('[data-testid="debug-spawn-ember"]');
+    await dragNurseryToHabitat(page, 'emberNook');
+
+    // Correct settle -> journal discovery fires immediately; Dewdrop income
+    // accrues on the next tick (dewdropSystem), so poll rather than assert
+    // synchronously.
+    await page.waitForFunction(() => window.__terrariumUIF!.store.getState().journalDiscovered.has('ember'), undefined, {
+      timeout: 5_000,
+    });
+    await page.waitForFunction(() => window.__terrariumUIF!.store.getState().dewdropTotal > 0, undefined, {
+      timeout: 5_000,
+    });
+
+    const events = await getRecordedEvents(page);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'sprout:placed:correct', habitatId: 'emberNook' }));
+    expect(events).toContainEqual(expect.objectContaining({ type: 'sprout:settled', habitatId: 'emberNook' }));
+
+    const after = await getUiState(page);
+    expect(after.journalDiscovered).toEqual(['ember']);
+    expect(after.dewdropTotal).toBeGreaterThan(0);
+
+    console_.assertNone();
+  });
+
+  test('dragging a Sprout to a non-matching habitat is a friendly retry: no crash, no fail-state UI, Sprout stays sortable', async ({
+    page,
+  }) => {
+    const console_ = collectConsoleErrors(page);
+    await page.goto('/');
+    await waitForDevHooks(page);
+    await installBusRecorder(page, ['sprout:placed:correct', 'sprout:placed:incorrect']);
+
+    await page.click('[data-testid="debug-spawn-ember"]');
+    // Ember's correct home is emberNook; dropping on dewPond is a deliberate mismatch.
+    await dragNurseryToHabitat(page, 'dewPond');
+
+    await page.waitForFunction(() => (window.__ttEvents?.length ?? 0) > 0, undefined, { timeout: 5_000 });
+    const events = await getRecordedEvents(page);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'sprout:placed:incorrect', habitatId: 'dewPond' }));
+    expect(events.some((e) => e.type === 'sprout:placed:correct')).toBe(false);
+
+    // No fail-state UI: no dialog/alert should have appeared, the game
+    // canvas is still there, and Dewdrops/journal are untouched by the miss.
+    await expect(page.locator('#game-canvas')).toBeVisible();
+    const state = await getUiState(page);
+    expect(state.dewdropTotal).toBe(0);
+    expect(state.journalDiscovered).toEqual([]);
+
+    // Recovery: the same Sprout should still be idle at the Nursery and
+    // placeable correctly afterwards — dragging from the Nursery again picks
+    // it up (it's the only idle Sprout in this fresh save) and this time we
+    // drop it on its real home.
+    await dragNurseryToHabitat(page, 'emberNook');
+    await page.waitForFunction(
+      () => window.__ttEvents?.some((e) => e.type === 'sprout:placed:correct') ?? false,
+      undefined,
+      { timeout: 5_000 },
+    );
+    const finalState = await getUiState(page);
+    expect(finalState.journalDiscovered).toEqual(['ember']);
+
+    console_.assertNone();
+  });
+});

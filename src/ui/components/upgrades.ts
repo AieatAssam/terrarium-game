@@ -50,56 +50,68 @@ export function createUpgradesPanel(store: UiStateStore, hooks: UpgradesPanelHoo
   const body = el('div');
   const panel = createPanel({ titleId, labelledBy: titleId });
 
+  // Rows are built ONCE and updated in place (text/disabled/aria-label only)
+  // rather than torn down and rebuilt on every render. At a real income rate
+  // (or the debug speed-up control), currency:dewdropsChanged can fire many
+  // times per second — even coalesced to one render per animation frame,
+  // full body.replaceChildren() every ~16ms was destroying and recreating
+  // the very button a click was mid-flight against (QA finding: Playwright's
+  // click kept hitting "element was detached from the DOM, retrying" on the
+  // Colour Gate buy button). Stable elements make a click physically able to
+  // complete regardless of how often the underlying numbers change.
+  const rows = new Map<UpgradeId, { row: HTMLElement; icon: HTMLElement; meta: HTMLElement; buyBtn: HTMLButtonElement }>();
+
+  for (const upgrade of UPGRADE_LIST) {
+    const icon = el('span', { html: iconHtml(upgradeManifestKey(upgrade.id), icons.upgrades), 'aria-hidden': 'true' });
+    const meta = el('div', { className: 'tt-upgrade-meta' }, [`Level 0 / ${upgrade.maxLevel}`]);
+    const buyBtn = el('button', { type: 'button', className: 'tt-buy-btn' }, ['']);
+    buyBtn.addEventListener('click', () => {
+      if (buyBtn.disabled) return;
+      dispatchEvent(new CustomEvent<PurchaseUpgradeEventDetail>(PURCHASE_UPGRADE_EVENT, { detail: { upgradeId: upgrade.id } }));
+      if (hooks.onPurchaseUpgrade) {
+        hooks.onPurchaseUpgrade(upgrade.id);
+      } else if (isDev) {
+        console.warn(
+          `[terrarium/ui] Buy clicked for "${upgrade.id}" but no onPurchaseUpgrade hook is wired — ` +
+            `listen for the "${PURCHASE_UPGRADE_EVENT}" window CustomEvent instead, or pass the hook into mountUI().`,
+        );
+      }
+    });
+
+    const row = el('div', { className: 'tt-upgrade-row' }, [
+      icon,
+      el('div', { className: 'tt-upgrade-info' }, [el('h3', {}, [upgrade.displayName]), el('p', {}, [upgrade.description]), meta]),
+      buyBtn,
+    ]);
+    rows.set(upgrade.id, { row, icon, meta, buyBtn });
+  }
+  body.replaceChildren(...UPGRADE_LIST.map((u) => rows.get(u.id)!.row));
+
   function render(): void {
     const state = store.getState();
-    body.replaceChildren(
-      ...UPGRADE_LIST.map((upgrade) => {
-        const level = state.upgradeLevels[upgrade.id] ?? 0;
-        const maxed = level >= upgrade.maxLevel;
-        const cost = maxed ? 0 : upgrade.costForLevel(level);
-        const canAfford = !maxed && state.dewdropTotal >= cost;
+    for (const upgrade of UPGRADE_LIST) {
+      const { meta, buyBtn } = rows.get(upgrade.id)!;
+      const level = state.upgradeLevels[upgrade.id] ?? 0;
+      const maxed = level >= upgrade.maxLevel;
+      const cost = maxed ? 0 : upgrade.costForLevel(level);
+      const canAfford = !maxed && state.dewdropTotal >= cost;
 
-        const buyBtn = el(
-          'button',
-          {
-            type: 'button',
-            className: 'tt-buy-btn',
-            disabled: maxed || !canAfford,
-            'aria-label': maxed
-              ? `${upgrade.displayName}, maximum level reached`
-              : `Buy ${upgrade.displayName} for ${cost} Dewdrops, currently level ${level} of ${upgrade.maxLevel}`,
-          },
-          [maxed ? 'Max' : `${Math.max(0, Math.floor(cost)).toLocaleString()}`],
-        );
-        if (!maxed) {
-          buyBtn.addEventListener('click', () => {
-            dispatchEvent(
-              new CustomEvent<PurchaseUpgradeEventDetail>(PURCHASE_UPGRADE_EVENT, {
-                detail: { upgradeId: upgrade.id },
-              }),
-            );
-            if (hooks.onPurchaseUpgrade) {
-              hooks.onPurchaseUpgrade(upgrade.id);
-            } else if (isDev) {
-              console.warn(
-                `[terrarium/ui] Buy clicked for "${upgrade.id}" but no onPurchaseUpgrade hook is wired — ` +
-                  `listen for the "${PURCHASE_UPGRADE_EVENT}" window CustomEvent instead, or pass the hook into mountUI().`,
-              );
-            }
-          });
-        }
+      meta.textContent = `Level ${level} / ${upgrade.maxLevel}`;
+      buyBtn.disabled = maxed || !canAfford;
+      buyBtn.textContent = maxed ? 'Max' : `${Math.max(0, Math.floor(cost)).toLocaleString()}`;
+      buyBtn.setAttribute(
+        'aria-label',
+        maxed
+          ? `${upgrade.displayName}, maximum level reached`
+          : `Buy ${upgrade.displayName} for ${cost} Dewdrops, currently level ${level} of ${upgrade.maxLevel}`,
+      );
+    }
+  }
 
-        return el('div', { className: 'tt-upgrade-row' }, [
-          el('span', { html: iconHtml(upgradeManifestKey(upgrade.id), icons.upgrades), 'aria-hidden': 'true' }),
-          el('div', { className: 'tt-upgrade-info' }, [
-            el('h3', {}, [upgrade.displayName]),
-            el('p', {}, [upgrade.description]),
-            el('div', { className: 'tt-upgrade-meta' }, [`Level ${level} / ${upgrade.maxLevel}`]),
-          ]),
-          buyBtn,
-        ]);
-      }),
-    );
+  function updateIcons(): void {
+    for (const upgrade of UPGRADE_LIST) {
+      rows.get(upgrade.id)!.icon.innerHTML = iconHtml(upgradeManifestKey(upgrade.id), icons.upgrades);
+    }
   }
 
   const closeBtn = el(
@@ -118,7 +130,7 @@ export function createUpgradesPanel(store: UiStateStore, hooks: UpgradesPanelHoo
 
   render();
   const unsubscribeState = store.subscribe(render);
-  const unsubscribeIcons = onManifestIconsReady(render);
+  const unsubscribeIcons = onManifestIconsReady(updateIcons);
 
   return {
     overlay: panel.overlay,

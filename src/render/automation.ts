@@ -8,12 +8,12 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
-import type { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
+import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import type { Scene } from '@babylonjs/core/scene';
 import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator';
 
-import { createManifestMaterial } from './assets';
 import { tileToWorld, type TileCoord } from './coords';
+import { attachPlaneCap, type FlatCap } from './flatArt';
 import { AUTOMATION_SITE_TILES, isReservedTile } from './layout';
 import type { EventBus } from '../events/bus';
 import type { AutomationId } from '../core/ids';
@@ -26,7 +26,12 @@ const SITE_FALLBACK_COLOR: Record<AutomationId, Color3> = {
 interface SiteMarker {
   id: AutomationId;
   mesh: Mesh;
+  /** Flat cap plane's material — carries C's structure illustration (see
+   * flatArt.ts: a CreateBox's default UV wraps a single flat illustration
+   * around all 6 faces instead of showing it top-down, which is what made
+   * these markers look like plain dark cubes). */
   material: StandardMaterial;
+  bodyMaterial: StandardMaterial;
   built: boolean;
 }
 
@@ -45,10 +50,16 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     const mesh = MeshBuilder.CreateBox(`terrarium.automation.${id}`, { width: 0.8, height: 0.5, depth: 0.8 }, scene);
     mesh.position.set(world.x, 0.25, world.z);
     mesh.isPickable = false;
-    const material = createManifestMaterial(scene, `terrarium.automation.${id}.mat`, `structure.${id}.base`, SITE_FALLBACK_COLOR[id]);
-    material.alpha = 0.4; // "not yet built" site marker
-    mesh.material = material;
-    sites[id] = { id, mesh, material, built: false };
+    const bodyMaterial = new StandardMaterial(`terrarium.automation.${id}.body.mat`, scene);
+    bodyMaterial.diffuseColor = SITE_FALLBACK_COLOR[id];
+    bodyMaterial.specularColor = Color3.Black();
+    bodyMaterial.alpha = 0.4; // "not yet built" site marker
+    mesh.material = bodyMaterial;
+
+    const cap = attachPlaneCap(scene, mesh, `terrarium.automation.${id}.cap`, `structure.${id}.base`, SITE_FALLBACK_COLOR[id], 0.72, 0.72, 0.26);
+    cap.material.alpha = 0.4;
+
+    sites[id] = { id, mesh, material: cap.material, bodyMaterial, built: false };
   }
 
   const unsubBuilt = bus.subscribe('automation:built', (e) => {
@@ -56,11 +67,13 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     if (!site) return;
     site.built = true;
     site.material.alpha = 1;
+    site.bodyMaterial.alpha = 1;
     shadowGenerator.addShadowCaster(site.mesh);
   });
 
   let previewMesh: Mesh | undefined;
-  let previewMaterial: StandardMaterial | undefined;
+  let previewBodyMaterial: StandardMaterial | undefined;
+  let previewCap: FlatCap | undefined;
 
   const previewAt = (automationId: AutomationId, tile: TileCoord, valid: boolean): void => {
     clearPreview();
@@ -68,27 +81,39 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     const mesh = MeshBuilder.CreateBox('terrarium.automation.preview', { width: 0.85, height: 0.55, depth: 0.85 }, scene);
     mesh.position.set(world.x, 0.28, world.z);
     mesh.isPickable = false;
-    const material = createManifestMaterial(scene, 'terrarium.automation.preview.mat', `structure.${automationId}.base`, SITE_FALLBACK_COLOR[automationId]);
-    material.alpha = 0.55;
-    material.emissiveColor = valid ? new Color3(0.2, 0.7, 0.3) : new Color3(0.6, 0.15, 0.15);
-    mesh.material = material;
+    const tint = valid ? new Color3(0.2, 0.7, 0.3) : new Color3(0.6, 0.15, 0.15);
+    const bodyMaterial = new StandardMaterial('terrarium.automation.preview.body.mat', scene);
+    bodyMaterial.diffuseColor = SITE_FALLBACK_COLOR[automationId];
+    bodyMaterial.specularColor = Color3.Black();
+    bodyMaterial.alpha = 0.55;
+    bodyMaterial.emissiveColor = tint;
+    mesh.material = bodyMaterial;
+
+    const cap = attachPlaneCap(scene, mesh, 'terrarium.automation.preview.cap', `structure.${automationId}.base`, SITE_FALLBACK_COLOR[automationId], 0.76, 0.76, 0.29);
+    cap.material.alpha = 0.55;
+    cap.material.emissiveColor = tint;
+
     previewMesh = mesh;
-    previewMaterial = material;
+    previewBodyMaterial = bodyMaterial;
+    previewCap = cap;
   };
 
   const clearPreview = (): void => {
-    previewMesh?.dispose();
-    previewMaterial?.dispose();
+    previewMesh?.dispose(); // recursively disposes the cap child mesh too
+    previewBodyMaterial?.dispose();
+    previewCap?.material.dispose();
     previewMesh = undefined;
-    previewMaterial = undefined;
+    previewBodyMaterial = undefined;
+    previewCap = undefined;
   };
 
   const dispose = (): void => {
     unsubBuilt();
     clearPreview();
     for (const site of Object.values(sites)) {
-      site.mesh.dispose();
+      site.mesh.dispose(); // recursively disposes the cap child mesh too
       site.material.dispose();
+      site.bodyMaterial.dispose();
     }
   };
 

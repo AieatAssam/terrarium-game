@@ -34,7 +34,29 @@ export type GameEvent =
   | { type: 'upgrade:purchased'; upgradeId: UpgradeId; level: number }
   | { type: 'achievement:unlocked'; achievementId: AchievementId }
   | { type: 'journal:entryDiscovered'; sproutType: SproutTypeId }
-  | { type: 'save:loaded'; offlineSeconds: number; offlineDewdrops: number }
+  | {
+      type: 'save:loaded';
+      offlineSeconds: number;
+      offlineDewdrops: number;
+      /**
+       * Full restored-state snapshot so UI-side stores (src/ui/uiState.ts)
+       * can hydrate silently on load instead of only ever mirroring live
+       * events going forward (a real bug found during QA: dewdrops/
+       * unlocks/achievements/journal all read back as fresh defaults right
+       * after a reload even though the persisted SimState was correct).
+       * Deliberately separate from `dewdropTotal`/etc's celebratory
+       * counterparts (`achievement:unlocked` etc) — a UI reducer for this
+       * event must NOT set `lastAchievementUnlocked`/`lastBuiltAutomation`
+       * or anything else that would replay a toast/SFX for old history.
+       */
+      snapshot: {
+        dewdrops: number;
+        unlockedAutomations: AutomationId[];
+        upgradeLevels: Partial<Record<UpgradeId, number>>;
+        unlockedAchievements: AchievementId[];
+        journalDiscovered: SproutTypeId[];
+      };
+    }
   | { type: 'save:written' };
 
 export type GameEventType = GameEvent['type'];

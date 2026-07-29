@@ -6,12 +6,13 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
-import type { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
+import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import type { Scene } from '@babylonjs/core/scene';
 import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator';
 
-import { createManifestMaterial, swapManifestMaterialTexture } from './assets';
+import { swapManifestMaterialTexture } from './assets';
 import { tileToWorld, tileDistance, type TileCoord } from './coords';
+import { attachDiscCap } from './flatArt';
 import { HABITAT_TILES } from './layout';
 import type { MotionConfig } from './motion';
 import { createRippleRing, createSparkleBurst } from './particles';
@@ -32,11 +33,27 @@ const HABITAT_GLOW_COLOR: Record<HabitatId, Color3> = {
 interface HabitatVisual {
   id: HabitatId;
   mesh: Mesh;
+  /** The flat cap disc's material — this is what actually shows C's habitat
+   * illustration (see buildHabitatMesh / flatArt.ts) and what reactive glow
+   * pulses/hover highlights are applied to. */
   material: StandardMaterial;
+  /** The drum body's plain (untextured) material — kept in sync with
+   * `material`'s emissive tint so the glow/wobble reads as "the whole
+   * habitat," not just its lid. */
+  bodyMaterial: StandardMaterial;
   tile: TileCoord;
   worldCenter: { x: number; y: number; z: number };
   baseEmissive: Color3;
 }
+
+/** Per-habitat body dimensions, mirrored from buildHabitatMesh below so the
+ * flat art cap can be sized/positioned to sit exactly on each drum's top
+ * face without re-deriving MeshBuilder's own math. */
+const HABITAT_DIMS: Record<HabitatId, { halfHeight: number; topRadius: number }> = {
+  emberNook: { halfHeight: 0.25, topRadius: 1.1 },
+  dewPond: { halfHeight: 0.125, topRadius: 1.3 },
+  sunflowerMeadow: { halfHeight: 0.2, topRadius: 1.3 },
+};
 
 export interface HabitatManager {
   get: (id: HabitatId) => HabitatVisual;
@@ -74,14 +91,32 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
     mesh.metadata = { kind: 'habitat', habitatId: id, tile };
     shadowGenerator.addShadowCaster(mesh);
 
-    const material = createManifestMaterial(scene, `terrarium.habitat.${id}.mat`, `habitat.${id}.base`, HABITAT_FALLBACK_COLOR[id]);
-    material.emissiveColor = Color3.Black();
-    mesh.material = material;
+    // Drum body: plain flat color, no manifest texture — see flatArt.ts for
+    // why (default CreateCylinder UV wraps a single flat illustration around
+    // the side wall instead of showing it top-down).
+    const bodyMaterial = new StandardMaterial(`terrarium.habitat.${id}.body.mat`, scene);
+    bodyMaterial.diffuseColor = HABITAT_FALLBACK_COLOR[id];
+    bodyMaterial.specularColor = Color3.Black();
+    bodyMaterial.emissiveColor = Color3.Black();
+    mesh.material = bodyMaterial;
+
+    const dims = HABITAT_DIMS[id];
+    const cap = attachDiscCap(
+      scene,
+      mesh,
+      `terrarium.habitat.${id}.cap`,
+      `habitat.${id}.base`,
+      HABITAT_FALLBACK_COLOR[id],
+      dims.topRadius * 0.92,
+      dims.halfHeight + 0.01,
+    );
+    cap.material.emissiveColor = Color3.Black();
 
     visuals[id] = {
       id,
       mesh,
-      material,
+      material: cap.material,
+      bodyMaterial,
       tile,
       worldCenter: world,
       baseEmissive: Color3.Black(),
@@ -102,21 +137,26 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
     return best;
   };
 
+  const setGlow = (visual: HabitatVisual, color: Color3): void => {
+    visual.material.emissiveColor = color;
+    visual.bodyMaterial.emissiveColor = color;
+  };
+
   const setHover = (id: HabitatId | null, valid: boolean | null): void => {
     for (const visual of Object.values(visuals)) {
       if (visual.id !== id) {
-        visual.material.emissiveColor = Color3.Black();
+        setGlow(visual, Color3.Black());
         visual.mesh.scaling.set(1, 1, 1);
         continue;
       }
       if (valid === true) {
-        visual.material.emissiveColor = HABITAT_GLOW_COLOR[id].scale(0.35);
+        setGlow(visual, HABITAT_GLOW_COLOR[id].scale(0.35));
         visual.mesh.scaling.set(1.05, 1.05, 1.05);
       } else if (valid === false) {
-        visual.material.emissiveColor = new Color3(0.15, 0.05, 0.05);
+        setGlow(visual, new Color3(0.15, 0.05, 0.05));
         visual.mesh.scaling.set(0.97, 0.97, 0.97);
       } else {
-        visual.material.emissiveColor = Color3.Black();
+        setGlow(visual, Color3.Black());
         visual.mesh.scaling.set(1, 1, 1);
       }
     }
@@ -139,12 +179,12 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
     const observer = scene.onBeforeRenderObservable.add(() => {
       const t = Math.min(1, (performance.now() - start) / durationMs);
       const pulse = Math.sin(Math.min(1, t) * Math.PI); // up then down within the duration
-      visual.material.emissiveColor = glow.scale(0.6 * pulse);
+      setGlow(visual, glow.scale(0.6 * pulse));
       const bump = 1 + 0.12 * motion.ambientIntensity * pulse + (motion.ambientIntensity === 0 ? 0.04 * pulse : 0);
       visual.mesh.scaling.set(bump, bump, bump);
       if (t >= 1) {
         scene.onBeforeRenderObservable.remove(observer);
-        visual.material.emissiveColor = Color3.Black();
+        setGlow(visual, Color3.Black());
         visual.mesh.scaling.set(1, 1, 1);
       }
     });
@@ -167,8 +207,9 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
 
   const dispose = (): void => {
     for (const visual of Object.values(visuals)) {
-      visual.mesh.dispose();
+      visual.mesh.dispose(); // recursively disposes the cap child mesh too
       visual.material.dispose();
+      visual.bodyMaterial.dispose();
     }
   };
 

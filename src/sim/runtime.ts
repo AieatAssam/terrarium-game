@@ -51,10 +51,20 @@ export async function startSimRuntime(bus: EventBus, seed: number = Date.now()):
     const elapsedRealMs = Math.max(0, Date.now() - closedAt);
     const offline = computeOfflineProgress(elapsedRealMs, saved.sim);
     state = { ...saved.sim, dewdrops: saved.sim.dewdrops + offline.dewdropsEarned };
+    // Always emit save:loaded (with the full snapshot) when a save exists,
+    // even with zero offline gain — the UI store's hydration depends on
+    // this event firing, not just on there being something to celebrate.
     bus.emit({
       type: 'save:loaded',
       offlineSeconds: Math.round(offline.creditedMs / 1000),
       offlineDewdrops: offline.dewdropsEarned,
+      snapshot: {
+        dewdrops: state.dewdrops,
+        unlockedAutomations: state.unlockedAutomations,
+        upgradeLevels: state.upgradeLevels,
+        unlockedAchievements: state.unlockedAchievements,
+        journalDiscovered: state.journalDiscovered,
+      },
     });
     if (offline.dewdropsEarned > 0) {
       bus.emit({ type: 'currency:dewdropsChanged', total: state.dewdrops, delta: offline.dewdropsEarned });

@@ -15,8 +15,8 @@ import type { Scene } from '@babylonjs/core/scene';
 import { gridCenterWorld } from './coords';
 
 const ISO_ALPHA = -Math.PI / 2 - Math.PI / 4; // classic 3/4 iso-ish yaw
-const ISO_BETA = Math.PI / 3.4; // ~53deg from vertical: reads as "isometric" without going full orthographic
-const DEFAULT_RADIUS = 16;
+const ISO_BETA = Math.PI / 2.9; // ~62deg from vertical
+const DEFAULT_RADIUS = 19;
 const MIN_RADIUS = 7;
 const MAX_RADIUS = 28;
 const MIN_BETA = Math.PI / 6;

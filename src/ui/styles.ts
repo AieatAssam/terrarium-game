@@ -62,7 +62,8 @@ export const UI_CSS = /* css */ `
 .tt-buildmenu,
 .tt-onboarding,
 .tt-panel-overlay,
-.tt-toast-region {
+.tt-toast-region,
+.tt-debug-panel {
   pointer-events: auto;
 }
 

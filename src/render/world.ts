@@ -13,6 +13,7 @@ import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGener
 
 import { createManifestMaterial } from './assets';
 import { GRID_SIZE, tileToWorld } from './coords';
+import { attachDiscCap } from './flatArt';
 import { GARDEN_PATH_TILES, NURSERY_TILE, SCENERY_PLACEMENTS } from './layout';
 
 // Maps a scenery placement to the actual manifest keys Subagent C produced
@@ -67,10 +68,20 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator)
     let mesh: Mesh;
     switch (placement.kind) {
       case 'rock':
-        mesh = MeshBuilder.CreateBox(`terrarium.scenery.rock.${placement.tile.x}.${placement.tile.z}`, { size: 0.4 }, scene);
-        mesh.position.set(world.x, 0.2, world.z);
+        // Flat ground-parallel card, not a textured box: every scenery SVG
+        // (see docs/ART_DIRECTION.md §5, "Scenery piece") is a single
+        // top-down illustration with its own baked-in ground shadow — a
+        // painted decal, not a volume. Wrapping it around a CreateBox's 6
+        // faces (the previous approach) smeared the mostly-transparent
+        // source art across the whole cube and read as a near-solid dark
+        // block (see docs/ART_QA_REPORT.md). A flat card's default UV is a
+        // clean 0..1 rect, matching how the art was authored.
+        mesh = MeshBuilder.CreatePlane(`terrarium.scenery.rock.${placement.tile.x}.${placement.tile.z}`, { width: 0.5, height: 0.5 }, scene);
+        mesh.rotation.x = Math.PI / 2;
         mesh.rotation.y = (placement.variant * Math.PI) / 5;
+        mesh.position.set(world.x, 0.02, world.z);
         mesh.material = createManifestMaterial(scene, `${key}.mat`, key, new Color3(0.5, 0.48, 0.46));
+        (mesh.material as StandardMaterial).backFaceCulling = false;
         break;
       case 'water':
         mesh = MeshBuilder.CreateDisc(`terrarium.scenery.water.${placement.tile.x}.${placement.tile.z}`, { radius: 0.4, tessellation: 20 }, scene);
@@ -80,14 +91,15 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator)
         break;
       case 'foliage':
       default:
-        mesh = MeshBuilder.CreateCylinder(`terrarium.scenery.foliage.${placement.tile.x}.${placement.tile.z}`, {
-          height: 0.5,
-          diameterTop: 0.05,
-          diameterBottom: 0.4,
-          tessellation: 8,
-        }, scene);
-        mesh.position.set(world.x, 0.25, world.z);
+        // Same "flat painted card" fix as rocks above — previously a cone
+        // (CreateCylinder with a near-point top) whose lateral surface got
+        // the same wrap-distortion bug, rendering as thin illegible green
+        // slivers instead of a readable bush/fern silhouette.
+        mesh = MeshBuilder.CreatePlane(`terrarium.scenery.foliage.${placement.tile.x}.${placement.tile.z}`, { width: 0.55, height: 0.55 }, scene);
+        mesh.rotation.x = Math.PI / 2;
+        mesh.position.set(world.x, 0.02, world.z);
         mesh.material = createManifestMaterial(scene, `${key}.mat`, key, new Color3(0.28, 0.5, 0.24));
+        (mesh.material as StandardMaterial).backFaceCulling = false;
         break;
     }
     mesh.isPickable = false;
@@ -97,17 +109,35 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator)
   }
 
   const nurseryWorld = tileToWorld(NURSERY_TILE);
-  const nursery = MeshBuilder.CreateCylinder('terrarium.nursery', { height: 0.7, diameter: 1.6, tessellation: 12 }, scene);
+  const nursery = MeshBuilder.CreateCylinder('terrarium.nursery', { height: 0.7, diameter: 1.6, tessellation: 24 }, scene);
   nursery.position.set(nurseryWorld.x, 0.35, nurseryWorld.z);
-  nursery.material = createManifestMaterial(scene, 'terrarium.nursery.mat', 'structure.nursery.base', new Color3(0.55, 0.4, 0.28));
+  const nurseryFallback = new Color3(0.55, 0.4, 0.28);
+  const nurseryBodyMaterial = new StandardMaterial('terrarium.nursery.body.mat', scene);
+  nurseryBodyMaterial.diffuseColor = nurseryFallback;
+  nurseryBodyMaterial.specularColor = Color3.Black();
+  nursery.material = nurseryBodyMaterial;
   nursery.receiveShadows = true;
   nursery.metadata = { kind: 'nursery' };
   shadowGenerator.addShadowCaster(nursery);
+  // Top-down pod illustration on a flat cap disc, not wrapped around the
+  // drum — see src/render/flatArt.ts for why (this was the specific
+  // "Nursery mesh gets distorted" defect flagged in QA).
+  const nurseryCap = attachDiscCap(
+    scene,
+    nursery,
+    'terrarium.nursery.cap',
+    'structure.nursery.base',
+    nurseryFallback,
+    0.72,
+    0.351,
+  );
 
   const dispose = (): void => {
     ground.dispose();
     for (const p of paths) p.dispose();
     for (const s of scenery) s.dispose();
+    nurseryCap.mesh.dispose();
+    nurseryCap.material.dispose();
     nursery.dispose();
   };
 
