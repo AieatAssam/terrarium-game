@@ -100,24 +100,30 @@ describe('procedural generation — determinism', () => {
     expect(Math.abs(valueNoise2D(GARDEN_SEED, 2.51, 3.5) - here)).toBeLessThan(0.05);
   });
 
+  // These figures moved once, deliberately, when the garden path was rerouted
+  // into a shared trunk and a fork at the Colour Gate (src/sim/layout.ts). The
+  // path tiles feed RESERVED_ZONES and `pathVerge`, so changing the road changes
+  // where decoration may stand and how it clusters along the verge — every
+  // number below is regenerated output, not a hand-adjusted one. The seed and
+  // the generator itself are untouched.
   it('generates a stable base layer', () => {
     expect(tally(BASE_SCENERY)).toEqual({
-      pebble: 58,
-      boulder: 12,
-      tuft: 81,
-      bush: 29,
-      fern: 17,
-      mushroom: 5,
+      pebble: 60,
+      boulder: 14,
+      tuft: 86,
+      bush: 30,
+      fern: 11,
+      mushroom: 4,
       lily: 13,
     });
-    expect(BASE_SCENERY).toHaveLength(215);
-    expect(digest(BASE_SCENERY)).toBe(337704969);
+    expect(BASE_SCENERY).toHaveLength(218);
+    expect(digest(BASE_SCENERY)).toBe(327239721);
   });
 
   it('generates a stable first-expansion layer', () => {
-    expect(tally(EXPANSION_SCENERY)).toEqual({ blossom: 20, tuft: 72, kerb: 100, lantern: 6 });
-    expect(EXPANSION_SCENERY).toHaveLength(198);
-    expect(digest(EXPANSION_SCENERY)).toBe(311716805);
+    expect(tally(EXPANSION_SCENERY)).toEqual({ blossom: 20, tuft: 72, kerb: 100, lantern: 5 });
+    expect(EXPANSION_SCENERY).toHaveLength(197);
+    expect(digest(EXPANSION_SCENERY)).toBe(309009936);
   });
 
   it('spreads water basins across the garden rather than clustering them', () => {

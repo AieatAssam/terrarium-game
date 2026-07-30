@@ -19,12 +19,14 @@ import type { Scene } from '@babylonjs/core/scene';
 import { createManifestMaterial, swapManifestMaterialTexture } from './assets';
 import { GARDEN_CAMERA_ALPHA } from './camera';
 import { tileToWorld, type TileCoord } from './coords';
+import { createHabitatOccupancySigns, occupancySignState } from './habitats';
 import { GARDEN_PATH_TILES, HABITAT_TILES, NURSERY_TILE } from './layout';
-import { easingFn, type MotionConfig } from './motion';
+import { easingFn, getMotionConfig, prefersReducedMotion, type MotionConfig } from './motion';
 import { createSparkleBurst } from './particles';
 import { habitatTopY, nurseryTopY } from './propDims';
 import type { EventBus } from '../events/bus';
 import type { HabitatId, SproutTypeId } from '../core/ids';
+import { getEffectiveHabitatCapacity } from '../data/habitats';
 import { SPROUT_TYPES } from '../data/sproutTypes';
 
 export type SproutVisualState = 'reveal' | 'idle' | 'walk' | 'happy' | 'settled';
@@ -99,21 +101,93 @@ const LATERAL_X = -Math.sin(GARDEN_CAMERA_ALPHA);
 const LATERAL_Z = Math.cos(GARDEN_CAMERA_ALPHA);
 const SETTLE_SLOTS_PER_ROW = 3;
 const SETTLE_ROWS = 2;
-const SETTLE_SLOT_SPACING = 0.34;
+
+/**
+ * How many settled Sprouts a habitat draws as individual creatures — and
+ * therefore the threshold past which the population is carried by the
+ * occupancy sign instead (see createHabitatOccupancySigns in habitats.ts).
+ *
+ * SIX is not a taste call, it is exactly how many distinct standing positions
+ * the slot table above describes. The old code took `index % SETTLE_ROWS`, so
+ * the seventh settled Sprout was placed at the *identical* world position as
+ * the first, the eighth on the second, and so on: past six the crowd was not
+ * merely dense but literally coincident z-fighting billboards, unreadable,
+ * unselectable and covering the habitat's own art. Habitats hold 8 with no
+ * upgrades and 17 with Habitat Capacity maxed, so this is a state every player
+ * reaches — and six sits comfortably below even the base capacity, which is
+ * what makes the transition a normal part of play rather than an edge case.
+ * (GameRules §7.4: Sprouts "must never create visual chaos or selection
+ * frustration".)
+ */
+export const SETTLE_VISIBLE_SLOTS = SETTLE_SLOTS_PER_ROW * SETTLE_ROWS;
+
+/** Lateral gap between neighbours in a roomy crowd (occupancy at or below the
+ * visible slots) and in a packed one (occupancy at capacity). */
+const SETTLE_SLOT_SPACING_LOOSE = 0.44;
+const SETTLE_SLOT_SPACING_TIGHT = 0.3;
 /** How far in front of the card the first row stands. Kept small enough that
  * even the smallest habitat's FLAT top face (Ember Nook: 1.1 outer radius less
  * its 0.1 rim bevel = 1.0) comfortably contains every slot — the furthest is
- * hypot(0.62, 0.34) = 0.71 from the centre. */
+ * hypot(0.62, 0.55) = 0.83 from the centre, checked in
+ * tests/unit/render.settleSlots.test.ts. */
 const SETTLE_FRONT_DISTANCE = 0.62;
-const SETTLE_ROW_SPACING = 0.26;
+const SETTLE_ROW_SPACING_LOOSE = 0.3;
+const SETTLE_ROW_SPACING_TIGHT = 0.22;
+/**
+ * The back row is offset half a step sideways, and the whole crowd shifted a
+ * quarter step back the other way to stay centred, so the two rows INTERLEAVE
+ * instead of lining up in columns.
+ *
+ * Measured in-browser, not guessed: a settled Sprout's card is ~87px wide at
+ * the default camera while a loose lateral step is ~55px, so neighbours
+ * genuinely overlap. With the rows aligned, every back-row Sprout sat exactly
+ * behind a front-row one and was completely invisible — the habitat looked
+ * like it held three creatures no matter how full it was. Interleaved, each
+ * back-row Sprout shows through the gap between two front-row ones, so all six
+ * read and the huddle gets visibly denser as the spacing tightens.
+ */
+const SETTLE_ROW_STAGGER = 0.5;
 
-/** Deterministic XZ offset from a habitat's centre for the Nth settled Sprout —
- * a small crowd standing in front of the habitat's sign, never behind it. */
-function sproutSettleOffset(index: number): { x: number; z: number } {
-  const row = Math.floor(index / SETTLE_SLOTS_PER_ROW) % SETTLE_ROWS;
+/**
+ * How tightly the visible crowd packs, given the habitat's true population and
+ * capacity.
+ *
+ * This is what keeps occupancy readable FROM THE WORLD once the crowd stops
+ * growing. Without it, every habitat from the seventh Sprout to its last one
+ * would look identical and the only thing distinguishing "just over the line"
+ * from "no room left" would be a number on a sign — precisely the
+ * text-dependence GameRules §8.1 rules out. With it, the same six creatures
+ * stand progressively shoulder-to-shoulder as the home fills, so a busy
+ * habitat plainly looks busy and a full one plainly looks packed before the
+ * player reads anything.
+ */
+export function settleCrowdSpacing(count: number, capacity: number): { lateral: number; row: number } {
+  const span = Math.max(1, capacity - SETTLE_VISIBLE_SLOTS);
+  const t = Math.min(1, Math.max(0, (count - SETTLE_VISIBLE_SLOTS) / span));
+  return {
+    lateral: SETTLE_SLOT_SPACING_LOOSE + (SETTLE_SLOT_SPACING_TIGHT - SETTLE_SLOT_SPACING_LOOSE) * t,
+    row: SETTLE_ROW_SPACING_LOOSE + (SETTLE_ROW_SPACING_TIGHT - SETTLE_ROW_SPACING_LOOSE) * t,
+  };
+}
+
+/**
+ * Deterministic XZ offset from a habitat's centre for the Nth settled Sprout —
+ * a small crowd standing in front of the habitat's sign, never behind it —
+ * or `null` when this Sprout is beyond the visible slots and is represented by
+ * the occupancy sign instead of by its own sprite.
+ *
+ * Pure and index-based on purpose: a Sprout keeps the slot it was given, and
+ * the same (index, count, capacity) always yields the same position, so a
+ * restored save rebuilds the exact arrangement the player left behind.
+ */
+export function sproutSettleOffset(index: number, count: number, capacity: number): { x: number; z: number } | null {
+  if (index < 0 || index >= SETTLE_VISIBLE_SLOTS) return null;
+  const spacing = settleCrowdSpacing(count, capacity);
+  const row = Math.floor(index / SETTLE_SLOTS_PER_ROW);
   const column = index % SETTLE_SLOTS_PER_ROW;
-  const lateral = (column - (SETTLE_SLOTS_PER_ROW - 1) / 2) * SETTLE_SLOT_SPACING;
-  const forward = SETTLE_FRONT_DISTANCE - row * SETTLE_ROW_SPACING;
+  const stagger = (row * SETTLE_ROW_STAGGER - ((SETTLE_ROWS - 1) * SETTLE_ROW_STAGGER) / 2) * spacing.lateral;
+  const lateral = (column - (SETTLE_SLOTS_PER_ROW - 1) / 2) * spacing.lateral + stagger;
+  const forward = SETTLE_FRONT_DISTANCE - row * spacing.row;
   return {
     x: VIEWER_X * forward + LATERAL_X * lateral,
     z: VIEWER_Z * forward + LATERAL_Z * lateral,
@@ -306,6 +380,12 @@ export interface SproutVisual {
   tile: TileCoord;
   held: boolean;
   settledHabitat: HabitatId | null;
+  /** Which standing slot this Sprout claimed when it settled, or null if it
+   * hasn't settled. Stored rather than recomputed because the crowd is laid
+   * out again every time the population or capacity changes (see
+   * `settleCrowdSpacing`), and a Sprout must not hop between slots when that
+   * happens. Indexes at or above SETTLE_VISIBLE_SLOTS have no sprite. */
+  settleIndex: number | null;
   wanderSeed: number;
 }
 
@@ -333,8 +413,27 @@ const TYPE_FALLBACK_COLOR: Record<SproutTypeId, Color3> = {
   star: new Color3(0.75, 0.55, 0.95),
 };
 
+/** How long an overflow arrival takes to shrink out of sight after reaching
+ * its habitat. Short, but never zero even under reduced motion — the player
+ * must SEE the Sprout arrive and be taken in, otherwise the seventh creature
+ * they carefully carried across the garden simply blinks out of existence.
+ * (motion.ts's rule: core feedback gets calmer, never absent.) */
+const SETTLE_TUCK_DURATION_MS = 280;
+
 export function createSproutManager(scene: Scene, bus: EventBus): SproutManager {
   const visuals = new Map<string, SproutVisual>();
+  const signs = createHabitatOccupancySigns(scene);
+
+  // Effective capacity is a render-side derivation of two authoritative sim
+  // facts: the Habitat Capacity upgrade level (from `upgrade:purchased`, and
+  // from the restored snapshot on load) fed through the very same
+  // `getEffectiveHabitatCapacity` the simulation uses. Deriving it this way
+  // rather than tracking `habitat:full` means the two can never disagree —
+  // and, unlike the sticky "is full" set, it corrects itself the instant the
+  // player buys another capacity level and a full habitat stops being full.
+  let habitatCapacityLevel = 0;
+  const capacityOf = (habitatId: HabitatId): number =>
+    getEffectiveHabitatCapacity(habitatId, habitatCapacityLevel);
 
   const textureKey = (type: SproutTypeId, state: 'idle' | 'walk' | 'happy' | 'reveal'): string =>
     `sprout.${type}.${state}`;
@@ -384,6 +483,7 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
       tile: NURSERY_TILE,
       held: false,
       settledHabitat: null,
+      settleIndex: null,
       wanderSeed: Math.random() * 1000,
     };
     mesh.metadata = { kind: 'sprout', sproutId: id };
@@ -432,6 +532,80 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
   // rather than capturing it at ride start, so toggling Reduced motion mid-ride
   // takes effect immediately.
   let lastMotion: MotionConfig | null = null;
+
+  /** The motion config to animate a bus-driven (non-per-frame) reaction with.
+   * `update` normally has already supplied one; the fallback covers a reaction
+   * that fires before the first render frame, e.g. a restored save. */
+  const motionNow = (): MotionConfig => lastMotion ?? getMotionConfig(prefersReducedMotion());
+
+  /** Overflow arrivals currently playing their shrink-away tween. They must
+   * survive a relayout that would otherwise disable them mid-animation. */
+  const tucking = new Set<string>();
+
+  /**
+   * Re-lays out one habitat's visible crowd and updates its occupancy sign.
+   *
+   * Called on every event that can change either the population or the
+   * capacity — a Sprout settling, a save being restored, a Habitat Capacity
+   * upgrade being bought. Capacity matters even though it changes no Sprout's
+   * slot: the crowd's packing and the sign's meter are both fractions of it,
+   * so buying a level must visibly loosen every habitat and un-fill any that
+   * was full.
+   *
+   * O(live Sprouts) and only ever runs on those discrete events — never per
+   * frame, and it allocates only the small offset object the pure slot helper
+   * returns.
+   */
+  const refreshHabitat = (habitatId: HabitatId, animate: boolean): void => {
+    const capacity = capacityOf(habitatId);
+    let count = 0;
+    for (const visual of visuals.values()) {
+      if (visual.settledHabitat === habitatId) count += 1;
+    }
+    const world = tileToWorld(HABITAT_TILES[habitatId]);
+    const y = sproutSettleHeight(habitatId);
+    for (const visual of visuals.values()) {
+      if (visual.settledHabitat !== habitatId || visual.settleIndex === null) continue;
+      const offset = sproutSettleOffset(visual.settleIndex, count, capacity);
+      if (!offset) {
+        // Beyond the visible slots: this Sprout is represented by the sign's
+        // count. Disabling rather than stacking it is the whole point — the
+        // old behaviour parked it on top of an earlier Sprout's sprite.
+        if (!tucking.has(visual.id)) visual.mesh.setEnabled(false);
+        continue;
+      }
+      visual.mesh.position.set(world.x + offset.x, y, world.z + offset.z);
+    }
+    signs.set(habitatId, occupancySignState(count, capacity, SETTLE_VISIBLE_SLOTS), motionNow(), animate);
+  };
+
+  const refreshAllHabitats = (animate: boolean): void => {
+    for (const habitatId of Object.keys(HABITAT_TILES) as HabitatId[]) refreshHabitat(habitatId, animate);
+  };
+
+  /** Plays the "and this one squeezes inside" shrink for an arrival that has no
+   * standing slot left, then hides its sprite. */
+  const tuckAway = (visual: SproutVisual, habitatId: HabitatId, count: number, capacity: number): void => {
+    const motion = motionNow();
+    const world = tileToWorld(HABITAT_TILES[habitatId]);
+    // Slot 1 is the front row's middle position — the crowd's "doorway".
+    const doorway = sproutSettleOffset(1, count, capacity);
+    if (doorway) visual.mesh.position.set(world.x + doorway.x, sproutSettleHeight(habitatId), world.z + doorway.z);
+    const durationMs = motion.ambientIntensity > 0 ? SETTLE_TUCK_DURATION_MS : motion.revealDurationMs;
+    const start = performance.now();
+    tucking.add(visual.id);
+    const observer = scene.onBeforeRenderObservable.add(() => {
+      const t = Math.min(1, (performance.now() - start) / durationMs);
+      const scale = 1 - easingFn('easeOut')(t) * 0.98;
+      visual.mesh.scaling.set(scale, scale, scale);
+      if (t >= 1) {
+        scene.onBeforeRenderObservable.remove(observer);
+        tucking.delete(visual.id);
+        visual.mesh.scaling.set(1, 1, 1);
+        visual.mesh.setEnabled(false);
+      }
+    });
+  };
 
   const remove = (id: string): void => {
     const visual = visuals.get(id);
@@ -488,19 +662,23 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
       const visual = visuals.get(e.sproutId);
       if (!visual) return;
       endRide(e.sproutId); // whatever the ride animation still had planned, the sim says it's home
-      visual.settledHabitat = e.habitatId;
-      visual.mesh.isPickable = false;
-      setState(visual, 'settled');
-      const habitatTile = HABITAT_TILES[e.habitatId];
-      const world = tileToWorld(habitatTile);
       // Deterministic slot on the habitat's viewer-facing side so multiple
       // settled Sprouts neither overlap each other nor hide behind the
-      // habitat's standee card — see sproutSettleOffset.
+      // habitat's standee card — see sproutSettleOffset. The slot is claimed
+      // once, here, and kept for the rest of the session.
       const alreadySettled = Array.from(visuals.values()).filter(
         (v) => v.settledHabitat === e.habitatId && v.id !== e.sproutId,
       ).length;
-      const offset = sproutSettleOffset(alreadySettled);
-      visual.mesh.position.set(world.x + offset.x, sproutSettleHeight(e.habitatId), world.z + offset.z);
+      visual.settledHabitat = e.habitatId;
+      visual.settleIndex = alreadySettled;
+      visual.mesh.isPickable = false;
+      setState(visual, 'settled');
+      if (alreadySettled >= SETTLE_VISIBLE_SLOTS) {
+        // No standing room left: this arrival is counted on the habitat's
+        // occupancy sign instead of being stacked on an earlier Sprout.
+        tuckAway(visual, e.habitatId, alreadySettled + 1, capacityOf(e.habitatId));
+      }
+      refreshHabitat(e.habitatId, true);
     }),
     // Restored save: Sprouts alive when the game was saved never re-emit
     // `sprout:spawned`, so without this the garden comes back visually empty
@@ -510,6 +688,11 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     // reveal animation for creatures the player met long ago; these are
     // placed already-arrived, in their final pose.
     bus.subscribe('save:loaded', (e) => {
+      // Capacity FIRST, before any Sprout is placed: the crowd's packing and
+      // every sign's meter are fractions of it, so restoring a save with
+      // Habitat Capacity levels while still assuming the base 8 would lay the
+      // garden out wrong and paint the signs against the wrong denominator.
+      habitatCapacityLevel = e.snapshot.upgradeLevels?.habitatCapacity ?? 0;
       for (const restored of e.snapshot.sprouts ?? []) {
         if (visuals.get(restored.id)) continue;
         spawn(restored.id, restored.sproutType, 'restored');
@@ -518,20 +701,31 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
         visual.mesh.scaling.set(1, 1, 1); // skip the reveal pop-in
         if (restored.settled && restored.habitatId) {
           visual.settledHabitat = restored.habitatId;
-          visual.mesh.isPickable = false;
-          setState(visual, 'settled');
-          const world = tileToWorld(HABITAT_TILES[restored.habitatId]);
-          const alreadySettled = Array.from(visuals.values()).filter(
+          visual.settleIndex = Array.from(visuals.values()).filter(
             (v) => v.settledHabitat === restored.habitatId && v.id !== restored.id,
           ).length;
-          const offset = sproutSettleOffset(alreadySettled);
-          visual.mesh.position.set(world.x + offset.x, sproutSettleHeight(restored.habitatId), world.z + offset.z);
+          visual.mesh.isPickable = false;
+          setState(visual, 'settled');
         } else {
           setState(visual, 'idle');
           const world = tileToWorld(restored.tile);
           visual.mesh.position.set(world.x, SPROUT_FLOAT_HEIGHT, world.z);
         }
       }
+      // Positions and signs are resolved ONCE, after the whole batch: doing it
+      // per restored Sprout would repaint each sign's canvas up to seventeen
+      // times on load and lay the earlier arrivals out against a population
+      // that had not finished restoring. `animate: false` so a reload hydrates
+      // silently instead of replaying a celebration per habitat.
+      refreshAllHabitats(false);
+    }),
+    // A capacity upgrade changes no Sprout's slot but does change how packed
+    // every habitat looks and how full each meter reads — including clearing
+    // the "full" cues on a habitat that just gained room.
+    bus.subscribe('upgrade:purchased', (e) => {
+      if (e.upgradeId !== 'habitatCapacity') return;
+      habitatCapacityLevel = e.level;
+      refreshAllHabitats(true);
     }),
     bus.subscribe('sprout:transportStarted', (e) => {
       const visual = visuals.get(e.sproutId);
@@ -649,6 +843,7 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
   const dispose = (): void => {
     for (const unsub of unsubscribers) unsub();
     for (const id of Array.from(visuals.keys())) remove(id);
+    signs.dispose();
   };
 
   return {
