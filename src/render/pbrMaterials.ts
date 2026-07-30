@@ -396,7 +396,7 @@ const familyCache = new Map<string, TextureFamily>();
  * cache by tiling makes that impossible by construction, at the cost of a
  * (still cheap, one-time) regenerated texture set per distinct tiling value
  * — e.g. the "stone" family exists both at tiling=3 (habitat drum bodies)
- * and tiling=1 (scenery rock detail overlay, see applyRockDetail below).
+ * and tiling=2 (instanced scenery stone, see createSceneryStoneMaterial).
  */
 function getOrCreateFamily(scene: Scene, familyName: string, recipe: FamilyRecipe & { tiling: number }): TextureFamily {
   const cacheKey = `${familyName}@${recipe.tiling}`;
@@ -433,7 +433,7 @@ function getOrCreateFamily(scene: Scene, familyName: string, recipe: FamilyRecip
  * Does NOT touch tiling (baked into the family's textures at creation, see
  * getOrCreateFamily) or baseTexture (each caller decides whether that's the
  * family's own tinted albedo or a manifest-art texture with this family's
- * detail maps layered on top — see e.g. createPathMaterial/applyRockDetail). */
+ * detail maps layered on top — see e.g. createPathMaterial). */
 function applyFamily(material: PBRMetallicRoughnessMaterial, family: TextureFamily): void {
   material.normalTexture = family.normal;
   material.occlusionTexture = family.occlusion;
@@ -461,17 +461,24 @@ function applyFamily(material: PBRMetallicRoughnessMaterial, family: TextureFami
 
 const SOIL_RECIPE: FamilyRecipe = {
   seed: 7,
-  baseColor: new Color3(0.24, 0.37, 0.21),
+  // Olive EARTH rather than lawn green. The ground is the largest surface on
+  // screen; a flat mid-green plane read as a billiard table and gave the
+  // (green) foliage nothing to sit against. The green now comes from the moss
+  // drift in the per-vertex tint (src/render/layout.ts's groundTintAt), so the
+  // ground reads as soil with moss growing on it — which is what it is.
+  baseColor: new Color3(0.29, 0.3, 0.2),
   heightLayers: [
     { seed: 7, count: 90, radius: 20 }, // macro clumps
     { seed: 71, count: 260, radius: 4, alpha: 0.35 }, // fine pebbles/crumb grain
   ],
   grain: { seed: 72, amount: 0.05 },
-  bumpStrength: 1.6,
+  bumpStrength: 1.9,
   roughnessBase: 0.88,
   roughnessSpread: 0.18,
   roughnessMicroSpread: 0.08,
-  albedoVariation: 0.09,
+  // Raised from 0.09: at the ground's 10x tiling this is the only source of
+  // sub-metre colour break-up, and 0.09 was invisible past the first metre.
+  albedoVariation: 0.15,
   metallic: 0,
 };
 
@@ -802,8 +809,12 @@ export interface WaterMaterial {
 export function createWaterMaterial(scene: Scene, name: string): WaterMaterial {
   const family = getOrCreateFamily(scene, 'water', { ...WATER_RECIPE, tiling: 2 });
   const material = new PBRMetallicRoughnessMaterial(name, scene);
-  material.baseColor = new Color3(0.3, 0.55, 0.68);
-  material.alpha = 0.88;
+  // Deeper and less milky than the earlier (0.3, 0.55, 0.68) pass, which read
+  // as a pale flat disc lying on the soil rather than as water with depth
+  // under it. The darker base plus a slightly lower alpha lets the shaded
+  // basin floor show through and do the depth work.
+  material.baseColor = new Color3(0.17, 0.36, 0.45);
+  material.alpha = 0.82;
   applyFamily(material, family);
   const update = (nowMs: number): void => {
     const t = nowMs / 4000;
@@ -814,27 +825,130 @@ export function createWaterMaterial(scene: Scene, name: string): WaterMaterial {
   return { material, update };
 }
 
-/** Layers the shared 'stone' family's normal/AO/roughness detail (at
- * tiling=1, a separate cache entry from the habitat drums' tiling=3 stone)
- * onto a scenery rock card's existing manifest-art material — same pattern
- * as createPathMaterial, applied after the fact since scenery meshes are
- * built via the generic createManifestMaterial helper in world.ts. Rocks
- * were previously "manifest art only" with no PBR detail pass at all (see
- * docs/MATERIAL_LIBRARY.md's prior "Scenery: rocks/foliage" note); this
- * gives them the same chip/pore bump and roughness variation as the stone
- * habitat bodies instead of a flat roughness=0.55 card. */
-export function applyRockDetail(scene: Scene, material: PBRMetallicRoughnessMaterial): void {
-  const family = getOrCreateFamily(scene, 'stone', { ...STONE_RECIPE, tiling: 1 });
+// ---------------------------------------------------------------------------
+// Procedural scenery materials (this pass)
+// ---------------------------------------------------------------------------
+// One material per FAMILY, shared by every instance of every kind that wants
+// that surface — per-instance colour micro-variation is delivered by the
+// thin-instance colour buffer (see src/render/world.ts), which multiplies the
+// albedo in the shader, so hundreds of individually-tinted stones and shrubs
+// still cost exactly one material and one draw call per master mesh. This is
+// the brief's "don't create one material or texture per scattered object"
+// rule taken literally.
+//
+// All of these are DECORATION, and GameRules §4.1 requires decoration to stay
+// visually subordinate to interactive elements. Their base colours are
+// therefore deliberately desaturated relative to the habitat/Sprout palette,
+// and none of them carries a resting emissive except the lantern glass, which
+// is the one decorative element that is meant to be a light source.
+
+/** Scattered stone — pebbles, boulders, kerb blocks, basin rims. Reuses the
+ * habitat drums' stone family at a finer tiling, since a pebble is a fraction
+ * of a drum's size and the 3x tiling would smear across it. */
+export function createSceneryStoneMaterial(scene: Scene, name: string): PBRMetallicRoughnessMaterial {
+  const family = getOrCreateFamily(scene, 'stone', { ...STONE_RECIPE, tiling: 2 });
+  const material = new PBRMetallicRoughnessMaterial(name, scene);
+  // Cool-neutral river stone, a touch warmer than mid-grey so it sits inside
+  // the garden's warm key light rather than reading as concrete. Deliberately
+  // DARKER than a "correct" pebble grey: browser QA showed a lighter stone
+  // reading brighter than the soil it sits on, which pulled the eye onto the
+  // decoration and away from the habitats — the opposite of the visual
+  // hierarchy GameRules §4.1 requires.
+  material.baseColor = new Color3(0.44, 0.42, 0.39);
+  material.baseTexture = family.albedo;
+  material.baseTexture.level = 0.55;
   applyFamily(material, family);
+  return material;
 }
 
-/** Layers the 'foliage' family's normal/AO/roughness detail onto a scenery
- * foliage card's manifest-art material — see FOLIAGE_RECIPE and
- * applyRockDetail's doc comment for the pattern this follows. */
-export function applyFoliageDetail(scene: Scene, material: PBRMetallicRoughnessMaterial): void {
+/** Living foliage — grass tufts, bush/fern leaves, lily pads. Two-sided, so a
+ * single-sheet leaf lights correctly from behind instead of going black, and
+ * satin rather than matte so leaves catch a soft waxy highlight. */
+export function createFoliageBodyMaterial(scene: Scene, name: string, tint: Color3): PBRMetallicRoughnessMaterial {
   const family = getOrCreateFamily(scene, 'foliage', { ...FOLIAGE_RECIPE, tiling: 1 });
+  const material = new PBRMetallicRoughnessMaterial(name, scene);
+  material.baseColor = tint;
+  material.baseTexture = family.albedo;
+  material.baseTexture.level = 0.4;
   applyFamily(material, family);
+  // Leaves are open sheets: `doubleSided` turns OFF back-face culling AND
+  // flips the normal on back faces, so the underside of a drooping fern is
+  // lit as a surface rather than rendered as an unlit black hole.
+  material.doubleSided = true;
+  return material;
 }
+
+/** Flower petals — the same foliage surface with a brighter, waxier response
+ * so a bloom reads as a distinct material from the leaf it grows out of.
+ * Per-bloom colour comes from the thin-instance tint. */
+export function createPetalMaterial(scene: Scene, name: string): PBRMetallicRoughnessMaterial {
+  const family = getOrCreateFamily(scene, 'foliage', { ...FOLIAGE_RECIPE, tiling: 1 });
+  const material = new PBRMetallicRoughnessMaterial(name, scene);
+  // Warm cream rather than the near-white an earlier pass used, which
+  // disappeared against the pale kerb stones at gameplay distance. Still a
+  // PASTEL, not a focal colour — a flower bed must not compete with a Sprout
+  // for attention (GameRules §4.1).
+  material.baseColor = new Color3(0.88, 0.76, 0.66);
+  material.baseTexture = family.albedo;
+  material.baseTexture.level = 0.22;
+  applyFamily(material, family);
+  material.roughness = 0.72; // multiplies the family's G channel down: petals are smoother than leaves
+  material.doubleSided = true;
+  return material;
+}
+
+/** Fungi caps/stems — soft, dry, slightly chalky. Reuses the wood family's
+ * grain at a fine tiling, which at mushroom scale reads as cap striations. */
+export function createFungusMaterial(scene: Scene, name: string, tint: Color3): PBRMetallicRoughnessMaterial {
+  const family = getOrCreateFamily(scene, 'wood', { ...WOOD_RECIPE, tiling: 2 });
+  const material = new PBRMetallicRoughnessMaterial(name, scene);
+  material.baseColor = tint;
+  material.baseTexture = family.albedo;
+  material.baseTexture.level = 0.35;
+  applyFamily(material, family);
+  material.roughness = 1.15; // chalkier than painted wood
+  return material;
+}
+
+/**
+ * Lantern glass for the first-expansion layer — the one decorative material
+ * with a resting emissive, because a lantern that does not glow is not a
+ * lantern. Kept modest (emissive well under 1) and warm so it complements the
+ * key light instead of blowing out into a glowing sticker, per the brief's
+ * emissive rule. `flicker` writes a single scalar, so animating it costs no
+ * allocation and can be frozen flat under reduced motion.
+ */
+export interface LanternGlassMaterial {
+  material: PBRMetallicRoughnessMaterial;
+  /** `intensity` 0..1 scales the resting glow; callers pass a slow flicker. */
+  setGlow: (intensity: number) => void;
+}
+
+const LANTERN_EMISSIVE = new Color3(1, 0.72, 0.36);
+
+export function createLanternGlassMaterial(scene: Scene, name: string): LanternGlassMaterial {
+  const material = new PBRMetallicRoughnessMaterial(name, scene);
+  material.baseColor = new Color3(0.95, 0.83, 0.6);
+  material.metallic = 0;
+  material.roughness = 0.25;
+  material.alpha = 0.9;
+  material.transparencyMode = Material.MATERIAL_ALPHABLEND;
+  material.emissiveColor = LANTERN_EMISSIVE.scale(0.85);
+  return {
+    material,
+    setGlow: (intensity: number) => {
+      material.emissiveColor = LANTERN_EMISSIVE.scale(0.6 + 0.4 * Math.max(0, Math.min(1, intensity)));
+    },
+  };
+}
+
+// NOTE: `applyRockDetail` / `applyFoliageDetail` were removed in the
+// procedural-world pass. They layered this module's stone/foliage detail maps
+// onto the FLAT BILLBOARD SCENERY CARDS' manifest-art materials. Those cards
+// no longer exist — scenery is now real instanced geometry using
+// `createSceneryStoneMaterial` / `createFoliageBodyMaterial` above, which own
+// their albedo outright rather than decorating someone else's — so the two
+// helpers had no remaining callers.
 
 /** Test-only: clears the module-level texture-family cache between test
  * runs (mirrors the _reset helpers in assets.ts/environment.ts). */

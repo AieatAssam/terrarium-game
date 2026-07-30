@@ -176,6 +176,17 @@ No new emissive usage was introduced by this pass's material work.
 ## Per-material recipes
 
 ### Ground / soil (`createSoilMaterial`, `src/render/world.ts`)
+
+**Reworked this pass.** The ground is the largest surface on screen and was a
+flat single-colour plane. Three changes: the base colour moved from lawn green
+to **olive earth** (0.29, 0.30, 0.20) so the green now comes from moss drift
+rather than from the substrate — a mid-green plane read as a billiard table and
+gave the green foliage nothing to sit against; `albedoVariation` was raised
+0.09 → 0.15, because at the ground's 10x tiling that is the only source of
+sub-metre colour break-up and 0.09 was invisible past the first metre; and
+`bumpStrength` 1.6 → 1.9. The mesh itself is now displaced and per-vertex
+tinted (see docs/ART_DIRECTION.md §12.3); those vertex colours MULTIPLY this
+material's albedo, which is why they are kept inside a narrow ~0.78–1.28 range.
 - Physical character: loose garden soil, matte, gently mottled, with visible
   clump/pebble/grain relief instead of a flat plane.
 - Maps: `soil` family albedo/normal/AO/metallic-roughness, tiled 10× across
@@ -312,36 +323,82 @@ No new emissive usage was introduced by this pass's material work.
   from the prior StandardMaterial version, same alpha/emissive fields exist
   on PBRMetallicRoughnessMaterial.
 
-### Scenery: rocks (`createManifestMaterial` + `applyRockDetail`,
-`src/render/world.ts` / `src/render/pbrMaterials.ts`)
-- Physical character: painted card decals with their own baked ground
-  shadow (unchanged from the prior "flat card" fix — see the existing doc
-  comments in `world.ts`), now WITH a real PBR detail pass layered on top
-  instead of a flat `roughness=0.55` card — new this pass.
-- Maps: manifest art as `baseTexture` (unchanged) + the shared `stone`
-  family's normal/AO/metallic-roughness at tiling=1 (`applyRockDetail`,
-  `pbrMaterials.ts`) — same chip/pore detail as the habitat stone bodies,
-  applied via the same "layer detail maps onto a manifest-art material"
-  pattern `createPathMaterial` already used.
-- Roughness: 0.28–0.92 (from the `stone` family, replacing the flat 0.55
-  default).
+### Scenery: instanced stone (`createSceneryStoneMaterial`, `src/render/world.ts`)
 
-### Scenery: foliage (`createManifestMaterial` + `applyFoliageDetail`,
-`src/render/world.ts` / `src/render/pbrMaterials.ts`)
-- Physical character: painted bush/fern card decals, now with leaf-cluster
-  shadow pockets and vein-like fine streaks instead of a flat card — new
-  `foliage` family this pass, explicitly called out in the brief as needing
-  its own richer pass rather than the generic manifest-art default.
-- Maps: manifest art as `baseTexture` (unchanged) + the new `foliage`
-  family's normal/AO/metallic-roughness at tiling=1 (`applyFoliageDetail`).
-  256px, 26 leaf-cluster shadow-pocket blotches + 90 vein-like streaks at
-  randomized angles (so they read as scattered leaf veins, not a single
-  repeated pattern) + grain.
-- Roughness: 0.25–0.65 (waxy-satin — moderately smooth per the brief's
-  "waxy leaves" recipe, with real per-area variation instead of a flat
-  0.55).
+Pebbles, boulders, kerb blocks and basin rim stones — every stone in the
+garden, base layer and first-expansion layer alike — share this ONE material.
+
+- **Physical character:** cool-neutral river stone, warmed slightly so it sits
+  inside the garden's key light rather than reading as concrete.
+- **Maps:** the shared `stone` procedural family at tiling 2 (a pebble is a
+  fraction of a habitat drum's size, so the drums' tiling 3 would smear across
+  it). Albedo at level 0.55, plus the family's normal/AO/metallic-roughness.
+- **Base colour is deliberately darker than a "correct" pebble grey**
+  (0.44, 0.42, 0.39). Browser QA showed a lighter stone reading brighter than
+  the soil it sits on, which pulled the eye onto decoration and away from the
+  habitats — the opposite of the hierarchy GameRules §4.1 requires.
+- **Per-object variation** comes from the thin-instance colour buffer, not from
+  more materials: Babylon multiplies `instanceColor` into the PBR albedo
+  (`INSTANCESCOLOR`), so ~180 individually-tinted stones cost one material.
+- **Performance:** 1 material, 6 master meshes, 0 new textures beyond the one
+  `stone@2` family entry.
+
+### Scenery: foliage (`createFoliageBodyMaterial`, `src/render/world.ts`)
+
+Grass tufts, bush and fern leaf clusters, lily pads, and blossom stems.
+
+- **Physical character:** stylised waxy/satin leaf — not chrome, not dead matte
+  cardboard.
+- **Maps:** the shared `foliage` family at tiling 1 (leaf-cluster shadow
+  pockets plus fine vein-like streaks), albedo at level 0.4.
+- **`doubleSided = true`**, which turns off back-face culling AND flips the
+  normal on back faces. Leaves are open sheets; without this the underside of a
+  drooping fern renders as an unlit black hole rather than a lit surface.
+- **Volume comes from geometry, not from the material.** Every blade is a
+  folded ribbon with a raised midrib (`bladeVertexData`), so it has a real
+  cross-section and shades along its length. This is what replaced the flat
+  billboard foliage cards.
+
+### Scenery: petals (`createPetalMaterial`, `src/render/world.ts`)
+
+First-expansion blossoms only, split from the stem so a bloom's colour never
+tints its own stalk.
+
+- Same `foliage` family, but albedo level dropped to 0.22 and `roughness`
+  multiplied to 0.72 — petals read smoother and cleaner than the leaf they grow
+  from, which is what distinguishes them at this scale.
+- **Warm cream base** (0.88, 0.76, 0.66) rather than the near-white a first
+  attempt used, which disappeared against the pale kerb stones at gameplay
+  distance. Still a pastel: a flower bed must not compete with a Sprout.
+- Per-bloom colour drift rides on the thin-instance tint (r and b move in
+  opposite directions), so a bed reads as mixed planting, not one cloned flower.
+
+### Scenery: fungi (`createFungusMaterial`, `src/render/world.ts`)
+
+- Soft, dry, slightly chalky. Reuses the `wood` family at tiling 2, which at
+  mushroom scale reads as cap striations rather than as planks.
+- `roughness` multiplied to 1.15 — chalkier than painted wood.
+
+### Lantern glass (`createLanternGlassMaterial`, `src/render/world.ts`)
+
+**The only decorative material in the garden with a resting emissive**, because
+a lantern that does not glow is not a lantern.
+
+- Warm emissive (1, 0.72, 0.36) held well under 1.0 in magnitude so it
+  complements the key light instead of flattening into a glowing sticker.
+- Alpha-blended at 0.9, and deliberately **excluded from the shadow map** — a
+  blended caster stamps a hard opaque square under every lantern.
+- `setGlow` writes a single scalar, so the slow flicker allocates nothing and
+  freezes flat under reduced motion.
 
 ### Water accent (`createWaterMaterial`, `src/render/world.ts`)
+
+**Reworked this pass.** Base colour deepened from (0.3, 0.55, 0.68) to
+(0.17, 0.36, 0.45) and alpha lowered 0.88 → 0.82. The old value read as a pale
+flat disc lying on the soil; the darker base plus lower alpha lets the shaded
+basin floor show through and do the depth work. There is now ONE water material
+for the whole garden — all basins merge into a single mesh — rather than one
+per placement.
 - Physical character: glossy local response, gentle animated ripple.
 - Maps: `water` family (tiling 2, roughness 0.03–0.25) + Subagent C's
   manifest water-lily/reflection linework as `baseTexture` once it finishes
@@ -523,3 +580,59 @@ mainstream laptop would notice, and the win in silhouette quality is large.
 Textures, materials and draw-call structure are unchanged apart from the 4 path
 piece materials and 1 conveyor material — the geometry pass added no new texture
 memory at all.
+
+---
+
+## Thin instancing and per-object variation (procedural-world pass)
+
+The scenery layer went from 22 flat cards, each with **its own material**, to
+413 real volumes sharing **six** materials. The mechanism that makes that
+possible is worth stating explicitly, because it is the thing that lets
+"material and colour micro-variation per instance" coexist with "do not create
+one material or texture per scattered object".
+
+Babylon defines `INSTANCESCOLOR` when a mesh has an `instanceColor` vertex
+buffer AND has (thin) instances — see
+`PrepareDefinesForAttributes` in `materialHelper.functions.js`. The PBR
+fragment shader then does `surfaceAlbedo *= vColor.rgb`. So:
+
+```
+mesh.thinInstanceSetBuffer('matrix', matrices, 16, false); // per-object transform
+mesh.thinInstanceSetBuffer('color',  colours,   4, true);  // per-object albedo tint
+```
+
+gives every one of a master's instances its own position, rotation, scale and
+colour, in one draw call, off one material, with no extra texture. Per-instance
+tint is constrained to a [0.7, 1.35] multiplier with channel spread < 0.35
+(asserted in `tests/unit/render.procgen.test.ts`) so variety never becomes
+saturation that competes with an interactive prop.
+
+Two practical notes, both learned the hard way:
+
+- **The matrix buffer must be uploaded with FINAL transforms before any reveal
+  animation starts.** Babylon computes the master's thin-instance bounding info
+  on upload; a reveal that begins at scale 0 would register a degenerate
+  bounding box and the whole group could be frustum-culled for its entire
+  animation.
+- **`MeshBuilder` allocates non-updatable vertex buffers by default**, and a
+  later `updateVerticesData` against one of those does not throw — it silently
+  does nothing. The displaced terrain rendered as a perfectly flat plane until
+  `CreateGround` was passed `updatable: true`; `__debug.extents` reported
+  `minY === maxY`, which is how it was caught. Bounding info also has to be
+  refreshed explicitly afterwards.
+
+## Material and texture budget after this pass
+
+| | Before | After |
+|---|---|---|
+| Scenery materials | 22 (one per placed card) | 6 shared (stone, foliage, petal, fungus, lantern frame, lantern glass) |
+| Water materials | 1 per water accent | 1 for the whole garden |
+| Scenery draw calls | 22 (base only) | 16 base + 12 expansion, for 413 objects |
+| New textures | — | **none** |
+
+No new texture is generated by any of this. Every new material reuses an
+existing procedural family; the only new *cache entry* is `stone@2`
+(4 × 256×256 RGBA ≈ 1.0 MB), and it replaces the now-deleted `stone@1` entry
+that the retired flat rock cards used, so family texture memory is net flat.
+Separately, five `scenery.*` SVGs are no longer rasterized at runtime at all
+(they were 512²–1024² RGBA each), so total texture memory went **down**.

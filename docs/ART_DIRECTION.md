@@ -419,3 +419,218 @@ bounding boxes after the change.
 `src/render/propDims.ts`, and both the mesh and everything that sits on top of it
 are derived from that entry. Nothing may re-declare a prop's height, radius or
 top-surface Y locally.
+
+---
+
+## 12. Procedural world generation (owner: E, this pass)
+
+Before this pass the decorative layer was a fixed, hand-listed
+`SCENERY_PLACEMENTS` array of 22 tiles, rendered as flat billboard cards on a
+flat single-colour ground plane. The world is now GENERATED: terrain form,
+water basins, the scatter of stone/foliage/ground-cover/fungi, all per-instance
+material variation, and the entire first-expansion layer.
+
+### 12.1 The determinism contract
+
+**The same garden must appear on every reload, every machine and every
+backend.** The previous hand-listed scatter got this for free; a generator has
+to earn it. Five rules, enforced by `tests/unit/render.procgen.test.ts`:
+
+1. **One seed.** `GARDEN_SEED` in `src/render/layout.ts` is a fixed literal.
+   Layers derive sub-seeds by XOR from it, so changing the one constant
+   re-rolls the whole garden coherently and nothing else can.
+2. **No ambient entropy.** Nothing in the generator reads `Math.random`,
+   `Date.now`, `performance.now`, the sim's PRNG (whose seed is sim state, not
+   render's to read) or any per-session value.
+3. **Positional hashing, not a stream PRNG.** Every decision is
+   `rand01(seed, cellX, cellZ, channel)`. A sequential PRNG makes each draw
+   depend on how many draws preceded it, so adding one shrub at the start
+   silently reshuffles the entire garden and every *rejected* candidate
+   perturbs everything after it. Positional hashing makes generation
+   order-independent and locally stable: rejection sampling is free, and layers
+   can be added, removed or retuned without disturbing their neighbours.
+4. **Integer math** (`Math.imul`, `>>> 0`) so the hash is bit-exact across
+   engines rather than dependent on float rounding.
+5. **Generated once, at module load**, and frozen into exported arrays. The
+   renderer cannot re-roll anything per frame or per session because it never
+   holds the generator.
+
+The unit test pins an order-independent digest of each layer, so re-rolling the
+garden is a deliberate act (update the expected numbers) rather than a silent
+regression.
+
+### 12.2 Reserved space is a continuous field, not a tile flag
+
+`isReservedTile` answers a TILE question — the right granularity for automation
+placement, too coarse for decoration. A habitat drum is 2.6 world units across
+(`src/render/propDims.ts`), i.e. it overhangs its own tile by more than a whole
+tile in every direction, so a tile-only check was free to drop a rock halfway
+inside the Dew Pond.
+
+`reservedClearance(x, z)` returns the distance to the nearest reserved zone's
+EDGE, where each zone's radius is the prop's real footprint plus breathing room
+(habitats 1.6, Nursery 1.25, automation sites 0.85, path tiles 0.55). It is the
+single gate used by terrain flattening AND every scatter layer, so "decoration
+never lands on or deforms gameplay space" is one rule in one place.
+
+Path clearance is deliberately only a little wider than the 0.2125 tread
+half-width, which lets planting hug the verge — the look we want — without
+landing on the tread.
+
+### 12.3 Terrain
+
+- **Two scales, not one.** A broad bank field (long wavelength, 72% of the
+  amplitude) gives the garden readable large-scale form at the iso camera's
+  shallow angle; a finer crumble rides on top. A single mid-scale octave set
+  read as uniform noise — present in the vertex data, invisible on screen.
+- **Amplitude is tiny (0.18 world units).** This is "loose soil that was raked,
+  not levelled", not landscape relief. Anything larger starts occluding Sprouts
+  at the garden camera's angle, trading readability for texture.
+- **Flattened to exactly 0 under gameplay surfaces**, smoothly over a 0.9-unit
+  band outside each reserved zone. Props, path tiles and contact shadows all
+  assume the datum they were authored against; the undulation is decoration and
+  is not allowed to move it. Asserted in the unit test.
+- **Per-vertex tint** from the same height field: dry crests go warm ochre,
+  damp hollows go deep moss, with an independent low-frequency patch field so
+  the colour is not a pure function of the shape. Sized to stay inside a
+  ~0.78–1.28 multiplier — the ground is the largest surface on screen and must
+  gain material variety WITHOUT becoming a second saturated palette competing
+  with the Sprouts.
+- The soil base colour was changed from lawn green to **olive earth**. A flat
+  mid-green plane read as a billiard table and gave the (green) foliage nothing
+  to sit against. The green now comes from the moss drift in the vertex tint,
+  so the ground reads as soil with moss growing on it — which is what it is.
+
+### 12.4 Water basins
+
+Basins are generated FIRST and are an input to the height field, so the
+ordering is basins → terrain → everything standing on terrain.
+
+**The waterline is derived, not chosen.** The bowl profile is
+`-depth * (cos(pi*d/R)/2 + 0.5)`, so a water plane at height `S` meets the
+floor where that expression equals `S`. Pond width and surface height are
+therefore ONE parameter, not two. An earlier attempt in this pass picked them
+independently (0.85R wide, 0.6 of depth above the floor); they described
+inconsistent geometry, the water plane intersected the rising bowl well before
+its own edge, the disc rim was buried in soil, and lily pads generated on that
+plane ended up under the ground they floated over. `WATER_RADIUS_FRACTION`
+now fixes both, and `basinSurfaceHeight()` is the single definition shared by
+the lily generator and the water mesh.
+
+The general terrain swell is **suppressed inside a basin** so the bowl is a
+clean radially-symmetric dish. With the swell left in, one bank sits higher
+than the other and a flat water plane pokes out of the high side.
+
+Rim stones **straddle the waterline** rather than ringing it from dry land, so
+the water's outline is physically interrupted by geometry from every angle.
+This is the fix for the flat blue ellipse the water accents used to be.
+
+### 12.5 Scatter
+
+Jittered sub-grid per layer: one hashed roll decides whether a cell places
+anything, further channels decide where inside the cell, which variant, size,
+tilt and tint. Layers carry **density fields** so planting reads as responding
+to its environment rather than as uniform noise:
+
+| Layer | Density field |
+|---|---|
+| Pebbles | drier rises + basin shores |
+| Boulders | flat (large, sparse) |
+| Grass tufts | damp ground + path verge |
+| Bushes | flat |
+| Ferns | damp ground |
+| Mushrooms | damp, shaded hollows; avoids dry rises |
+| Lily pads | polar, per-basin (a rectangular cell grid over a 1.1-unit disc gives two pads or none) |
+
+### 12.6 Visual subordination
+
+GameRules §4.1 requires interactive elements to stay instantly distinguishable
+from decoration. Concretely, and asserted in the unit test:
+
+- Per-instance tint is a MULTIPLIER in [0.7, 1.35] with channel spread < 0.35 —
+  variety without any single shrub becoming a saturated focal object.
+- Decoration carries **no resting emissive** except lantern glass, which is the
+  one decorative element that is meant to be a light source.
+- Scenery stone is deliberately DARKER than a "correct" pebble grey. Browser QA
+  showed a lighter stone reading brighter than the soil it sits on, pulling the
+  eye onto decoration and away from the habitats.
+- Blossoms are pastels, not focal colours.
+
+### 12.7 Ambient motion
+
+Foliage sway is a small root-pivoted lean (peak 0.085 rad) driven by rewriting
+the thin-instance matrix buffer. It is gated on `MotionConfig.ambientIntensity`,
+so reduced motion freezes it at the true rest pose — written exactly once on the
+frame motion is disabled, not every frame. Rigid kinds (stone, kerb, lanterns,
+mushrooms) never sway at all. Lantern fireflies scale with
+`backgroundMotion * particleDensity`; lantern glow flicker freezes at its
+resting brightness.
+
+### 12.8 First expansion — "Decorative Expansion I" (GameRules §6.6)
+
+§6.6 requires the first expansion to "make the world feel larger and more
+personal, not merely increase capacity invisibly", and §2.3 requires every
+meaningful unlock to produce a visible change. Buying it previously changed
+nothing at all in the world.
+
+It now reveals a second generated layer designed around three distinct reads:
+
+1. **A larger world** — a low stone kerb rings the garden OUTSIDE the 16x16
+   play grid, on apron the base garden never uses. The plot gains a defined
+   edge, which reads as the garden having been extended out to it. Walked as a
+   perimeter (not scattered) so the ring is unbroken, with per-block jitter so
+   it reads as laid stones rather than extruded fence.
+2. **A more personal world** — lanterns along the path verge, the first warm
+   light sources the player owns rather than the ambient sun, with their own
+   drifting fireflies.
+3. **More life** — flowering blossoms and a denser moss carpet threaded through
+   the existing planting, so the interior visibly fills in too.
+
+The layer is generated deterministically at module load like everything else;
+purchase only decides WHEN it becomes visible. That is what makes reload safe:
+restoring a save rebuilds an identical garden, just without replaying the
+celebration.
+
+**Reveal choreography.** Staggered scale-in running OUTWARD from the garden
+centre, so the layer reads as the garden growing rather than everything popping
+at once, plus a sparkle burst at each new lantern to take the player's eye to
+the change. Reduced motion still gets a reveal — §2.3's visible change is
+information, not decoration — but a short, calm, non-overshooting one.
+
+**Restoration is belt-and-braces, on purpose.** `src/main.ts` starts the sim
+immediately and emits `save:loaded` after one IndexedDB read, while the renderer
+is still behind `bootstrap()` and `loadManifest()`. The event has therefore
+already been emitted and discarded (the bus has no replay) by the time
+`world.ts` subscribes — verified in the browser, not assumed: after buying and
+reloading, the Upgrades panel showed "Level 1 / 1" while the garden showed no
+expansion meshes. `world.ts` keeps the subscription for the live path and ALSO
+does a read-only `loadGame()` query; `revealExpansion` is idempotent so
+whichever arrives first wins.
+
+### 12.9 Geometry rules for generated scenery
+
+- **Nothing is a single flat quad.** Even a blade of grass is a folded ribbon
+  (three columns, raised midrib) so it has a cross-section and catches the key
+  light differently along its length.
+- Stones are **lobed, not noise-displaced**. High-frequency noise on a
+  120-triangle mesh reads as faceting; a few large lobes read as a genuinely
+  irregular boulder silhouette at gameplay distance.
+- Normals are computed then **welded** across coincident vertices. Without the
+  weld every revolved shape shows a shading seam down its duplicated UV seam
+  column and every merged part shows a hard crease at its boundary.
+- Multi-part objects merge into ONE master mesh where they share a material,
+  and split into exactly as many masters as they need distinct materials
+  (a lantern is two: opaque frame, emissive glass).
+- Fronds **arch** — rise then bend over — rather than being pitched steeply
+  downward. An earlier value rotated whole fronds ~70° below horizontal and
+  buried their tips 0.46 units under the soil; caught by measuring bounding
+  boxes in the browser, not by looking at a screenshot.
+
+### 12.10 Retired assets
+
+The five `scenery.*` SVGs (`rockSmall`, `rockLarge`, `fern`, `bush`,
+`waterAccent`) are **no longer used by the renderer**. They were top-down
+painted decals shown on flat billboard cards; the last art QA lowered the
+Polish score specifically because those cards had become the placeholder
+element in frame. The source art remains in `public/assets/scenery/` and in the
+manifest, unreferenced. Nothing else changed about C's art.

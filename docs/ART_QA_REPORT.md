@@ -804,3 +804,180 @@ multi-device profiling, and **one was lowered** — see Polish above.
 - **Refreshed screenshot PNGs.** `docs/qa-screenshots/` still holds the Phase 1
   set and is stale for everything this pass touched; findings above cite
   reproducible `qaCamera` parameters and measured numbers instead.
+
+---
+
+# Phase 5 — Procedural world generation, scenery volumes, and the first visible expansion
+
+**Owner:** visual-fidelity-artist (E).
+**Scope:** `src/render/{world,layout,geometry,pbrMaterials,particles}.ts`, one
+call-site line in `src/render/index.ts`, `tests/unit/render.procgen.test.ts`,
+and the four art docs.
+
+Three objectives: (1) make the decorative/environmental layer genuinely
+procedural and seeded; (2) fix the flat scenery cards that Phase 4 lowered the
+Polish score for, and rework the ground; (3) make "Decorative Expansion I"
+produce a visible change (GameRules §6.6 / §2.3).
+
+## What changed
+
+- **Procedural generation** (`src/render/layout.ts`). One fixed `GARDEN_SEED`;
+  positional-hash decisions (never a sequential PRNG); seeded value-noise/fBm
+  terrain; generated water basins that carve the terrain; a jittered-sub-grid
+  scatter with per-layer density fields; per-instance transform and colour
+  micro-variation. Full rules in docs/ART_DIRECTION.md §12.
+- **The 22 flat billboard scenery cards are gone.** Scenery is now 215 real
+  volumes (pebbles, boulders, folded-blade grass tufts, tiered leaf clusters,
+  arching ferns, mushrooms, lily pads) drawn as thin instances off 14 master
+  meshes.
+- **The ground is no longer a flat single-colour plane.** 56×56 subdivided,
+  displaced by the seeded height field, per-vertex tinted from the same field,
+  basins carved into it, and flattened to exactly y = 0 under every gameplay
+  surface.
+- **Water accents are recessed** into carved bowls with a stone shoulder
+  straddling the waterline, replacing the flat blue ellipse.
+- **"Decorative Expansion I" reveals a second generated layer** — perimeter
+  kerb, path lanterns with emissive glass and fireflies, flower beds, moss
+  carpet — with a staggered outward reveal.
+- **New shared materials:** scenery stone, foliage, petal, fungus, lantern
+  glass. Six materials for 413 objects; no new textures.
+- `applyRockDetail` / `applyFoliageDetail` deleted — they existed only to
+  decorate the retired flat cards' manifest-art materials.
+
+## Defects found and fixed during this pass
+
+All five were found by MEASURING in the browser, not by looking at screenshots.
+Recording them because four of them looked fine in a screenshot.
+
+1. **The terrain displacement was silently discarded.** `MeshBuilder` allocates
+   non-updatable vertex buffers by default, and `updateVerticesData` against
+   one does not throw — it does nothing. The whole height field was being
+   computed and thrown away. `__debug.extents('terrarium.ground')` reported
+   `minY === maxY === -0.05`, which is what exposed it. Fixed with
+   `updatable: true` plus an explicit `refreshBoundingInfo()`.
+2. **The water plane cut the bowl before its own edge.** Pond radius and
+   surface height had been picked as two independent-looking constants; they
+   described inconsistent geometry, so the disc's rim was buried in soil and
+   lily pads generated on that plane ended up *under* the ground they floated
+   over. Caught by the unit test, not by eye. Fixed by DERIVING the surface
+   height from the radius (`WATER_RADIUS_FRACTION` / `basinSurfaceHeight`) so
+   they cannot disagree, and by suppressing the terrain swell inside a basin so
+   the bowl is radially clean.
+3. **Fern fronds were buried.** A droop of 0.95 rad rotated whole fronds ~70°
+   below horizontal, putting their tips 0.46 units under the soil
+   (`__debug.extents` minY −0.456). Fixed by arching them (long blade bend,
+   modest pitch) instead of pitching them down.
+4. **The expansion never restored after reload.** `src/main.ts` emits
+   `save:loaded` long before the renderer finishes initialising, and the bus has
+   no replay, so the renderer's subscription never fired. Verified precisely:
+   after buying and reloading, the Upgrades panel read "Level 1 / 1" (the UI
+   store mounts synchronously and does catch it) while the garden had zero
+   expansion meshes. Fixed with an idempotent read-only `loadGame()` fallback
+   alongside the live subscription.
+5. **Decoration was pulling focus from gameplay.** Two corrections after
+   looking at the default camera: scenery stone was reading BRIGHTER than the
+   soil it sat on (base colour darkened to 0.44), and a decorative pond had
+   generated close enough to the Dew Pond habitat to be confusable with it
+   (basin clearance raised to `radius + 0.7` from every reserved zone). Also
+   the kerb stones were initially squashed flat enough to read as scattered
+   pebbles rather than a laid border.
+
+## Browser verification (this pass)
+
+Fresh tab per judgement (`tabs_create` + `navigate`), never a stale HMR canvas —
+the pass produced at least three misleading stale-module states, including one
+where a fixed `ReferenceError` was still being reported from a cached module.
+
+| Check | Result |
+|---|---|
+| Fresh-tab load, console errors | **none** |
+| Default camera, 1400×880 | Habitats read instantly; decoration subordinate |
+| Close-up on a basin (radius 7) | Stones straddle the waterline; lilies float; no hard water edge |
+| Whole-garden framing (radius 25) | Kerb ring reads as a defined plot edge; 6 lanterns lit along the path |
+| Mobile viewport 375×812 | Whole garden legible; habitats still dominant |
+| Purchase "Decorative Expansion I" | Reveal sweeps outward; sparkle at each lantern; achievement fires |
+| Reload after purchase | Expansion restored, no celebration replay |
+| Reduced motion ON | Tuft bounding box frozen across samples (rest pose) |
+| Reduced motion OFF | Tuft bounding box changes between samples (sway live) |
+
+Reduced motion was verified by sampling a swaying master's bounds twice per
+state rather than by eye: moving → values differ; reduced → values identical.
+
+## Performance
+
+Measured on the dev machine (WebGPU backend), tab fronted — an early
+measurement of 40.4 FPS was **background rAF throttling of an unfronted tab**,
+not a real regression, and is recorded here so it is not re-derived later.
+
+| | Before (Phase 4) | Base layer | With expansion |
+|---|---|---|---|
+| Rendered triangles (whole scene) | 5,936 | ~42,100 | ~64,500 |
+| — ground | 128 | 6,272 | 6,272 |
+| — scenery | 44 (22 cards) | 30,086 (215 objects) | 52,494 (413 objects) |
+| Scenery draw calls | 22 | 16 | 28 |
+| Scenery materials | 22 | 6 | 6 |
+| New textures | — | **0** | **0** |
+| FPS, 1400×880 | 60.0–60.2 | 60 | 60.0 (rAF 60.0) |
+| FPS, 375×812 | — | — | 60.2 (rAF 60.4) |
+
+Texture memory is **net lower**, not higher: no new texture is generated, the
+one new procedural family cache entry (`stone@2`, 4 × 256² RGBA ≈ 1.0 MB)
+replaces the `stone@1` entry the retired rock cards used, and five `scenery.*`
+SVGs (512²–1024² RGBA each) are no longer rasterized at runtime at all.
+
+Per-frame cost of the new animation is bounded and allocation-free: at most
+~250 swaying instances have their matrices recomposed into a preallocated
+`Float32Array` using three module-level scratch matrices. Static groups under
+reduced motion are skipped entirely, and the rest pose is written exactly once
+on the frame motion is disabled rather than every frame.
+
+## Score table (Phase 5 — supersedes Phase 4 for every category)
+
+| Criterion | Score | Notes |
+|---|---|---|
+| Material richness and tactile depth | **5/5** | Held. Five new material families (scenery stone, foliage, petal, fungus, lantern glass), all with real normal/AO/roughness response, and the surfaces that previously carried material-but-no-volume are gone. Not "raised" — it was already at ceiling. |
+| Lighting and shadow quality | **4/5** | **Held, deliberately not raised.** Phase 2/3/4 capped this on the WebGPU `scene.environmentTexture` gap, and **that gap is untouched**: this pass did not re-attempt IBL (see Deferred below). Real lighting work did happen — the first practical in-world light source (lantern emissive), more shadow casters, contact grounding on displaced terrain — but none of it is the named cap, and raising the score on the strength of unrelated work is exactly the re-weighting this report had to self-correct for once already. |
+| Readability at gameplay distance | **5/5** | Held, and specifically re-verified rather than assumed, because this pass added ~400 objects to a garden that previously had 22 and busier scenes are the obvious way to lose this. Checked at default camera and at 375×812. Two corrective changes were made *because* of that check (stone darkened below the soil's value; basins pushed further from habitats) — see Defect 5. Habitats and the path still read first. |
+| Silhouette and species distinction | **5/5** | Held. Sprout distinction is untouched and still shape-led. Scenery now HAS a silhouette at all — folded blades, tiered leaf clusters, lobed stones, arching fronds — where before it was flat cards with none. |
+| Animation appeal | **5/5** | Held. Adds root-pivoted foliage wind sway, lantern flicker, drifting fireflies, and a staggered outward expansion reveal. Every one is wired through `MotionConfig` and the reduced-motion path was verified by measurement, not assumed — the failure mode a previous pass found (a toggle reaching no world animation at all) was explicitly tested for. |
+| Environmental cohesion | **4/5** | **Held, deliberately not raised.** This pass genuinely improved cohesion — planting responds to damp ground and path verges, scenery grows out of terrain that was carved for it, the ground is earth-with-moss instead of a green plane, basins are cut into the terrain rather than laid on it. But Phase 2/3/4 capped this on the WebGPU IBL ambient-grading gap and that reason is still fully in force. Same argument as Lighting: the named cap is what the score is about. |
+| Texture quality and UV correctness | **4/5** | **Lowered from 5/5, and this is the honest call rather than a comfortable one.** The textures themselves are unchanged and still 5-worthy. What changed is that this pass introduced **14 new UV layouts** (lathe, lobed sphere, folded blade, merged multi-part masters, merged basin rims) and they were verified by eye at gameplay distance and one close-up, NOT systematically audited. One real defect is already known: kerb stones are non-uniformly scaled (0.46/0.78/0.40) *after* their UVs are assigned, so the stone texture is stretched roughly 2:1 along their length. It is small and low-contrast at gameplay distance, but it is a genuine UV-correctness defect and "I did not check the other thirteen" is not evidence of correctness. To earn 5/5 back: scale kerb UVs to match the post-scale aspect, and do a per-master UV inspection pass at close range. |
+| Polish vs placeholder appearance | **5/5** | **Raised from 4/5 by fixing the exact named gap, not by reinterpreting it.** Phase 4's remedy was written out explicitly: "give rocks low rounded pebble volumes using the existing procedural stone material (never manifest art on a volume — that is the UV-wrap trap the flat cards were the fix for), and recess or rim the water accents." Both were done literally as specified — stones are procedurally generated lobed volumes carrying the shared stone family, water accents are recessed in carved bowls with a stone shoulder — and the flat cards were removed from the scene entirely rather than merely supplemented. There is no longer a placeholder-reading element in frame. |
+| Web performance | **4/5** | Held. Direct measurement again (60 FPS at 1400×880 and at 375×812, with the expansion revealed, tab fronted), and the claim is now a much stronger one than Phase 4's because the scene carries ~10x the triangles. Still not a 5, for exactly the same honest reason as every prior pass: this is one machine on one backend (WebGPU), not a multi-device frame-rate profile. Nothing about that changed, so neither does the score. |
+
+All nine required categories score ≥4/5, so this pass passes. Five score 5/5,
+**one was raised** by closing its named gap (Polish), **one was lowered**
+(Texture/UV — new geometry brought UV surface area that has not been
+systematically audited, plus one known stretch defect), and three are held at
+4/5 on caps that this pass did not touch.
+
+## Deliberately deferred
+
+- **WebGPU IBL — not re-attempted this pass.** Phase 3 ran six live-browser
+  probes and established that the trigger is the cube having *any* non-uniform
+  content at all, that `RawCubeTexture` does not avoid it, and that a uniform
+  cube carries no information the existing hemispheric fill does not already
+  provide. Re-running that investigation had a poor expected value against a
+  hard constraint ("do not ship a black screen") and against three objectives
+  that had not been started. It stays gated to WebGL, and it stays the stated
+  cap on Lighting and Environmental cohesion. Recorded as a choice, not as an
+  oversight.
+- **Systematic UV audit of the 14 new masters**, and the kerb UV stretch. Named
+  in the score table above with its remedy; it is why Texture/UV is 4/5.
+- **Multi-device performance profile.** Single machine, single backend, as in
+  every prior pass.
+- **The five retired `scenery.*` SVGs** are left in `public/assets/` and in the
+  manifest, unreferenced, rather than deleted — removing another agent's source
+  art is not this pass's call to make.
+- **Refreshed screenshot PNGs.** `docs/qa-screenshots/` is still the Phase 1
+  set. Findings above cite reproducible `qaCamera` parameters and measured
+  numbers instead.
+
+## Commands run
+
+```
+npm run typecheck   # clean
+npm run lint        # clean, --max-warnings 0
+npm test            # 185 passed (22 files), incl. 16 new procgen tests
+npm run build       # built in 2.11s
+```

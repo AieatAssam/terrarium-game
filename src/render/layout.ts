@@ -10,7 +10,7 @@
 // own screen-space math.
 
 import type { TileCoord } from '../sim/grid';
-import { GRID_SIZE } from '../sim/grid';
+import { GRID_SIZE, tileToWorld } from '../sim/grid';
 import { AUTOMATION_SITE_TILES, HABITAT_TILES, NURSERY_TILE } from '../sim/layout';
 
 export { AUTOMATION_SITE_TILES, HABITAT_TILES, NURSERY_TILE };
@@ -302,45 +302,793 @@ export function isReservedTile(tile: TileCoord): boolean {
   return RESERVED_TILE_KEYS.has(tileKey(tile));
 }
 
-/**
- * Deterministic decorative scenery scatter (foliage/rocks/water) — a fixed
- * layout, not randomized per-session, so it's stable across reloads and easy
- * to eyeball in QA. Skips any reserved (nursery/habitat/path/automation)
- * tile. `kind` picks which manifest key family to look up in assets.ts.
- */
-export interface SceneryPlacement {
-  tile: TileCoord;
-  kind: 'foliage' | 'rock' | 'water';
-  variant: number;
+// ===========================================================================
+// PROCEDURAL GARDEN GENERATION
+// ===========================================================================
+//
+// Everything below generates the DECORATIVE/ENVIRONMENTAL layer of the world:
+// terrain undulation, water basins, and the scatter of stones, foliage,
+// ground cover, fungi and (after the first expansion is bought) the lantern
+// walk, kerb and flower beds. Nothing here decides a gameplay position — the
+// Nursery, habitats, automation sites and paths all still come from
+// src/sim/layout.ts via the re-exports at the top of this file.
+//
+// ---------------------------------------------------------------------------
+// Determinism contract
+// ---------------------------------------------------------------------------
+// The same garden must look IDENTICAL across reloads, machines and backends.
+// The previous pass got that by hand-listing 22 placements; this one gets it
+// from a seed, which is stronger (it survives changing the counts) but only if
+// the generator itself is disciplined:
+//
+//   1. ONE module-level seed (`GARDEN_SEED`). Nothing here ever reads
+//      `Math.random`, `Date.now`, `performance.now`, the sim's RNG (whose seed
+//      is sim state, not ours) or any per-session value.
+//   2. Every random decision comes from a POSITIONAL HASH — `rand01(seed, cellX,
+//      cellZ, channel)` — not from a sequential stream. A stream PRNG makes
+//      every draw depend on how many draws happened before it, so adding one
+//      shrub at the start silently reshuffles the entire garden and a rejected
+//      candidate perturbs everything after it. A positional hash makes each
+//      cell's decision depend only on (seed, cell, channel), so generation is
+//      order-independent and locally stable: rejection sampling costs nothing,
+//      and layers can be added or removed without disturbing their neighbours.
+//   3. Integer math only (`Math.imul`, `>>> 0`) so the hash is bit-exact
+//      everywhere rather than depending on float rounding.
+//   4. Generation runs at module load and is frozen into exported arrays, so
+//      the renderer cannot accidentally re-roll anything per frame or per
+//      session. tests/unit/render.procgen.test.ts pins the resulting layout.
+//
+// See docs/ART_DIRECTION.md §12 for the art-side rules (density fields, tint
+// ranges, why decoration stays lower-contrast than interactive props).
+
+/** The one seed the whole decorative world derives from. Changing this
+ * re-rolls the entire garden; it is intentionally a fixed literal, never a
+ * per-session value. */
+export const GARDEN_SEED = 0x7e44a17;
+
+/** Sub-seeds, so two layers that happen to use the same cell coordinates
+ * don't produce correlated results (all foliage landing exactly where all
+ * pebbles land). XORed into GARDEN_SEED rather than being independent magic
+ * numbers, so changing GARDEN_SEED still re-rolls everything together. */
+const SEED_TERRAIN = GARDEN_SEED ^ 0x51a3;
+const SEED_BASIN = GARDEN_SEED ^ 0x2c7f;
+const SEED_SCATTER = GARDEN_SEED ^ 0x6be1;
+const SEED_EXPANSION = GARDEN_SEED ^ 0x1d95;
+const SEED_GROUND_TINT = GARDEN_SEED ^ 0x40b7;
+
+/** Final avalanche of the murmur3 32-bit finalizer family — good bit mixing
+ * for very small inputs (tile coordinates), which a plain multiply-shift
+ * leaves visibly correlated along rows. */
+function mix32(value: number): number {
+  let h = value | 0;
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+  return (h ^ (h >>> 16)) >>> 0;
 }
 
-export const SCENERY_PLACEMENTS: SceneryPlacement[] = (() => {
-  const placements: SceneryPlacement[] = [];
-  // Small mulberry32-style local LCG so the scatter is deterministic without
-  // touching src/sim's RNG (that PRNG's seed is sim state, not ours to read).
-  let seed = 0x9e3779b9;
-  const next = (): number => {
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+/** Positional hash: (seed, x, z, channel) -> uint32. `channel` lets one cell
+ * make several independent decisions (place? which variant? what tint?)
+ * without a sequential stream. */
+export function hashCell(seed: number, x: number, z: number, channel: number): number {
+  let h = mix32(seed ^ Math.imul(x | 0, 0x27d4eb2d));
+  h = mix32(h ^ Math.imul(z | 0, 0x165667b1));
+  return mix32(h ^ Math.imul(channel | 0, 0x9e3779b1));
+}
 
-  const kinds: SceneryPlacement['kind'][] = ['foliage', 'rock', 'water'];
-  let placed = 0;
-  let attempts = 0;
-  const target = 22;
-  while (placed < target && attempts < 400) {
-    attempts += 1;
-    const tile: TileCoord = {
-      x: Math.floor(next() * GRID_SIZE),
-      z: Math.floor(next() * GRID_SIZE),
-    };
-    if (isReservedTile(tile)) continue;
-    if (placements.some((p) => p.tile.x === tile.x && p.tile.z === tile.z)) continue;
-    const kind = kinds[Math.floor(next() * kinds.length)];
-    placements.push({ tile, kind, variant: Math.floor(next() * 3) + 1 });
-    placed += 1;
+/** Positional hash as a [0,1) float. */
+export function rand01(seed: number, x: number, z: number, channel: number): number {
+  return hashCell(seed, x, z, channel) / 4294967296;
+}
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+function smoothstep(t: number): number {
+  const c = clamp01(t);
+  return c * c * (3 - 2 * c);
+}
+
+/** Classic value noise: hash the integer lattice, smoothstep-interpolate.
+ * Continuous, tileable-free, and — because the lattice values come from
+ * `rand01` — exactly reproducible. Returns 0..1. */
+export function valueNoise2D(seed: number, x: number, z: number): number {
+  const x0 = Math.floor(x);
+  const z0 = Math.floor(z);
+  const u = smoothstep(x - x0);
+  const v = smoothstep(z - z0);
+  const n00 = rand01(seed, x0, z0, 0);
+  const n10 = rand01(seed, x0 + 1, z0, 0);
+  const n01 = rand01(seed, x0, z0 + 1, 0);
+  const n11 = rand01(seed, x0 + 1, z0 + 1, 0);
+  return (n00 * (1 - u) + n10 * u) * (1 - v) + (n01 * (1 - u) + n11 * u) * v;
+}
+
+/** Fractal sum of value-noise octaves (each half the amplitude, double the
+ * frequency), normalised back to 0..1. Three octaves is enough for a soft
+ * garden mound field; more just adds high-frequency noise the terrain's
+ * subdivision level cannot resolve anyway. */
+export function fbm2D(seed: number, x: number, z: number, octaves = 3): number {
+  let sum = 0;
+  let amplitude = 1;
+  let total = 0;
+  let frequency = 1;
+  for (let i = 0; i < octaves; i++) {
+    sum += valueNoise2D(seed + i * 7919, x * frequency, z * frequency) * amplitude;
+    total += amplitude;
+    amplitude *= 0.5;
+    frequency *= 2.07; // not exactly 2, so octave lattices don't align into a grid pattern
   }
-  return placements;
+  return sum / total;
+}
+
+// ---------------------------------------------------------------------------
+// Reserved-space clearance
+// ---------------------------------------------------------------------------
+// `isReservedTile` answers a TILE question, which is the right granularity for
+// automation placement but too coarse for decoration: a habitat drum is 2.6
+// world units across (src/render/propDims.ts), i.e. it overhangs its own tile
+// by more than a whole tile in every direction, and the previous scatter — a
+// pure `isReservedTile` check — was therefore free to drop a rock halfway
+// inside the Dew Pond. Decoration is placed at continuous positions, so it
+// needs a continuous clearance field instead.
+
+interface ReservedZone {
+  x: number;
+  z: number;
+  /** World-space radius decoration must stay outside of. */
+  radius: number;
+}
+
+/** Radii are the prop's own footprint (body half-width + foot outset, see
+ * src/render/propDims.ts) plus breathing room, so nothing decorative ever
+ * touches or visually crowds an interactive element. Path tiles get a radius
+ * a little wider than the 0.2125 tread half-width, which still lets planting
+ * hug the verge — the look we want — without landing on the tread. */
+const RESERVED_ZONES: ReservedZone[] = [
+  { ...tileToWorldXZ(NURSERY_TILE), radius: 1.25 },
+  ...Object.values(HABITAT_TILES).map((t) => ({ ...tileToWorldXZ(t), radius: 1.6 })),
+  ...Object.values(AUTOMATION_SITE_TILES).map((t) => ({ ...tileToWorldXZ(t), radius: 0.85 })),
+  ...GARDEN_PATH_TILES.map((t) => ({ ...tileToWorldXZ(t), radius: 0.55 })),
+];
+
+/** Goes through sim's `tileToWorld` (docs/CONTRACTS.md: single shared
+ * mapping) and just drops the y component, which is always 0 for a tile. */
+function tileToWorldXZ(tile: TileCoord): { x: number; z: number } {
+  const world = tileToWorld(tile);
+  return { x: world.x, z: world.z };
+}
+
+/**
+ * Distance from a world point to the nearest reserved zone's EDGE. Positive
+ * outside every zone, negative inside one. This is the single gate both the
+ * terrain flattening and every scatter layer use, so "decoration never lands
+ * on or deforms gameplay space" is one rule in one place.
+ */
+export function reservedClearance(x: number, z: number): number {
+  let best = Infinity;
+  for (const zone of RESERVED_ZONES) {
+    const d = Math.hypot(x - zone.x, z - zone.z) - zone.radius;
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+// ---------------------------------------------------------------------------
+// Terrain
+// ---------------------------------------------------------------------------
+
+/** Peak height of the terrain undulation, in world units. Deliberately tiny:
+ * this is a gentle "loose soil that was raked, not levelled" swell, not
+ * landscape relief. Anything larger starts to occlude Sprouts at the garden
+ * camera's shallow angle, which trades readability for texture. */
+export const TERRAIN_AMPLITUDE = 0.18;
+
+/** How far outside a reserved zone the terrain has fully returned to its
+ * natural height. Inside this band it is smoothly flattened to exactly 0, so
+ * every prop, path tile and shadow still meets the ground plane the way it
+ * did when the ground was flat — the undulation is decoration, and it is not
+ * allowed to lift or sink a gameplay surface. */
+const TERRAIN_FLATTEN_BAND = 0.9;
+
+export interface WaterBasin {
+  x: number;
+  z: number;
+  /** Radius of the carved depression. */
+  radius: number;
+  /** How far below the terrain datum the centre of the bowl sits. */
+  depth: number;
+  /** Radius of the open water surface. NOT a free parameter — see
+   * WATER_RADIUS_FRACTION: it is the radius at which the bowl floor rises to
+   * exactly the water's own surface height, i.e. the true shoreline. */
+  waterRadius: number;
+  seed: number;
+}
+
+/**
+ * Where the waterline sits, as a fraction of the bowl radius.
+ *
+ * This one number fixes both the pond's width AND its surface height, and they
+ * cannot be chosen independently — getting that wrong is a real bug this pass
+ * hit. The bowl profile is `-depth * (cos(pi*d/R)/2 + 0.5)`, so a water plane
+ * at height `S` meets the floor where that expression equals `S`. An earlier
+ * pass picked the water radius (0.85R) and the surface height (0.6 of depth
+ * above the floor) as two independent-looking constants; they described
+ * inconsistent geometry, so the water plane intersected the rising bowl well
+ * before its own edge and the disc's rim was buried in soil — and lily pads
+ * generated on that plane ended up UNDER the ground they floated over (caught
+ * by the unit test, not by eye).
+ *
+ * Now the surface height is DERIVED from the radius, so they cannot disagree.
+ */
+const WATER_RADIUS_FRACTION = 0.7;
+
+/** Bowl falloff evaluated at the shoreline — the fraction of `depth` the water
+ * surface sits below the datum. */
+const WATER_SURFACE_FALLOFF = Math.cos(Math.PI * WATER_RADIUS_FRACTION) * 0.5 + 0.5;
+
+/** Height of a basin's open water surface, relative to the terrain datum
+ * (always negative — the water sits recessed). Single definition shared by the
+ * lily-pad generator here and the water mesh in src/render/world.ts, so the
+ * two can never drift apart. */
+export function basinSurfaceHeight(basin: WaterBasin): number {
+  return -basin.depth * WATER_SURFACE_FALLOFF;
+}
+
+/**
+ * Water accents are generated FIRST and are an input to the terrain height
+ * field (they carve a bowl), so the ordering here matters and is deliberate:
+ * basins -> terrain -> everything that stands on terrain. Placed on a coarse
+ * jittered grid with a clearance requirement, then thinned to `target` by
+ * hashed priority rather than by iteration order, so the result does not
+ * depend on scan direction.
+ */
+function generateWaterBasins(): WaterBasin[] {
+  const candidates: Array<WaterBasin & { priority: number }> = [];
+  const cell = 3.2;
+  for (let cx = -1; cx <= Math.ceil(GRID_SIZE / cell); cx++) {
+    for (let cz = -1; cz <= Math.ceil(GRID_SIZE / cell); cz++) {
+      const x = (cx + 0.15 + rand01(SEED_BASIN, cx, cz, 1) * 0.7) * cell;
+      const z = (cz + 0.15 + rand01(SEED_BASIN, cx, cz, 2) * 0.7) * cell;
+      if (x < -0.6 || x > GRID_SIZE - 0.4 || z < -0.6 || z > GRID_SIZE - 0.4) continue;
+      const radius = 1.05 + rand01(SEED_BASIN, cx, cz, 3) * 0.5;
+      // A basin deforms the ground, so it needs more clearance than a prop
+      // that merely sits on it.
+      // Generous: a pale decorative pool sitting next to the (blue, round)
+      // Dew Pond habitat is a genuine readability hazard — GameRules §4.1
+      // wants interactive elements instantly distinguishable from decoration —
+      // so basins keep well clear of every prop, not just barely clear.
+      if (reservedClearance(x, z) < radius + 0.7) continue;
+      candidates.push({
+        x,
+        z,
+        radius,
+        depth: 0.1 + rand01(SEED_BASIN, cx, cz, 4) * 0.05,
+        waterRadius: radius * WATER_RADIUS_FRACTION,
+        seed: hashCell(SEED_BASIN, cx, cz, 5),
+        priority: rand01(SEED_BASIN, cx, cz, 6),
+      });
+    }
+  }
+  candidates.sort((a, b) => a.priority - b.priority || a.x - b.x || a.z - b.z);
+  const accepted: WaterBasin[] = [];
+  for (const candidate of candidates) {
+    if (accepted.length >= 3) break;
+    if (accepted.some((b) => Math.hypot(b.x - candidate.x, b.z - candidate.z) < b.radius + candidate.radius + 3.4)) continue;
+    accepted.push(candidate);
+  }
+  return accepted;
+}
+
+export const WATER_BASINS: WaterBasin[] = generateWaterBasins();
+
+/** How deep into a basin a point is, 0 (outside) .. 1 (centre). Cosine
+ * falloff so the bowl meets flat ground with zero slope discontinuity — a
+ * linear cone leaves a visible crease ring in the shading. */
+function basinFalloff(basin: WaterBasin, x: number, z: number): number {
+  const d = Math.hypot(x - basin.x, z - basin.z);
+  if (d >= basin.radius) return 0;
+  return Math.cos((Math.PI * d) / basin.radius) * 0.5 + 0.5;
+}
+
+/**
+ * 1 away from every basin, 0 anywhere inside one, smoothly blended over a
+ * short band outside the rim. This SUPPRESSES the general terrain swell inside
+ * a basin, which is what makes the bowl a clean radially-symmetric dish — and
+ * therefore what makes `basinSurfaceHeight`'s derived shoreline exact. With
+ * the swell left in, one side of a pond sits higher than the other and a flat
+ * water plane pokes out of the bank on the high side.
+ */
+function basinSwellMask(x: number, z: number): number {
+  let mask = 1;
+  for (const basin of WATER_BASINS) {
+    const d = Math.hypot(x - basin.x, z - basin.z);
+    const local = smoothstep((d - basin.radius) / 0.7);
+    if (local < mask) mask = local;
+  }
+  return mask;
+}
+
+/**
+ * The garden's ground height at a world point. Pure function of position (and
+ * the module seed), so the renderer's vertex displacement and every scatter
+ * layer's "sit on the ground" lookup agree exactly, with no shared mutable
+ * height buffer to fall out of sync.
+ */
+export function terrainHeightAt(x: number, z: number): number {
+  // Two scales, not one: a broad bank field (long wavelength, most of the
+  // amplitude) that gives the garden a readable large-scale form at the iso
+  // camera's shallow angle, plus a finer crumble on top. A single mid-scale
+  // octave set read as uniform noise — present in the vertex data, invisible
+  // on screen.
+  const banks = (fbm2D(SEED_TERRAIN, x * 0.085, z * 0.085, 2) - 0.5) * 2;
+  const crumble = (fbm2D(SEED_TERRAIN ^ 0x9d, x * 0.31, z * 0.31, 2) - 0.5) * 2;
+  const swell = (banks * 0.72 + crumble * 0.28) * TERRAIN_AMPLITUDE;
+  const flatten = smoothstep(reservedClearance(x, z) / TERRAIN_FLATTEN_BAND);
+  let height = swell * flatten * basinSwellMask(x, z);
+  for (const basin of WATER_BASINS) {
+    height -= basin.depth * basinFalloff(basin, x, z);
+  }
+  return height;
+}
+
+/**
+ * Per-vertex ground tint, returned as a multiplier over the soil material's
+ * own albedo (so 1,1,1 is "unchanged"). Three blended reads, all from the
+ * same height field the displacement uses, so colour and form describe the
+ * same surface instead of being unrelated overlays:
+ *
+ *   - rises go drier/sandier and slightly lighter,
+ *   - hollows go mossier/greener and slightly darker (cheap large-scale AO),
+ *   - a low-frequency independent patch field adds mossy/bare drift so the
+ *     ground is not a pure function of its own shape.
+ *
+ * Kept inside a narrow multiplier range on purpose: GameRules §4.1 requires
+ * interactive elements to stay instantly distinguishable from decoration, and
+ * the ground is the largest surface on screen — it must gain material variety
+ * without gaining contrast that competes with a Sprout.
+ */
+export function groundTintAt(x: number, z: number): { r: number; g: number; b: number } {
+  const height = terrainHeightAt(x, z);
+  const rise = clamp01(height / TERRAIN_AMPLITUDE); // 0 at/below datum, 1 at a peak
+  const hollow = clamp01(-height / TERRAIN_AMPLITUDE);
+  const patch = fbm2D(SEED_GROUND_TINT, x * 0.17, z * 0.17, 2);
+  const moss = clamp01(hollow * 0.75 + (patch - 0.45) * 1.1);
+  const dry = clamp01(rise * 0.8 + (0.55 - patch) * 0.9);
+  // Dry crests go warm ochre, damp hollows go deep moss. Deliberately sized
+  // to stay inside a ~0.78..1.28 multiplier: this has to give the largest
+  // surface on screen real material variety WITHOUT becoming a second
+  // saturated palette competing with the Sprouts and habitats.
+  return {
+    r: 1 + dry * 0.28 - moss * 0.22,
+    g: 1 + dry * 0.16 + moss * 0.1,
+    b: 1 + dry * 0.04 - moss * 0.18,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Scatter
+// ---------------------------------------------------------------------------
+
+export type SceneryKind =
+  | 'pebble'
+  | 'boulder'
+  | 'tuft'
+  | 'bush'
+  | 'fern'
+  | 'mushroom'
+  | 'lily'
+  | 'kerb'
+  | 'lantern'
+  | 'blossom';
+
+/** One placed decorative element. Everything the renderer needs to build a
+ * thin instance: a transform, a tint, and a sway phase. No mesh, material or
+ * Babylon type is referenced here — layout stays pure/testable. */
+export interface SceneryInstance {
+  kind: SceneryKind;
+  /** Which master mesh of that kind to instance (0-based). */
+  variant: number;
+  x: number;
+  y: number;
+  z: number;
+  scale: number;
+  rotationY: number;
+  /** Small lean off vertical, in radians, so nothing looks stamped. */
+  tiltX: number;
+  tiltZ: number;
+  /** Multiplier over the shared material's albedo — the per-instance colour
+   * micro-variation, delivered via a thin-instance colour buffer so it costs
+   * no extra material. */
+  tint: { r: number; g: number; b: number };
+  /** 0..1 wind-sway amplitude scale (0 for anything rigid, like stone). */
+  sway: number;
+  /** Sway phase offset in radians, so a stand of grass does not move as one. */
+  phase: number;
+}
+
+interface ScatterLayer {
+  kind: SceneryKind;
+  /** Sub-grid cell size in world units — controls minimum spacing. */
+  cell: number;
+  /** Number of master mesh variants available for this kind. */
+  variants: number;
+  /** Base chance a cell places anything at all, before the density field. */
+  density: number;
+  /** Clearance from reserved zones this kind needs (its own footprint). */
+  clearance: number;
+  scale: [number, number];
+  tilt: number;
+  sway: number;
+  /** Base tint multiplier, jittered per instance by `tintJitter`. */
+  tint: [number, number, number];
+  tintJitter: number;
+  /** Extra per-position acceptance weight, 0..1, on top of `density`. */
+  weight?: (x: number, z: number) => number;
+}
+
+/** Distance to the nearest basin's water edge — negative inside the water.
+ * Used as a density input (things like damp ground) and as a hard exclusion
+ * for anything that would stand in the pond. */
+function waterEdgeDistance(x: number, z: number): number {
+  let best = Infinity;
+  for (const basin of WATER_BASINS) {
+    const d = Math.hypot(x - basin.x, z - basin.z) - basin.waterRadius;
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/** 1 near a basin shoulder, falling off with distance — the "damp ground"
+ * density input for moss, ferns and shore pebbles. */
+function dampness(x: number, z: number): number {
+  const d = waterEdgeDistance(x, z);
+  if (d < 0) return 0;
+  return clamp01(1 - d / 2.2);
+}
+
+/** 1 close to the garden path verge, 0 away from it — used to concentrate
+ * ground cover along the road so the path reads as a tended route through
+ * planting rather than a stripe dropped on open soil. */
+const PATH_WORLD_POINTS = GARDEN_PATH_TILES.map(tileToWorldXZ);
+
+function pathVerge(x: number, z: number): number {
+  let best = Infinity;
+  for (const point of PATH_WORLD_POINTS) {
+    const d = Math.hypot(x - point.x, z - point.z);
+    if (d < best) best = d;
+  }
+  return clamp01(1 - (best - 0.55) / 1.1);
+}
+
+const SCATTER_LAYERS: ScatterLayer[] = [
+  {
+    kind: 'pebble',
+    cell: 0.85,
+    variants: 3,
+    density: 0.36,
+    clearance: 0.12,
+    scale: [0.55, 1.15],
+    tilt: 0.5,
+    sway: 0,
+    tint: [1, 0.99, 0.97],
+    tintJitter: 0.24,
+    // Pebbles gather on the drier rises and are washed toward basin shores.
+    weight: (x, z) => 0.35 + clamp01(terrainHeightAt(x, z) / TERRAIN_AMPLITUDE) * 0.45 + dampness(x, z) * 0.5,
+  },
+  {
+    kind: 'boulder',
+    cell: 3.1,
+    variants: 2,
+    density: 0.55,
+    clearance: 0.55,
+    scale: [0.9, 1.6],
+    tilt: 0.18,
+    sway: 0,
+    tint: [1, 0.98, 0.95],
+    tintJitter: 0.2,
+  },
+  {
+    kind: 'tuft',
+    cell: 0.72,
+    variants: 2,
+    density: 0.42,
+    clearance: 0.15,
+    scale: [0.7, 1.35],
+    tilt: 0.22,
+    sway: 1,
+    tint: [0.95, 1.02, 0.9],
+    tintJitter: 0.22,
+    weight: (x, z) => 0.3 + dampness(x, z) * 0.55 + pathVerge(x, z) * 0.5,
+  },
+  {
+    kind: 'bush',
+    cell: 2.15,
+    variants: 2,
+    density: 0.52,
+    clearance: 0.55,
+    scale: [0.85, 1.3],
+    tilt: 0.1,
+    sway: 0.55,
+    tint: [0.94, 1.0, 0.92],
+    tintJitter: 0.18,
+  },
+  {
+    kind: 'fern',
+    cell: 1.7,
+    variants: 1,
+    density: 0.34,
+    clearance: 0.4,
+    scale: [0.8, 1.25],
+    tilt: 0.14,
+    sway: 0.8,
+    tint: [0.9, 1.02, 0.93],
+    tintJitter: 0.2,
+    weight: (x, z) => 0.25 + dampness(x, z) * 0.75,
+  },
+  {
+    kind: 'mushroom',
+    cell: 1.45,
+    variants: 2,
+    density: 0.12,
+    clearance: 0.3,
+    scale: [0.7, 1.2],
+    tilt: 0.22,
+    sway: 0,
+    tint: [1.02, 0.98, 0.96],
+    tintJitter: 0.14,
+    // Fungi like the damp, shaded hollows, not the open dry rises.
+    weight: (x, z) => clamp01(0.15 + dampness(x, z) * 0.6 + clamp01(-terrainHeightAt(x, z) / TERRAIN_AMPLITUDE) * 0.5),
+  },
+];
+
+/**
+ * Jittered-grid scatter. For each cell of a layer's sub-grid, ONE hashed
+ * decision decides whether that cell places anything, and further hashed
+ * channels decide where inside the cell, which variant, how big, how tilted
+ * and what tint. Because every decision is a pure function of the cell
+ * coordinate, the layout is stable under insertion/removal of other layers,
+ * and rejection (clearance, water, off-grid) simply leaves a gap rather than
+ * shifting everything downstream.
+ */
+function generateScatterLayer(seed: number, layer: ScatterLayer, area: { min: number; max: number }): SceneryInstance[] {
+  const out: SceneryInstance[] = [];
+  const first = Math.floor(area.min / layer.cell);
+  const last = Math.ceil(area.max / layer.cell);
+  const kindSalt = layer.kind.charCodeAt(0) * 131 + layer.kind.length;
+  for (let cx = first; cx <= last; cx++) {
+    for (let cz = first; cz <= last; cz++) {
+      const roll = rand01(seed, cx, cz, kindSalt);
+      const x = (cx + 0.12 + rand01(seed, cx, cz, kindSalt + 1) * 0.76) * layer.cell;
+      const z = (cz + 0.12 + rand01(seed, cx, cz, kindSalt + 2) * 0.76) * layer.cell;
+      if (x < area.min || x > area.max || z < area.min || z > area.max) continue;
+      const weight = layer.weight ? clamp01(layer.weight(x, z)) : 1;
+      if (roll > layer.density * weight) continue;
+      if (reservedClearance(x, z) < layer.clearance) continue;
+      // Nothing but lilies stands in open water; keep a shoreline margin so
+      // roots aren't visibly submerged.
+      if (waterEdgeDistance(x, z) < layer.clearance + 0.1) continue;
+      const t = rand01(seed, cx, cz, kindSalt + 3);
+      const jitter = layer.tintJitter;
+      const shade = (rand01(seed, cx, cz, kindSalt + 6) - 0.5) * jitter;
+      const hue = (rand01(seed, cx, cz, kindSalt + 7) - 0.5) * jitter * 0.6;
+      out.push({
+        kind: layer.kind,
+        variant: Math.floor(rand01(seed, cx, cz, kindSalt + 4) * layer.variants) % layer.variants,
+        x,
+        y: terrainHeightAt(x, z),
+        z,
+        scale: layer.scale[0] + t * (layer.scale[1] - layer.scale[0]),
+        rotationY: rand01(seed, cx, cz, kindSalt + 5) * Math.PI * 2,
+        tiltX: (rand01(seed, cx, cz, kindSalt + 8) - 0.5) * layer.tilt,
+        tiltZ: (rand01(seed, cx, cz, kindSalt + 9) - 0.5) * layer.tilt,
+        tint: {
+          r: layer.tint[0] * (1 + shade + hue),
+          g: layer.tint[1] * (1 + shade),
+          b: layer.tint[2] * (1 + shade - hue),
+        },
+        sway: layer.sway,
+        phase: rand01(seed, cx, cz, kindSalt + 10) * Math.PI * 2,
+      });
+    }
+  }
+  return out;
+}
+
+/** Lily pads float on the basins themselves, so they are generated per-basin
+ * in polar coordinates rather than from the world grid — a rectangular cell
+ * grid over a 1.1-unit disc produces either two pads or none. */
+function generateLilies(): SceneryInstance[] {
+  const out: SceneryInstance[] = [];
+  for (const basin of WATER_BASINS) {
+    const count = 3 + (hashCell(basin.seed, 0, 0, 11) % 3);
+    for (let i = 0; i < count; i++) {
+      const angle = rand01(basin.seed, i, 0, 12) * Math.PI * 2;
+      const radius = Math.sqrt(rand01(basin.seed, i, 0, 13)) * basin.waterRadius * 0.78;
+      const x = basin.x + Math.cos(angle) * radius;
+      const z = basin.z + Math.sin(angle) * radius;
+      const shade = (rand01(basin.seed, i, 0, 14) - 0.5) * 0.2;
+      out.push({
+        kind: 'lily',
+        variant: hashCell(basin.seed, i, 0, 15) % 2,
+        x,
+        // Floats on the basin's own derived water surface (see
+        // basinSurfaceHeight), lifted by a hair so the pad reads as resting ON
+        // the water rather than co-planar with it and z-fighting.
+        y: basinSurfaceHeight(basin) + 0.004,
+        z,
+        scale: 0.75 + rand01(basin.seed, i, 0, 16) * 0.5,
+        rotationY: rand01(basin.seed, i, 0, 17) * Math.PI * 2,
+        tiltX: 0,
+        tiltZ: 0,
+        tint: { r: 0.93 + shade, g: 1.0 + shade, b: 0.9 + shade },
+        sway: 0.25,
+        phase: rand01(basin.seed, i, 0, 18) * Math.PI * 2,
+      });
+    }
+  }
+  return out;
+}
+
+/** The decorative layer present from the first frame. */
+export const BASE_SCENERY: SceneryInstance[] = (() => {
+  const area = { min: -1.6, max: GRID_SIZE - 1 + 1.6 };
+  const out: SceneryInstance[] = [];
+  for (const layer of SCATTER_LAYERS) out.push(...generateScatterLayer(SEED_SCATTER, layer, area));
+  out.push(...generateLilies());
+  return out;
+})();
+
+// ---------------------------------------------------------------------------
+// First expansion (GameRules §6.6) — "Decorative Expansion I"
+// ---------------------------------------------------------------------------
+// Bought via src/data/upgrades.ts's `decorativeExpansion1`, which promises
+// "stones, lanterns, moss". §6.6 additionally requires the first expansion to
+// "make the world feel larger and more personal, not merely increase capacity
+// invisibly", so this layer is designed around three distinct reads rather
+// than just "more shrubs":
+//
+//   1. A LARGER WORLD: a low stone kerb rings the garden OUTSIDE the 16x16
+//      play grid, on ground that was previously bare apron. The plot gains a
+//      defined edge, which reads as the garden having been extended out to it.
+//   2. A MORE PERSONAL WORLD: lanterns along the path verge — the first warm
+//      light sources the player owns rather than the ambient sun, plus their
+//      own firefly motes (src/render/world.ts).
+//   3. MORE LIFE: flowering blossoms and a denser moss carpet threaded through
+//      the existing planting, so the interior visibly fills in too.
+//
+// It is generated from its own sub-seed at module load exactly like the base
+// layer — buying the upgrade only decides WHEN it becomes visible, never what
+// it looks like, so a save reloaded after the purchase rebuilds an identical
+// garden.
+
+const EXPANSION_LAYERS: ScatterLayer[] = [
+  {
+    kind: 'blossom',
+    cell: 1.25,
+    variants: 3,
+    density: 0.3,
+    clearance: 0.3,
+    // Bigger than the first pass: at 0.07 world-unit petals a bloom was a
+    // single pixel cluster at gameplay distance and read as noise.
+    scale: [1.0, 1.7],
+    tilt: 0.28,
+    sway: 1,
+    // Warm-to-cool drift across the bed (the tint's r and b channels move in
+    // opposite directions, see generateScatterLayer's `hue`), so a bed reads
+    // as mixed planting rather than one cloned flower.
+    tint: [1, 0.97, 0.95],
+    tintJitter: 0.26,
+    weight: (x, z) => 0.35 + pathVerge(x, z) * 0.65,
+  },
+  {
+    kind: 'tuft',
+    cell: 0.66,
+    variants: 2,
+    density: 0.3,
+    clearance: 0.15,
+    scale: [0.8, 1.4],
+    tilt: 0.24,
+    sway: 1,
+    // Slightly greener/lusher than the base tufts — the moss carpet the
+    // upgrade copy promises.
+    tint: [0.86, 1.05, 0.86],
+    tintJitter: 0.2,
+    weight: (x, z) => 0.35 + dampness(x, z) * 0.5 + pathVerge(x, z) * 0.5,
+  },
+];
+
+/** Kerb blocks ringing the play grid, on the apron the base garden never
+ * uses. Walked as a perimeter rather than a scatter so the ring is unbroken,
+ * with per-block jitter so it reads as laid stones, not extruded fence. */
+function generateKerb(): SceneryInstance[] {
+  const out: SceneryInstance[] = [];
+  const min = -1.85;
+  const max = GRID_SIZE - 1 + 1.85;
+  const step = 0.74;
+  const span = max - min;
+  const steps = Math.round(span / step);
+  const push = (x: number, z: number, index: number, side: number): void => {
+    const jx = (rand01(SEED_EXPANSION, index, side, 20) - 0.5) * 0.16;
+    const jz = (rand01(SEED_EXPANSION, index, side, 21) - 0.5) * 0.16;
+    const shade = (rand01(SEED_EXPANSION, index, side, 22) - 0.5) * 0.18;
+    out.push({
+      kind: 'kerb',
+      variant: hashCell(SEED_EXPANSION, index, side, 23) % 2,
+      x: x + jx,
+      y: terrainHeightAt(x + jx, z + jz),
+      z: z + jz,
+      scale: 0.9 + rand01(SEED_EXPANSION, index, side, 24) * 0.3,
+      rotationY:
+        // Aligned with the run it belongs to, then nudged — a kerb is laid,
+        // not scattered.
+        (side % 2 === 0 ? 0 : Math.PI / 2) + (rand01(SEED_EXPANSION, index, side, 25) - 0.5) * 0.35,
+      tiltX: (rand01(SEED_EXPANSION, index, side, 26) - 0.5) * 0.1,
+      tiltZ: (rand01(SEED_EXPANSION, index, side, 27) - 0.5) * 0.1,
+      tint: { r: 1.04 + shade, g: 1.0 + shade, b: 0.94 + shade },
+      sway: 0,
+      phase: 0,
+    });
+  };
+  for (let i = 0; i <= steps; i++) {
+    const t = min + (i / steps) * span;
+    push(t, min, i, 0);
+    push(t, max, i, 2);
+    if (i > 0 && i < steps) {
+      push(min, t, i, 1);
+      push(max, t, i, 3);
+    }
+  }
+  return out;
+}
+
+/** Lanterns stand along the path verge, spaced by walking the path tile list
+ * and taking every Nth tile, so they line the route the player actually
+ * watches Sprouts travel instead of landing in random corners. */
+function generateLanterns(): SceneryInstance[] {
+  const out: SceneryInstance[] = [];
+  const spacing = 2;
+  for (let i = 0; i < GARDEN_PATH_TILES.length; i += spacing) {
+    const tile = GARDEN_PATH_TILES[i];
+    const world = tileToWorldXZ(tile);
+    // Offset to whichever side of the tile has room; a lantern is a real
+    // volume and must not stand on the tread.
+    const candidates = [
+      { x: world.x + 0.78, z: world.z + 0.16 },
+      { x: world.x - 0.78, z: world.z - 0.16 },
+      { x: world.x + 0.16, z: world.z + 0.78 },
+      { x: world.x - 0.16, z: world.z - 0.78 },
+    ];
+    const order = hashCell(SEED_EXPANSION, tile.x, tile.z, 30) % candidates.length;
+    const best = candidates
+      .map((_, k) => candidates[(order + k) % candidates.length])
+      .find((candidate) => reservedClearance(candidate.x, candidate.z) > 0.24 && waterEdgeDistance(candidate.x, candidate.z) > 0.5);
+    if (!best) continue;
+    if (out.some((l) => Math.hypot(l.x - best.x, l.z - best.z) < 1.7)) continue;
+    out.push({
+      kind: 'lantern',
+      variant: 0,
+      x: best.x,
+      y: terrainHeightAt(best.x, best.z),
+      z: best.z,
+      scale: 0.92 + rand01(SEED_EXPANSION, tile.x, tile.z, 31) * 0.18,
+      rotationY: rand01(SEED_EXPANSION, tile.x, tile.z, 32) * Math.PI * 2,
+      tiltX: 0,
+      tiltZ: 0,
+      tint: { r: 1, g: 1, b: 1 },
+      sway: 0,
+      phase: rand01(SEED_EXPANSION, tile.x, tile.z, 33) * Math.PI * 2,
+    });
+  }
+  return out;
+}
+
+/** The decorative layer revealed by buying "Decorative Expansion I". */
+export const EXPANSION_SCENERY: SceneryInstance[] = (() => {
+  const area = { min: -1.4, max: GRID_SIZE - 1 + 1.4 };
+  const out: SceneryInstance[] = [];
+  for (const layer of EXPANSION_LAYERS) out.push(...generateScatterLayer(SEED_EXPANSION, layer, area));
+  out.push(...generateKerb());
+  out.push(...generateLanterns());
+  return out;
 })();

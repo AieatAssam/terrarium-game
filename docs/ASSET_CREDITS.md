@@ -17,8 +17,22 @@ from — see `creditsSectionsToMarkdown()`), so the two can never drift.
   originals; `tee`, `cross` and `end` are new. All five are hand-specified
   path geometry on a shared 68/160 tread band. Rationale for the rewrite and
   the shared-band constraint: docs/ART_DIRECTION.md §10.2.
+- All decorative scenery GEOMETRY is procedurally generated in-code at
+  runtime from a fixed seed — pebbles and boulders (lobed spheres), grass
+  tufts and bush/fern leaf clusters (folded blade ribbons), mushrooms, lily
+  pads, blossoms, kerb stones, garden lanterns and water-basin rims. Source:
+  `src/render/geometry.ts` (shape generators) and `src/render/layout.ts`
+  (seeded placement). No modelling tool, no imported mesh, no third-party or
+  generated-from-reference asset of any kind. The terrain surface, its
+  per-vertex colouring and the water basins are generated the same way. See
+  docs/ART_DIRECTION.md §12 for the generation rules and the seeding contract.
+- The five `scenery.*` SVGs (`rockSmall`, `rockLarge`, `fern`, `bush`,
+  `waterAccent`) authored by Subagent C are no longer referenced by the
+  renderer, having been replaced by the generated volumes above. The files
+  remain in `public/assets/scenery/` and in the manifest; their provenance
+  statement below still stands.
 - All 3D materials (soil, stone, wood, painted-metal, water, path-conveyor
-  chevrons) and the
+  chevrons, foliage, petal, fungus, lantern glass) and the
   ambient-lighting environment texture are procedurally generated in-code
   (Canvas 2D noise/gradients, `src/render/pbrMaterials.ts` and
   `src/render/environment.ts`) — no third-party textures or HDRIs. The

@@ -124,6 +124,58 @@ export function createRippleRing(
   });
 }
 
+/**
+ * Slow warm motes drifting around the lanterns revealed by the first
+ * decorative expansion (GameRules §6.6 / §4.1's "fireflies"). Deliberately a
+ * SINGLE system with a box emitter spanning the lit area rather than one
+ * system per lantern — an unbounded-particle-system-per-object pattern is
+ * exactly what GameRules §12 warns against, and at this density the motes
+ * read as "the lit part of the garden is alive", not as per-lantern auras.
+ *
+ * The caller drives `setDensity` from MotionConfig every frame, so reduced
+ * motion (backgroundMotion 0) stops emission entirely and the low quality
+ * tier thins it, without this module knowing about either preference.
+ */
+export interface FireflySystem {
+  setDensity: (density: number) => void;
+  dispose: () => void;
+}
+
+export function createFireflies(
+  scene: Scene,
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number; y: number },
+  baseRate = 6,
+): FireflySystem {
+  const system = new ParticleSystem('terrarium.fireflies', 90, scene);
+  system.particleTexture = getSoftDotTexture(scene);
+  system.emitter = new Vector3((bounds.minX + bounds.maxX) / 2, bounds.y, (bounds.minZ + bounds.maxZ) / 2);
+  const halfX = (bounds.maxX - bounds.minX) / 2;
+  const halfZ = (bounds.maxZ - bounds.minZ) / 2;
+  system.minEmitBox = new Vector3(-halfX, -0.1, -halfZ);
+  system.maxEmitBox = new Vector3(halfX, 0.55, halfZ);
+  system.color1 = new Color4(1, 0.82, 0.42, 0.65);
+  system.color2 = new Color4(1, 0.94, 0.66, 0.4);
+  system.colorDead = new Color4(1, 0.8, 0.4, 0);
+  system.minSize = 0.035;
+  system.maxSize = 0.075;
+  system.minLifeTime = 3.5;
+  system.maxLifeTime = 7;
+  system.emitRate = 0; // caller enables via setDensity
+  system.minEmitPower = 0.02;
+  system.maxEmitPower = 0.09;
+  system.direction1 = new Vector3(-0.12, 0.05, -0.12);
+  system.direction2 = new Vector3(0.12, 0.22, 0.12);
+  system.gravity = new Vector3(0, -0.01, 0);
+  system.blendMode = ParticleSystem.BLENDMODE_ADD;
+  system.start();
+  return {
+    setDensity: (density: number) => {
+      system.emitRate = baseRate * Math.max(0, density);
+    },
+    dispose: () => system.dispose(),
+  };
+}
+
 export function _disposeSharedParticleAssets(): void {
   sharedDotTexture?.dispose();
   sharedDotTexture = undefined;

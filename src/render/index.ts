@@ -190,7 +190,10 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
   }
   const lighting = createGardenLighting(scene);
   const background = createGardenBackground(scene);
-  const world = buildGardenWorld(scene, lighting.shadowGenerator);
+  // `bus` so the world can subscribe to `upgrade:purchased` and reveal the
+  // first decorative expansion (GameRules §6.6) — same pattern the Sprout and
+  // automation managers below already use.
+  const world = buildGardenWorld(scene, lighting.shadowGenerator, bus);
   const habitats = createHabitatManager(scene, lighting.shadowGenerator);
   const sprouts = createSproutManager(scene, bus);
   const automation = createAutomationManager(scene, bus, lighting.shadowGenerator);
