@@ -311,6 +311,14 @@ export function swapManifestMaterialTexture(scene: Scene, material: PBRMetallicR
     key,
     (tex) => {
       material.baseTexture = tex;
+      // Must mirror createManifestMaterial: `baseColor` starts as the flat
+      // fallback and multiplies against the texture, so leaving it here made a
+      // swapped material draw as a solid fallback-coloured rectangle. Only
+      // visible when a material was swapped before its first texture ever
+      // resolved — which is exactly what restoring a save does, since every
+      // rebuilt Sprout is created and then immediately put into its settled or
+      // idle state.
+      material.baseColor = Color3.White();
     },
     () => {
       /* keep whatever texture/color was already showing */
@@ -318,6 +326,7 @@ export function swapManifestMaterialTexture(scene: Scene, material: PBRMetallicR
   );
   if (texture?.isReady()) {
     material.baseTexture = texture;
+    material.baseColor = Color3.White();
   }
 }
 

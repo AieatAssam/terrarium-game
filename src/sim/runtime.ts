@@ -262,6 +262,17 @@ export async function startSimRuntime(
       state = commit(emit, result.state, result.events);
     },
     resetSave: async () => {
+      // Clearing the stored save is not enough on its own: the live SimState
+      // stays in memory and the autosave interval writes it straight back, so
+      // a reset appeared to do nothing at all (measured: 810 Sprouts and
+      // 12,684 Dewdrops still present after resetting and reloading). Stop the
+      // clock, drop the state, then clear — in that order, so no tick can
+      // repopulate or re-persist anything between the two steps.
+      disposed = true;
+      cancelAnimationFrame(rafHandle);
+      window.clearInterval(autosave);
+      window.removeEventListener('beforeunload', handleUnload);
+      state = createInitialSimState(seed);
       await clearSave();
     },
     getState: () => state,
