@@ -24,7 +24,23 @@ export interface HabitatDefinition {
 // UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements (20) or the Garden
 // Slide becomes unreachable by play — see the note there.
 const BASE_CAPACITY = 8;
-const BASE_DEWDROP_RATE = 0.02; // per settled Sprout per tick == 12 Dewdrops/min/Sprout at 10 ticks/sec
+/**
+ * Per settled Sprout per tick. Income is deliberately a pure multiple of how
+ * many Sprouts the player has actually settled in their correct home (see
+ * dewdropSystem), so caring for the garden is the only thing that earns —
+ * GameRules.md §4.4 "Dewdrops are healthy magical care made visible".
+ *
+ * This was 0.02 (12/min per Sprout), which put the entire upgrade tree at
+ * roughly nine minutes of full-garden income and left real saves holding
+ * multiples of everything purchasable, so no purchase was a decision. At
+ * 0.008 (4.8/min per Sprout) a first upgrade lands a few minutes in and the
+ * tree spans a long session, while the early game — where only a handful of
+ * Sprouts are settled — stays genuinely lean without ever stalling, since
+ * income rises as a direct reward for settling more. Balanced against the
+ * cost curves in data/upgrades.ts; changing one without the other reopens the
+ * problem.
+ */
+const BASE_DEWDROP_RATE = 0.008;
 
 export const HABITATS: Record<HabitatId, HabitatDefinition> = {
   emberNook: {
