@@ -26,9 +26,15 @@ import { HABITATS } from '../data/habitats';
 import type { EventBus } from '../events/bus';
 import type { RendererHandle } from '../render/index';
 import { worldToTile, type TileCoord } from '../render/coords';
+import { SPROUT_FLOAT_HEIGHT } from '../render/sprouts';
 
 const GROUND_PLANE = new Plane(0, 1, 0, 0); // y = 0
-const DRAG_HEIGHT_PLANE = new Plane(0, 1, 0, -0.8); // matches SPROUT_FLOAT_HEIGHT in sprouts.ts
+// The horizontal plane a dragged Sprout is moved on. This has to be EXACTLY
+// the height the renderer draws a held Sprout at, or the sprite renders offset
+// from the cursor — so it is imported rather than mirrored as a literal (it
+// was previously hard-coded as -0.8, which silently became wrong the moment
+// SPROUT_FLOAT_HEIGHT was corrected to clear the Nursery mound).
+const DRAG_HEIGHT_PLANE = new Plane(0, 1, 0, -SPROUT_FLOAT_HEIGHT);
 const HOVER_RADIUS_TILES = 1;
 const PAN_SPEED = 0.0026;
 const WHEEL_ZOOM_SENSITIVITY = 0.01;

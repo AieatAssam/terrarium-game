@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { easeOutCubic, easingFn, getMotionConfig } from '../../src/render/motion';
+import { easeOutCubic, easingFn, getMotionConfig, prefersReducedMotion, watchReducedMotion } from '../../src/render/motion';
 
 describe('render/motion: getMotionConfig', () => {
   it('is a pure function of (reducedMotion, quality)', () => {
@@ -60,5 +60,46 @@ describe('render/motion: getMotionConfig', () => {
   it('easeOutCubic clamps outside [0,1]', () => {
     expect(easeOutCubic(-1)).toBe(0);
     expect(easeOutCubic(2)).toBe(1);
+  });
+});
+
+describe('render/motion: prefersReducedMotion resolves the player preference', () => {
+  // src/ui/prefs.ts reflects the resolved preference (OS default, overridable
+  // from the Settings panel) onto <html data-reduced-motion>. The renderer used
+  // to read only the media query, so the in-game toggle never damped Sprout
+  // bob, background drift or the path conveyor.
+  const root = () => document.documentElement;
+
+  afterEach(() => {
+    root().removeAttribute('data-reduced-motion');
+  });
+
+  it('honours an explicit opt-IN from the Settings panel', () => {
+    root().setAttribute('data-reduced-motion', 'true');
+    expect(prefersReducedMotion()).toBe(true);
+  });
+
+  it('honours an explicit opt-OUT from the Settings panel', () => {
+    root().setAttribute('data-reduced-motion', 'false');
+    expect(prefersReducedMotion()).toBe(false);
+  });
+
+  it('falls back to the OS query when the UI has not applied prefs yet', () => {
+    // jsdom's matchMedia is absent/non-matching here, so this is the
+    // "no attribute, nothing reduced" baseline — the point is that it does not
+    // throw and does not report reduced.
+    expect(prefersReducedMotion()).toBe(false);
+  });
+
+  it('notifies a watcher when the attribute changes, and stops after unsubscribe', async () => {
+    const seen: boolean[] = [];
+    const stop = watchReducedMotion((reduced) => seen.push(reduced));
+    root().setAttribute('data-reduced-motion', 'true');
+    await new Promise((resolve) => setTimeout(resolve, 0)); // MutationObserver is microtask-scheduled
+    expect(seen).toEqual([true]);
+    stop();
+    root().setAttribute('data-reduced-motion', 'false');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(seen).toEqual([true]);
   });
 });

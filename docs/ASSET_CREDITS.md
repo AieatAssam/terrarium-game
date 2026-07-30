@@ -9,7 +9,16 @@ from — see `creditsSectionsToMarkdown()`), so the two can never drift.
 - All Sprout, habitat, structure, path, scenery, particle and UI-icon
   artwork is original vector (SVG) work created for Tiny Terrarium Works —
   no third-party or stock art.
-- All 3D materials (soil, stone, wood, painted-metal, water) and the
+- The five garden-path tile pieces (straight, corner, tee, cross, end cap)
+  are original vector art authored in-project for this garden — no traced or
+  third-party source. Detail: `public/assets/paths/*.svg`, authored in the
+  same palette and flat-vector style as the original path art they replace.
+  `straight.svg` and `corner.svg` are rewrites of earlier in-project
+  originals; `tee`, `cross` and `end` are new. All five are hand-specified
+  path geometry on a shared 68/160 tread band. Rationale for the rewrite and
+  the shared-band constraint: docs/ART_DIRECTION.md §10.2.
+- All 3D materials (soil, stone, wood, painted-metal, water, path-conveyor
+  chevrons) and the
   ambient-lighting environment texture are procedurally generated in-code
   (Canvas 2D noise/gradients, `src/render/pbrMaterials.ts` and
   `src/render/environment.ts`) — no third-party textures or HDRIs. The

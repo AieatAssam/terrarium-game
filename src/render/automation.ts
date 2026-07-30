@@ -6,7 +6,6 @@
 // valid/invalid feedback in the scene is E's.
 
 import { Color3 } from '@babylonjs/core/Maths/math.color';
-import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import type { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
 import type { Scene } from '@babylonjs/core/scene';
@@ -14,8 +13,10 @@ import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGener
 
 import { tileToWorld, type TileCoord } from './coords';
 import { attachStandee, type FlatCap } from './flatArt';
+import { createRoundedPrism } from './geometry';
 import { AUTOMATION_SITE_TILES, isReservedTile } from './layout';
 import { createPaintedMetalMaterial } from './pbrMaterials';
+import { bodyRings, halfHeight, AUTOMATION_BODIES, AUTOMATION_PREVIEW_BODY, type PropBody } from './propDims';
 import type { EventBus } from '../events/bus';
 import type { AutomationId } from '../core/ids';
 
@@ -23,6 +24,12 @@ const SITE_FALLBACK_COLOR: Record<AutomationId, Color3> = {
   gardenSlide: new Color3(0.55, 0.45, 0.7),
   colourGate: new Color3(0.4, 0.6, 0.55),
 };
+
+/** Standee card bounding footprint for a site marker and its placement ghost. */
+const SITE_CAP_WIDTH = 1.0;
+const SITE_CAP_HEIGHT = 0.68;
+const PREVIEW_CAP_WIDTH = 1.05;
+const PREVIEW_CAP_HEIGHT = 0.71;
 
 interface SiteMarker {
   id: AutomationId;
@@ -42,14 +49,39 @@ export interface AutomationManager {
   dispose: () => void;
 }
 
+/**
+ * Automation plinth body. Previously a plain `MeshBuilder.CreateBox` — a
+ * literal cube with six razor-sharp edges, which is what "extremely blocky"
+ * described. Now a `createRoundedPrism` with a soft-cornered rounded-rectangle
+ * cross-section (garden equipment, not a pot: the corner radius is well under
+ * the half-extent so it still reads as a square plinth), a chamfered top and
+ * base, a wider foot with a shelf step, and a slight taper. Built as ONE mesh
+ * deliberately: these markers are semi-transparent until built, and stacking
+ * separate tier meshes would double-darken through the alpha blend.
+ */
+function buildAutomationMesh(scene: Scene, name: string, body: PropBody): Mesh {
+  return createRoundedPrism(
+    name,
+    {
+      halfWidth: body.halfWidth,
+      halfDepth: body.halfDepth,
+      cornerRadius: body.cornerRadius,
+      radialSegments: body.radialSegments,
+      rings: bodyRings(body),
+    },
+    scene,
+  );
+}
+
 export function createAutomationManager(scene: Scene, bus: EventBus, shadowGenerator: ShadowGenerator): AutomationManager {
   const sites = {} as Record<AutomationId, SiteMarker>;
 
   for (const id of Object.keys(AUTOMATION_SITE_TILES) as AutomationId[]) {
     const tile = AUTOMATION_SITE_TILES[id];
     const world = tileToWorld(tile);
-    const mesh = MeshBuilder.CreateBox(`terrarium.automation.${id}`, { width: 0.8, height: 0.5, depth: 0.8 }, scene);
-    mesh.position.set(world.x, 0.25, world.z);
+    const body = AUTOMATION_BODIES[id];
+    const mesh = buildAutomationMesh(scene, `terrarium.automation.${id}`, body);
+    mesh.position.set(world.x, body.centreY, world.z);
     mesh.isPickable = false;
     const bodyMaterial = createPaintedMetalMaterial(scene, `terrarium.automation.${id}.body.mat`, SITE_FALLBACK_COLOR[id]);
     bodyMaterial.alpha = 0.4; // "not yet built" site marker
@@ -59,8 +91,20 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     // src/render/flatArt.ts's attachStandee), not lying flat on the box top.
     // width:height ~1.54:1 roughly matches the source art's real 400x260
     // aspect (the texture itself is also letterboxed within its canvas, so
-    // this doesn't need to be exact).
-    const cap = attachStandee(scene, mesh, `terrarium.automation.${id}.cap`, `structure.${id}.base`, SITE_FALLBACK_COLOR[id], 1.0, 0.68, 0.59);
+    // this doesn't need to be exact). attachStandee is handed the plinth's TOP
+    // FACE (its own half-height) and does the anchoring itself, so the card's
+    // bottom edge stays just clear of that face even after the content crop
+    // resizes it.
+    const cap = attachStandee(
+      scene,
+      mesh,
+      `terrarium.automation.${id}.cap`,
+      `structure.${id}.base`,
+      SITE_FALLBACK_COLOR[id],
+      SITE_CAP_WIDTH,
+      SITE_CAP_HEIGHT,
+      halfHeight(body),
+    );
     cap.material.alpha = 0.4;
 
     sites[id] = { id, mesh, material: cap.material, bodyMaterial, built: false };
@@ -82,8 +126,8 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
   const previewAt = (automationId: AutomationId, tile: TileCoord, valid: boolean): void => {
     clearPreview();
     const world = tileToWorld(tile);
-    const mesh = MeshBuilder.CreateBox('terrarium.automation.preview', { width: 0.85, height: 0.55, depth: 0.85 }, scene);
-    mesh.position.set(world.x, 0.28, world.z);
+    const mesh = buildAutomationMesh(scene, 'terrarium.automation.preview', AUTOMATION_PREVIEW_BODY);
+    mesh.position.set(world.x, AUTOMATION_PREVIEW_BODY.centreY, world.z);
     mesh.isPickable = false;
     const tint = valid ? new Color3(0.2, 0.7, 0.3) : new Color3(0.6, 0.15, 0.15);
     const bodyMaterial = createPaintedMetalMaterial(scene, 'terrarium.automation.preview.body.mat', SITE_FALLBACK_COLOR[automationId]);
@@ -91,7 +135,16 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     bodyMaterial.emissiveColor = tint;
     mesh.material = bodyMaterial;
 
-    const cap = attachStandee(scene, mesh, 'terrarium.automation.preview.cap', `structure.${automationId}.base`, SITE_FALLBACK_COLOR[automationId], 1.05, 0.71, 0.63);
+    const cap = attachStandee(
+      scene,
+      mesh,
+      'terrarium.automation.preview.cap',
+      `structure.${automationId}.base`,
+      SITE_FALLBACK_COLOR[automationId],
+      PREVIEW_CAP_WIDTH,
+      PREVIEW_CAP_HEIGHT,
+      halfHeight(AUTOMATION_PREVIEW_BODY),
+    );
     cap.material.alpha = 0.55;
     cap.material.emissiveColor = tint;
 

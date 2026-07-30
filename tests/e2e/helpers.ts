@@ -47,7 +47,19 @@ export const HABITAT_TILES = {
 export type HabitatKey = keyof typeof HABITAT_TILES;
 export type SproutTypeKey = 'ember' | 'dew' | 'sun' | 'star';
 
-const SPROUT_FLOAT_HEIGHT = 0.8;
+// Mirrors the exported SPROUT_FLOAT_HEIGHT in src/render/sprouts.ts, which is
+// itself derived: Nursery mound top (0.70) + idle-bob amplitude (0.05) +
+// surface clearance (0.03) + the sprite's own half-height (0.35). Used to
+// project the on-screen point where a freshly spawned Sprout can be grabbed.
+//
+// Deliberately a literal rather than an import, and NOT the same mistake
+// src/input/index.ts had: importing it was tried and Playwright's loader cannot
+// resolve Babylon's extensionless deep specifiers (`Cannot find module
+// '@babylonjs/core/Maths/math.color' ... Did you mean ...math.color.js?`), which
+// src/render/sprouts.ts pulls in transitively. So drift is guarded from the
+// other side instead: tests/unit/render.sproutHeights.test.ts asserts the real
+// exported constant still equals this value, and `npm test` fails if it doesn't.
+const SPROUT_FLOAT_HEIGHT = 1.13;
 
 /** Collects console errors + page errors from page load onward. Call `.assertNone()` at the end of a test. */
 export function collectConsoleErrors(page: Page): { errors: string[]; assertNone: () => void } {

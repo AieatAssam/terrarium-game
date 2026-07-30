@@ -17,25 +17,108 @@ import type { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR
 import type { Scene } from '@babylonjs/core/scene';
 
 import { createManifestMaterial, swapManifestMaterialTexture } from './assets';
+import { GARDEN_CAMERA_ALPHA } from './camera';
 import { tileToWorld, type TileCoord } from './coords';
 import { HABITAT_TILES, NURSERY_TILE } from './layout';
 import { easingFn, type MotionConfig } from './motion';
 import { createSparkleBurst } from './particles';
+import { habitatTopY, nurseryTopY } from './propDims';
 import type { EventBus } from '../events/bus';
 import type { HabitatId, SproutTypeId } from '../core/ids';
 import { SPROUT_TYPES } from '../data/sproutTypes';
 
 export type SproutVisualState = 'reveal' | 'idle' | 'walk' | 'happy' | 'settled';
 
-// The Nursery mound (world.ts) is 0.7 units tall centered at y=0.35, i.e. its
-// top sits at y=0.7. Sprouts spawn standing ON the Nursery, so their resting
-// float height has to clear that top surface or the billboard renders
-// z-fought/occluded behind the opaque mound — a real bug hit during manual
-// QA (a freshly spawned Sprout was invisible). 0.8 clears it with a little
-// headroom; used for every "resting"/drag/transport height so they all stay
-// visually consistent above ground props (habitats/rocks top out well below
-// this).
-const SPROUT_FLOAT_HEIGHT = 0.8;
+// ---------------------------------------------------------------------------
+// Sprite heights
+// ---------------------------------------------------------------------------
+// These used to be two hard-coded magic numbers (0.8 floating, 0.55 settled)
+// whose comments claimed they cleared the props underneath. They did not: a
+// Sprout is a `CreatePlane({ size: SPROUT_SPRITE_SIZE })` billboard and
+// `mesh.position` places its CENTRE, so 0.8 put the card's bottom edge at
+// 0.8 - 0.35 = 0.45 against a Nursery mound whose top face is 0.70, and 0.55
+// put a settled card's bottom edge at 0.20 against an Ember Nook top face of
+// 0.45. Both buried roughly a quarter of a unit of artwork inside opaque
+// geometry. Measured in-browser before the fix: the floating Nursery Sprout's
+// bounding box ran 0.4006 -> 1.1006 while the mound top was 0.70.
+//
+// (`attachStandee`'s callers never had this bug because they pass
+// `surfaceTop + cardHeight / 2` — the same arithmetic now used here.)
+//
+// So every height below is DERIVED: the surface's own top face (from the
+// shared prop-dimension table in src/render/propDims.ts, which is also what
+// builds those meshes) plus this sprite's own half-height plus an explicit
+// clearance. Change a drum's height or the sprite size and these follow.
+
+/** Edge length of the Sprout billboard plane. */
+const SPROUT_SPRITE_SIZE = 0.7;
+/** Offset from the sprite's centre (what `position` sets) to its bottom edge. */
+const SPROUT_HALF_HEIGHT = SPROUT_SPRITE_SIZE / 2;
+/** Air gap left between a surface and the sprite's bottom edge. */
+const SPROUT_SURFACE_CLEARANCE = 0.03;
+/** Peak amplitude of the idle bob in `update` below. The floating height has
+ * to budget for it: without this term the bob's DOWNWARD half would dip the
+ * card's bottom edge back under the Nursery's top face. */
+const SPROUT_BOB_AMPLITUDE = 0.05;
+
+/**
+ * Resting/drag/transport height for a Sprout that is NOT settled — clears the
+ * Nursery mound (the tallest thing a Sprout hovers over) by its own
+ * half-height plus the bob amplitude plus the clearance. Exported because
+ * src/input/index.ts's pointer-to-world drag plane has to sit at exactly this
+ * height, and tests/e2e/helpers.ts projects it to find the pickup point.
+ */
+export const SPROUT_FLOAT_HEIGHT = nurseryTopY() + SPROUT_BOB_AMPLITUDE + SPROUT_SURFACE_CLEARANCE + SPROUT_HALF_HEIGHT;
+
+/** Resting height for a Sprout settled on a given habitat's top face. Settled
+ * Sprouts don't bob (see `update`), so no bob budget is needed. */
+function sproutSettleHeight(habitatId: HabitatId): number {
+  return habitatTopY(habitatId) + SPROUT_SURFACE_CLEARANCE + SPROUT_HALF_HEIGHT;
+}
+
+// Where settled Sprouts stand on a habitat's top face.
+//
+// The original ring (`angle = count * 0.9`, `radius = 0.35 + (count % 4) * 0.1`)
+// swept the full circle around the drum centre, which put roughly half of all
+// settled Sprouts BEHIND the habitat's own standee card — and that card is a
+// camera-facing billboard standing at the drum centre, so it cut the Sprout in
+// half. Confirmed in browser QA: a Sprout settled on the Ember Nook rendered as
+// a partial sliver poking out from behind the habitat symbol.
+//
+// Fix: lay the slots out on the VIEWER-FACING side of the card only. That is
+// well-defined because the garden camera's yaw is a fixed invariant — no input
+// path rotates alpha (see GARDEN_CAMERA_ALPHA in src/render/camera.ts) — so
+// "toward the viewer" is one constant world direction for the whole session.
+// The same invariant is what makes the lit billboard treatment safe (see
+// `spawn` below).
+/** Unit XZ vector from a habitat's centre toward the viewer. */
+const VIEWER_X = Math.cos(GARDEN_CAMERA_ALPHA);
+const VIEWER_Z = Math.sin(GARDEN_CAMERA_ALPHA);
+/** Unit XZ vector across the screen (perpendicular to the above). */
+const LATERAL_X = -Math.sin(GARDEN_CAMERA_ALPHA);
+const LATERAL_Z = Math.cos(GARDEN_CAMERA_ALPHA);
+const SETTLE_SLOTS_PER_ROW = 3;
+const SETTLE_ROWS = 2;
+const SETTLE_SLOT_SPACING = 0.34;
+/** How far in front of the card the first row stands. Kept small enough that
+ * even the smallest habitat's FLAT top face (Ember Nook: 1.1 outer radius less
+ * its 0.1 rim bevel = 1.0) comfortably contains every slot — the furthest is
+ * hypot(0.62, 0.34) = 0.71 from the centre. */
+const SETTLE_FRONT_DISTANCE = 0.62;
+const SETTLE_ROW_SPACING = 0.26;
+
+/** Deterministic XZ offset from a habitat's centre for the Nth settled Sprout —
+ * a small crowd standing in front of the habitat's sign, never behind it. */
+function sproutSettleOffset(index: number): { x: number; z: number } {
+  const row = Math.floor(index / SETTLE_SLOTS_PER_ROW) % SETTLE_ROWS;
+  const column = index % SETTLE_SLOTS_PER_ROW;
+  const lateral = (column - (SETTLE_SLOTS_PER_ROW - 1) / 2) * SETTLE_SLOT_SPACING;
+  const forward = SETTLE_FRONT_DISTANCE - row * SETTLE_ROW_SPACING;
+  return {
+    x: VIEWER_X * forward + LATERAL_X * lateral,
+    z: VIEWER_Z * forward + LATERAL_Z * lateral,
+  };
+}
 
 export interface SproutVisual {
   id: string;
@@ -91,7 +174,7 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     void podId;
     if (visuals.has(id)) return;
     const nurseryWorld = tileToWorld(NURSERY_TILE);
-    const mesh = MeshBuilder.CreatePlane(`terrarium.sprout.${id}`, { size: 0.7 }, scene);
+    const mesh = MeshBuilder.CreatePlane(`terrarium.sprout.${id}`, { size: SPROUT_SPRITE_SIZE }, scene);
     mesh.billboardMode = Mesh.BILLBOARDMODE_Y;
     mesh.position.set(nurseryWorld.x, SPROUT_FLOAT_HEIGHT, nurseryWorld.z);
     mesh.scaling.set(0.01, 0.01, 0.01); // pop-in from nothing during reveal
@@ -129,7 +212,10 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     mesh.metadata = { kind: 'sprout', sproutId: id };
     visuals.set(id, visual);
 
-    createSparkleBurst(scene, nurseryWorld, { count: 16, color: undefined });
+    // Emitted from the mound's top face, not the tile centre: the burst adds
+    // its own +0.3 internally, so a tile-centre y of 0 put the whole reveal
+    // sparkle at 0.30 — inside a mound whose top face is at 0.70.
+    createSparkleBurst(scene, { x: nurseryWorld.x, y: nurseryTopY(), z: nurseryWorld.z }, { count: 16, color: undefined });
 
     const revealStart = performance.now();
     const observer = scene.onBeforeRenderObservable.add(() => {
@@ -204,13 +290,14 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
       setState(visual, 'settled');
       const habitatTile = HABITAT_TILES[e.habitatId];
       const world = tileToWorld(habitatTile);
-      // Small deterministic offset ring so multiple settled Sprouts in the
-      // same habitat don't perfectly overlap.
-      const count = Array.from(visuals.values()).filter((v) => v.settledHabitat === e.habitatId).length;
-      const angle = count * 0.9;
-      const radius = 0.35 + (count % 4) * 0.1;
-      // 0.55 clears every habitat mesh's top surface (tallest is emberNook at ~0.45).
-      visual.mesh.position.set(world.x + Math.cos(angle) * radius, 0.55, world.z + Math.sin(angle) * radius);
+      // Deterministic slot on the habitat's viewer-facing side so multiple
+      // settled Sprouts neither overlap each other nor hide behind the
+      // habitat's standee card — see sproutSettleOffset.
+      const alreadySettled = Array.from(visuals.values()).filter(
+        (v) => v.settledHabitat === e.habitatId && v.id !== e.sproutId,
+      ).length;
+      const offset = sproutSettleOffset(alreadySettled);
+      visual.mesh.position.set(world.x + offset.x, sproutSettleHeight(e.habitatId), world.z + offset.z);
     }),
     bus.subscribe('sprout:transportStarted', (e) => {
       const visual = visuals.get(e.sproutId);
@@ -275,7 +362,7 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
         visual.mesh.position.y = SPROUT_FLOAT_HEIGHT;
         continue;
       }
-      const bob = Math.sin(nowMs / 500 + visual.wanderSeed) * 0.05 * motion.ambientIntensity;
+      const bob = Math.sin(nowMs / 500 + visual.wanderSeed) * SPROUT_BOB_AMPLITUDE * motion.ambientIntensity;
       visual.mesh.position.y = SPROUT_FLOAT_HEIGHT + bob;
     }
   };

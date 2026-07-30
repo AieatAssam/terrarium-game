@@ -61,18 +61,72 @@ export function getMotionConfig(reducedMotion: boolean, quality: QualityLevel = 
   };
 }
 
+/** The attribute src/ui/prefs.ts reflects the RESOLVED reduced-motion
+ * preference onto. Its own doc comment states the intent: "so other owners
+ * (e.g. Subagent E's renderer, for reduced-motion) can read" it. */
+const REDUCED_MOTION_ATTRIBUTE = 'data-reduced-motion';
+
 /**
- * Reads `prefers-reduced-motion` safely in any environment. Guarded so
- * importing/calling this from a test under jsdom (no `matchMedia`) never
- * throws — it just reports "not reduced".
+ * Whether ambient animation should be damped, safely readable in any
+ * environment (guarded so calling this from a test under jsdom with no
+ * `matchMedia` never throws — it just reports "not reduced").
+ *
+ * Two sources, in priority order:
+ *
+ *   1. `<html data-reduced-motion>`, which src/ui/prefs.ts writes. This is the
+ *      RESOLVED preference: it starts from the OS media query but the player
+ *      can override it either way from the Settings panel's "Reduced motion"
+ *      toggle, so once present it is authoritative.
+ *   2. The `prefers-reduced-motion` media query, for the window before the UI
+ *      has applied its prefs (and if the UI is absent entirely).
+ *
+ * Previously only (2) was consulted, which meant the in-game toggle changed the
+ * CSS but never reached the renderer — Sprout bob, background drift and the new
+ * path conveyor all kept animating for a player who had explicitly asked them
+ * not to. Found while wiring the conveyor's reduced-motion behaviour.
  */
 export function prefersReducedMotion(): boolean {
+  if (typeof document !== 'undefined') {
+    const attribute = document.documentElement?.getAttribute(REDUCED_MOTION_ATTRIBUTE);
+    if (attribute === 'true') return true;
+    if (attribute === 'false') return false;
+  }
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
   try {
     return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   } catch {
     return false;
   }
+}
+
+/**
+ * Calls `onChange` whenever the resolved reduced-motion preference may have
+ * changed — either the OS media query flipping or the Settings panel rewriting
+ * the `<html>` attribute. Returns an unsubscribe function.
+ */
+export function watchReducedMotion(onChange: (reduced: boolean) => void): () => void {
+  const cleanups: Array<() => void> = [];
+
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    try {
+      const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+      const handler = (): void => onChange(prefersReducedMotion());
+      query.addEventListener?.('change', handler);
+      cleanups.push(() => query.removeEventListener?.('change', handler));
+    } catch {
+      /* matchMedia unavailable or throwing — the attribute observer below still works */
+    }
+  }
+
+  if (typeof MutationObserver === 'function' && typeof document !== 'undefined' && document.documentElement) {
+    const observer = new MutationObserver(() => onChange(prefersReducedMotion()));
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: [REDUCED_MOTION_ATTRIBUTE] });
+    cleanups.push(() => observer.disconnect());
+  }
+
+  return () => {
+    for (const cleanup of cleanups) cleanup();
+  };
 }
 
 /** Simple ease-out cubic, used for manual (non-Babylon-Animation) tweening. */

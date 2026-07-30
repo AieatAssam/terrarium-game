@@ -156,10 +156,12 @@ third-party or AI-referenced assets."
   can optionally composite on top of/behind the main reveal art for
   extra "rare" flourish. Not required — `sprout.star.reveal` alone is a
   complete, correct reveal asset on its own.
-- Two path segment keys are provided: `path.segment.straight` and
-  `path.segment.corner` (both 160×160, tileable, grass-bordered) —
-  the brief asked for at least one; both are provided since corners are
-  needed the moment a path bends and the marginal cost was low.
+- **Five** path segment keys are now provided: `path.segment.straight`,
+  `.corner`, `.tee`, `.cross` and `.end` (all 160×160). See §10 below — the
+  original two were authored grass-bordered with a vertical gradient, which
+  cannot survive being rotated; all five were re-authored this pass with a
+  transparent surround and a rotation-invariant flat tread so a piece can be
+  turned to any of four orientations without mismatching its neighbours.
 - `ui.icon.mute` and `ui.icon.volume` are two separate icons (not one
   icon with a toggle state baked in) so F can swap between them driven
   by the mute boolean.
@@ -276,3 +278,144 @@ increase").
   placement-preview tint) — no procedural PBR material family sets a
   resting-state emissive color. See `docs/MATERIAL_LIBRARY.md`'s "Emissive
   audit" section.
+
+## 10. Garden path: piece variety, orientation, and conveyor flow (owner: E)
+
+### 10.1 The road has to turn
+
+`GARDEN_PATH_TILES` (`src/render/layout.ts`) is the UNION of
+`pathBetween(NURSERY_TILE, habitatTile)` for all three habitats, so the network
+genuinely contains corners, a junction and dead ends. The first render pass drew
+**every** tile with the single `path.segment.straight` key at zero rotation, so
+corners, the Nursery junction and the three dead ends all rendered as straight
+runs pointing the same way — the road visually ignored every turn it made.
+
+Piece type and orientation are now DERIVED per tile from its four neighbours
+(`classifyPathTile` / `GARDEN_PATH_PIECES`) and the tile mesh is rotated by whole
+quarter turns. For the shipped layout that yields 1 tee (under the Nursery),
+2 corners, 3 end caps (one under each habitat) and 16 straights. The `cross`
+piece is authored but unused by this layout; it exists so a future layout that
+crosses itself does not silently fall back to a wrong piece.
+
+### 10.2 Rotation-invariant tread art
+
+Five original SVGs in `public/assets/paths/`, all sharing ONE tread band —
+**68/160 of the tile, centred** — so arms line up across every tile boundary at
+any rotation. Three rules make them rotation-safe:
+
+- **No directional gradient.** The tread is a flat `#D9BD8B` fill. A vertical
+  linear gradient (what the original pair used) rotates with the tile and
+  mismatches its neighbour across a corner join. Depth comes instead from a
+  clipped inner-edge contact shade, scattered grit/pebble specks, and the shared
+  procedural normal/AO/roughness pass in `pbrMaterials.ts` — none of which need
+  to line up.
+- **No grass surround.** The surround is transparent, so the tread sits on the
+  real procedural soil instead of pasting a lighter green square over it (which
+  is what made the path read as a row of separated stepping stones).
+- **Open arm ends overhang the viewBox** to -10/170. The crisp outer edge stroke
+  is therefore clipped away at an arm END, so a tile join never shows a stroke
+  drawn straight across the road, while the tread FILL still reaches the tile
+  edge exactly. Path tiles are a full 1.0 tile wide (was 0.92) so adjacent
+  treads abut with no gap.
+
+### 10.3 Art→world orientation (measured, not assumed)
+
+The mapping from a source SVG's own edges to world axes is:
+**art right → world +X, art top → world −Z.**
+
+The +X half follows from `groundBuilder.js`. The other half depends on whether
+texture v = 0 samples the canvas top or bottom row, and it was **measured in the
+running scene** (render a corner, project known tile centres to screen, see which
+way the arms point) after being derived incorrectly once — the first attempt
+produced mirrored corners with one arm pointing off the road. It is corroborated
+independently: `assets.ts` uploads with `texture.update(false)` (invertY = false),
+so v = 0 is the canvas's top row.
+
+Consequence: because art-right is +X and art-top is −Z, a +90° mesh rotation
+advances art directions **counter-clockwise** (up → left → down → right), which is
+why `PATH_DIRECTION_OFFSETS` is ordered `[-Z, -X, +Z, +X]`.
+`tests/unit/render.pathPieces.test.ts` pins the resulting classification and
+rotation for the real layout so this cannot silently regress.
+
+### 10.4 Conveyor flow direction rule
+
+**Flow always points away from the Nursery, toward a habitat.** That is the
+direction gameplay transport actually moves, so the visuals cannot contradict the
+simulation. It is computed by breadth-first search outward from `NURSERY_TILE`
+over the path graph: a tile's flow points at whichever neighbour is FURTHER from
+the Nursery. Two special cases:
+
+- A **dead end** (a habitat tile) has no neighbour further out, so it keeps
+  travelling in the direction it was already heading — the conveyor points INTO
+  the habitat rather than turning back.
+- A **fan-out junction** has several outward neighbours and one overlay, so it
+  takes the first deterministically. In the shipped layout that tile is the
+  Nursery's own, entirely hidden under the mound.
+
+Nothing scrolls in a global screen direction. Each tile carries HALF-tile overlay
+segments — one for the half traffic arrives across, one for the half it leaves
+across — each rotated so its own local +X is the travel direction. A single
+shared scrolling material therefore animates the whole network correctly,
+including round both corners and through the junction. Half-tiles rather than one
+full-tile quad because a corner has no tread in the quadrant opposite its bend;
+a full-tile quad spilled chevrons onto bare soil past every corner (caught in
+browser QA).
+
+### 10.5 Conveyor reduced-motion behaviour
+
+The chevrons are directional by **shape** as well as by motion. That is what
+makes the accessibility path honest: under reduced motion the scroll **stops
+completely** (not "slows slightly") and the arrows still tell the player which
+way traffic goes — the information survives, only the animation goes.
+
+Implementation: `world.update` multiplies the scroll rate by
+`MotionConfig.backgroundMotion`, which `getMotionConfig` sets to exactly `0`
+under reduced motion. Verified in-browser: two screenshots two seconds apart with
+the setting on are pixel-identical.
+
+**Also fixed this pass:** the renderer only ever read the OS
+`prefers-reduced-motion` media query, so the Settings panel's own "Reduced
+motion" toggle changed the CSS but never reached ANY world animation — Sprout
+bob, background drift and now the conveyor all kept moving for a player who had
+explicitly asked them not to. `prefersReducedMotion()` now resolves
+`<html data-reduced-motion>` (which `src/ui/prefs.ts` already wrote for exactly
+this purpose, per its own doc comment) with the media query as fallback, and
+`watchReducedMotion()` observes both sources so the toggle takes effect live.
+
+## 11. Bevelled geometry pass (owner: E)
+
+The player reported the models as "too low poly / extremely blocky", and the
+source agreed: habitat drums were `MeshBuilder.CreateCylinder` at
+**tessellation 6** (Ember Nook) and **8** (Sunflower Meadow) — visibly faceted
+hexagonal and octagonal prisms with razor-sharp unbevelled vertical edges — and
+the automation build sites were plain `CreateBox` cubes.
+
+Every drum, mound and plinth is now built by one shared generator,
+`createRoundedPrism` (`src/render/geometry.ts`):
+
+- **Cross-section**: a rounded rectangle with a corner radius. Setting
+  `cornerRadius === halfWidth === halfDepth` degenerates it to a true circle
+  (habitat drums, Nursery mound at 48–56 segments); a smaller radius gives the
+  soft-cornered garden-equipment plinth the automation sites want.
+- **Vertical silhouette**: a ring profile (`drumProfile`) with a rounded top rim,
+  a chamfered base, an optional taper, and an optional **wider foot with a shelf
+  step** — a two-tier "pot with a foot" read in a single mesh and a single draw
+  call. One mesh deliberately: automation site markers are semi-transparent until
+  built, and stacked tier meshes would double-darken through the alpha blend.
+- **Winding and normals are not guessed.** Both were read off Babylon's own
+  `cylinderBuilder.js`/`mesh.vertexData.js`. Normals are supplied ANALYTICALLY
+  rather than via `ComputeNormals`, because the side wall needs a duplicated seam
+  column for a full 0..1 u and `ComputeNormals` would give those two seam
+  vertices half their neighbouring facets each — a visible vertical shading seam
+  down every drum.
+
+**Heights and outer radii were deliberately held constant** (Ember Nook top
+0.45, Dew Pond 0.325, Sunflower Meadow 0.40, Nursery 0.70, automation 0.50) so
+every dependent measurement — standee anchors, Sprout settle heights, reaction
+effect heights — kept its existing relationship. Confirmed by browser-measured
+bounding boxes after the change.
+
+**Asset scale rule (new):** any prop's dimensions live ONCE, in
+`src/render/propDims.ts`, and both the mesh and everything that sits on top of it
+are derived from that entry. Nothing may re-declare a prop's height, radius or
+top-surface Y locally.

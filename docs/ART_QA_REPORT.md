@@ -472,3 +472,335 @@ on either backend, rather than asserting a visual outcome that was never
 observed — see `docs/MATERIAL_LIBRARY.md`'s "Metallic is a true accent"
 section for the full, honest writeup. This is recorded as an open gap for
 a future pass with WebGL-path browser access, not silently resolved.
+
+---
+
+# Phase 4 — player-reported defects: clipping, blocky geometry, path orientation, conveyor flow
+
+Five defects were addressed this pass: three reported by the player from the
+running game, one further report mid-pass, and one new requirement. Two
+additional instances of a reported bug's own class were found by arithmetic and
+fixed alongside it.
+
+## Method note
+
+Every geometric claim below is **browser-measured**, not read off a screenshot.
+Two dev-only inspectors were added to `__debug` (`src/render/index.ts`):
+`extents(filter)` returns each matching mesh's world-space min/max Y and triangle
+count, and `sceneTriangles()`/`fps()` report the whole-scene budget. Combined
+with the pre-existing `contentBBox(key)` and `qaCamera(...)`, that makes
+"does X sit clear of Y" and "did poly count blow up" directly measurable.
+
+Every judgement below was taken after a **cold `preview_stop`/`preview_start`
+restart and in a fresh tab** — no HMR, no reused canvas.
+
+Screenshots were reviewed live in-session. Each is reproducible exactly via the
+recorded camera call; the parameters are given with each finding rather than
+committing a new PNG set. **The PNGs in `docs/qa-screenshots/` are from Phase 1
+and are now stale for the path, habitat drums, automation plinths, standee cards
+and Sprout heights** — do not read them as current.
+
+## Defect 1 — floating/settled Sprouts buried in the geometry beneath them
+
+**Reported:** "floating things above the polygons are clipped."
+
+**Root cause confirmed, with the predicted arithmetic exactly matched.** A Sprout
+is `MeshBuilder.CreatePlane({ size: 0.7 })` and `mesh.position` places its
+CENTRE, but the chosen heights treated the value as the sprite's BOTTOM. Measured
+before the fix, on a cold restart:
+
+| Subject | Card bottom edge | Surface top | Result |
+|---|---|---|---|
+| Floating Sprout at the Nursery | **0.4006** (bobbing) | 0.70 | ~0.30 units buried |
+| Settled Sprout (Ember Nook) | 0.20 (from source `y = 0.55`) | 0.45 | 0.25 units buried |
+
+The in-source comment claiming "0.55 clears every habitat mesh's top surface"
+was only true if 0.55 were the bottom edge, which it is not.
+`attachStandee`'s callers were measured as correct at this point
+(`minY == drum maxY` for all six cards) — they add half the card height, which
+is the arithmetic the Sprout code was missing.
+
+**Two more instances of the same bug class, found by doing the arithmetic on the
+reaction effects** (neither was reported):
+
+- `habitats.ts` `reactCorrect` emitted its sparkle burst at `worldCenter`
+  (tile y = 0). `createSparkleBurst` adds +0.3 internally → **y = 0.30, inside an
+  Ember Nook drum whose top face is 0.45.** The "you got it right" feedback was
+  rendering inside opaque geometry.
+- The Dew Pond ripple ring was emitted at the same tile centre; `createRippleRing`
+  adds +0.02 → **y = 0.02, inside a drum whose top is 0.325.**
+- `sprouts.ts` `spawn` had it too: the reveal sparkle fired at **y = 0.30** inside
+  the 0.70-tall Nursery mound.
+
+**Fix — made structural, not nudged.** `src/render/propDims.ts` is now the single
+source of truth for every prop's dimensions; the mesh is built from that entry and
+so is every height that depends on it. Sprout heights are derived:
+
+```
+SPROUT_FLOAT_HEIGHT = nurseryTopY() + BOB_AMPLITUDE + CLEARANCE + SPRITE_SIZE/2
+settleHeight(id)    = habitatTopY(id) + CLEARANCE + SPRITE_SIZE/2
+```
+
+The bob amplitude term matters and was initially missed by the hand-derived
+value: without it the idle bob's downward half dips the card back under the
+mound. Reaction effects now emit from `topCenter` (tile centre lifted to the
+drum's top face). `SPROUT_FLOAT_HEIGHT` is **exported** and imported by
+`src/input/index.ts`, replacing a hard-coded `-0.8` drag plane that is a
+*functional* mirror — had it stayed literal, the sprite would now render offset
+from the cursor. `tests/e2e/helpers.ts` and `preview.preview.spec.ts` were
+updated too (vitest cannot catch those).
+
+**Verified in-browser after a cold restart.** Floating Sprouts at the Nursery
+measured a minimum bottom edge of **0.7324–0.7376** across the bob cycle against
+a mound top of **0.70** — clear at every phase. Settled Sprouts, one dragged onto
+each habitat through the real pointer path:
+
+| Habitat | Settled Sprout position | Card bottom | Drum top | Clearance |
+|---|---|---|---|---|
+| Ember Nook | (3.321, 0.83, 3.802) | 0.48 | 0.45 | 0.03 |
+| Dew Pond | (11.321, 0.705, 3.802) | 0.355 | 0.325 | 0.03 |
+| Sunflower Meadow | (7.321, 0.78, 12.802) | 0.43 | 0.40 | 0.03 |
+
+Close-ups at `qaCamera(-3π/4, 1.05, 3.6, <habitat>, ...)` show each Sprout
+standing fully visible on the drum's top face with its bottom edge clear.
+
+### Defect 1b — settled Sprouts hidden behind the habitat's own symbol card
+
+Found during that verification, not from source. The original settle ring
+(`angle = count * 0.9`, `radius = 0.35 + (count % 4) * 0.1`) swept the full circle
+around the drum centre, so roughly half of all settled Sprouts landed BEHIND the
+habitat's standee card — which is a camera-facing billboard standing at the drum
+centre. The first Sprout settled on the Ember Nook rendered as a partial sliver
+poking out from behind the habitat symbol.
+
+Fixed by laying the slots out on the **viewer-facing side only**, derived from
+`GARDEN_CAMERA_ALPHA` (now exported from `camera.ts`) rather than hard-coded —
+legitimate because no input path ever rotates the camera's yaw, the same standing
+invariant the lit-billboard treatment already relies on. Slots are 3 across x 2
+rows, max 0.71 from the centre, which fits inside even the smallest habitat's flat
+top face (Ember Nook: 1.1 radius less its 0.1 rim bevel = 1.0). Verified: the
+measured offset (-0.679, -0.198) matches the derived slot exactly, and the
+close-ups show Sprouts standing in front of the sign.
+
+## Defect 2 — models too low poly / "extremely blocky"
+
+**Confirmed in source and in the frame.** Habitat drums were `CreateCylinder` at
+**tessellation 6** (Ember Nook — a hexagonal prism) and **8** (Sunflower Meadow —
+octagonal), with razor-sharp unbevelled vertical edges; automation build sites
+were plain `CreateBox` cubes. Measured before: the Ember Nook drum was **24
+triangles**, the Sunflower Meadow **32**, an automation plinth **12**, and the
+whole scene **696**.
+
+Replaced with one shared generator, `createRoundedPrism` (`src/render/geometry.ts`)
+— round or soft-cornered cross-section, rounded top rim, chamfered base, optional
+taper, optional wider foot with a shelf step. Full rationale and the
+winding/normals derivation: `docs/ART_DIRECTION.md` §11.
+
+**Two failure modes that typecheck clean were specifically watched for and did not
+occur:** inverted winding (would show as black or invisible drums under
+`backFaceCulling`) and missing/degenerate UVs (would break the tiled stone
+normal/AO lookup and read flat). Both conventions were read off Babylon's own
+`cylinderBuilder.js`/`mesh.vertexData.js` rather than guessed, and one drum was
+inspected close-up before the other five were built.
+
+**Poly count and performance:**
+
+| | Before | After |
+|---|---|---|
+| Ember Nook drum | 24 | 960 |
+| Dew Pond drum | 112 | 1120 |
+| Sunflower Meadow drum | 32 | 960 |
+| Nursery mound | 96 | 960 |
+| Automation plinth (each) | 12 | 720 |
+| Conveyor overlay | — | 86 (43 quads) |
+| **Whole scene** | **696** | **5936** |
+| **Measured FPS** | 59.8–60 | **60.0–60.2** |
+
+No new textures, no new draw-call structure beyond 4 path-piece materials and 1
+conveyor material. 5936 triangles is far below anything a mainstream laptop
+notices; the budget headroom was never the constraint here, the geometry was.
+
+**Heights and outer radii were held constant on purpose** so nothing that measures
+off a top face moved. Re-verified after the change: Ember Nook top 0.45, Dew Pond
+0.325, Sunflower Meadow 0.40, Nursery 0.70, automation 0.50 — all identical to
+before, and all six standee cards still anchored to them.
+
+**Deliberately NOT changed:** scenery rocks, foliage and water accents remain flat
+ground-parallel cards. That was a documented prior fix for a UV-wrap defect
+(wrapping top-down decal art around a volume smeared it into a near-solid block),
+and re-volumising them risks re-introducing it. It is the honest remaining gap —
+see the Polish score below, which is *lowered* for it.
+
+## Defect 3 — path/road orientation inconsistent
+
+**Confirmed:** every tile used `path.segment.straight` with no rotation, so
+corners, the junction and the dead ends all rendered as straight runs pointing the
+same way. Tiles were also 0.92 wide on a 1.0 grid, leaving a visible gap of bare
+soil at every join — the road read as separated stepping stones.
+
+Piece type and orientation are now derived from each tile's neighbours; five
+original SVG pieces were authored on a shared tread band; tiles are a full 1.0
+wide. Full design: `docs/ART_DIRECTION.md` §10.
+
+**The art→world orientation was derived WRONG on the first attempt and only the
+browser caught it.** The first render put the two corners' arms at
+{−Z, −X} where {−Z, +X} was needed — a mirror, not a rotation error, diagnosed by
+projecting known tile centres to screen and measuring where the rendered arms
+actually went. The corrected mapping (art right → +X, art top → −Z) is now
+documented with both its empirical and its independent
+`texture.update(false)` justification, and pinned by
+`tests/unit/render.pathPieces.test.ts` (12 assertions, including an independent
+re-derivation of every tile's rotation against its real neighbour mask).
+
+**Occlusion note for future readers, so this is not mistaken for a bug:** the tee
+junction sits on the Nursery tile and all three end caps sit on habitat tiles, and
+every one of those is completely covered by the prop standing on it (the Nursery
+footprint spans 7.2–8.8 in x and z against a tile of 7.5–8.5). **The two corners
+at (4,8) and (12,8) are the only non-straight pieces actually visible.** They were
+the verification shot.
+
+**Verified:** close-ups at `qaCamera(-π/2, 0.16, 6.2, 4.2, 0, 7.7)` and
+`(-π/2, 0.16, 6.6, 11.6, 0, 7.4)` show both corners turning correctly with a
+filleted inner corner, the outer edge stroke running continuously through the
+join, and no gap, seam or double-drawn overlap. Piece census matches the layout: 1
+tee, 2 corners, 3 end caps, 16 straights.
+
+## Defect 4 — "the symbols above the habitats are clipped" (reported mid-pass)
+
+**This was a genuine, severe UV bug, and the earlier assumption that
+`attachStandee` was fine because its call sites add `height / 2` was wrong.**
+
+`attachStandee`'s content crop computed its V window with the wrong sign
+(`vOffset = 1 - bbox.maxV`, correct only if texture v runs bottom-up; it runs
+top-down). Measured before the fix, most of every habitat symbol was simply not on
+the card — the Dew Pond card was sampling a canvas band that overlapped its actual
+artwork by **0.13 of the canvas**. Full measurement table for all six cards:
+`docs/MATERIAL_LIBRARY.md`, "Standee texture cropping".
+
+Fixed by correcting the V window (as a negative `vScale`, because a plane's v = 0
+is its bottom edge while texture v = 0 is the canvas top — a positive scale
+renders the art upside down), and by moving the anchoring **inside**
+`attachStandee` so it is computed from the POST-CROP height. Callers now pass the
+local Y of the surface the card stands on and cannot get the arithmetic wrong.
+
+**Verified in-browser on all six cards**, at
+`qaCamera(-π/2, 1.02, 3.6, <prop>, ...)`, cross-checked against the source SVGs
+opened directly in the browser at `/assets/habitats/emberNook/base.svg` etc:
+
+- Ember Nook: the full oval mound, ember pit and ring of stones — matches source.
+- Dew Pond: the full pond, lily pads, reeds and green bank.
+- Sunflower Meadow: the full meadow patch with all five sunflowers.
+- Nursery: the full pod with the Sprout face (bottom ~38% was previously cut).
+- Garden Slide / Colour Gate: full slide curve, full gate with posts.
+
+All six measure a clearance of exactly **0.02** above their surface — the other
+half of the report was addressed too: the cards were previously **tangent**
+(`minY == surface top` exactly), which z-fights along the whole bottom row and
+itself reads as a frayed edge. Also ruled out: no near-plane or frustum clipping
+(all six `isInFrustum` at default zoom), and no z-fighting with the drum top face.
+
+## Requirement 5 — animated conveyor paths with visible direction
+
+Flow direction follows real gameplay transport — outward from the Nursery to the
+habitats — computed by breadth-first search over the path graph, correct through
+both corners and the junction, with dead ends pointing INTO the habitat rather
+than turning back. Direction lives in each overlay quad's rotation, so **one**
+shared material and **one** texture animate the whole network from a single
+`texture.uOffset` write per frame. Design and the flow-direction rule:
+`docs/ART_DIRECTION.md` §10.4–10.5.
+
+**Perf constraints respected:** no per-tile material (the one-material-per-tile
+bug a prior pass had to fix is not reintroduced — the shipped scene has 4 path
+materials and 1 conveyor material for 22 tiles), and no per-frame allocation.
+
+**One iteration was needed, caught in the browser:** a single full-tile quad
+rotated to the outgoing direction spilled chevrons onto bare soil past every
+corner, because a corner has no tread in the quadrant opposite its bend. Replaced
+with two half-tile segments per tile (arriving half + leaving half), which also
+keeps the march continuous along a straight run. A unit test now asserts no
+segment is ever painted over a half-tile with no tread.
+
+**Verified:** chevrons visible and correctly directional on every run at default
+zoom; two screenshots 1s apart show the pattern advancing *toward* the corner on
+the run that flows that way.
+
+### Reduced motion
+
+`backgroundMotion` is exactly `0` under reduced motion, so the scroll **stops
+dead**. Verified by toggling the in-game Settings switch and taking two
+screenshots 2 seconds apart: **pixel-identical**. Direction remains legible
+because the chevrons are directional by shape, so the accessibility path loses the
+animation without losing the information.
+
+**A real accessibility bug was found and fixed doing this.** The renderer only
+read the OS `prefers-reduced-motion` media query, so the Settings panel's own
+"Reduced motion" toggle changed the CSS but reached **no** world animation —
+Sprout bob and background drift included, not just the new conveyor.
+`src/ui/prefs.ts` had been writing `<html data-reduced-motion>` for exactly this
+purpose (its own doc comment says so) and nothing read it.
+`prefersReducedMotion()` now resolves that attribute with the media query as
+fallback, and `watchReducedMotion()` observes both so the toggle applies live.
+Verified in-browser: with the toggle on, all Sprouts' bounding boxes sit at a
+constant 0.78 (bob fully damped) where they previously varied 0.73–0.83.
+
+## Commands run
+
+```
+npm run typecheck   # clean
+npm run lint        # clean (--max-warnings 0)
+npm test            # 148 passed (19 files) — was 129 before this pass
+npm run build       # built in 1.90s
+```
+
+25 new unit assertions were added across three files:
+`tests/unit/render.pathPieces.test.ts` (piece classification, rotation, conveyor
+flow direction, no-tread-overlap), `tests/unit/render.sproutHeights.test.ts`
+(derived float/settle heights, and the held-constant top surfaces), and four
+cases in `tests/unit/render.motion.test.ts` (resolved reduced-motion preference
+and its watcher).
+
+**One mirrored literal could not be eliminated, and is guarded instead.**
+`src/input/index.ts` now imports `SPROUT_FLOAT_HEIGHT` directly, removing its
+hard-coded `-0.8` drag plane. The Playwright helpers cannot do the same:
+importing it fails because Playwright's loader will not resolve Babylon's
+extensionless deep specifiers (`Cannot find module
+'@babylonjs/core/Maths/math.color' ... Did you mean ...math.color.js?`) which
+`sprouts.ts` pulls in transitively. Vitest resolves them fine, so
+`render.sproutHeights.test.ts` asserts the real exported constant still equals
+the literal the e2e helpers mirror — closing the "npm test can never catch this"
+gap from the other side.
+
+## Score table (Phase 4 — supersedes Phase 3 for every category)
+
+| Criterion | Score | Notes |
+|---|---|---|
+| Material richness and tactile depth | **5/5** | Held. Recipes are unchanged, but they are now applied to curved bevelled surfaces that carry a soft light terminator across a rounded rim instead of flat facets with a hard value step at each edge — verified close-up on all three drums and the Nursery. The flat scenery cards are a real remaining weakness but they are a *silhouette/volume* gap, not a material gap (they do carry the stone/foliage detail pass), so they are counted once, under Polish below, rather than double-counted here. |
+| Lighting and shadow quality | **4/5** | Held, deliberately not raised. The bevelled geometry genuinely improved how the existing key/fill read, but Phase 2/3 capped this specifically on the WebGPU IBL gap, and **nothing about that gap changed this pass**. Raising it on the strength of unrelated geometry work would be exactly the re-weighting this report has had to self-correct for once already. |
+| Readability at gameplay distance | **5/5** | Raised from 4/5, by fixing the named gap rather than reinterpreting it. Phase 2/3 capped this on standee illustrations being "small relative to the habitat drums... a close reading rather than an instant one". The V-window fix means each card now shows its **complete** illustration in the same footprint — for the Dew Pond that is going from an artwork overlap of 0.13 of the canvas to 1.00, roughly a 4x increase in legible content at identical card size. On top of that, the route and its direction of travel now read instantly (conveyor chevrons), and settled Sprouts are no longer half-hidden behind the habitat sign. Verified at default camera and zoom. |
+| Silhouette and species distinction | **5/5** | Held. Sprout species distinction is untouched and still shape-led. Prop silhouettes genuinely improved (faceted hex/octagonal prisms and literal cubes → bevelled two-tier pots and soft-cornered plinths). The flat scenery cards have no silhouette at all; counted under Polish. |
+| Animation appeal | **5/5** | Held, with real additions rather than a carry-forward: the path now has a continuous directional conveyor that communicates gameplay flow, and — more importantly for this criterion's honesty — the reduced-motion preference now actually reaches the animation system, so the calm variant is a real state rather than dead configuration. |
+| Environmental cohesion | **4/5** | Held, deliberately not raised. The path is genuinely more cohesive now (its tread sits on the real procedural soil instead of pasting a lighter-green square over it, which is what made the road read as separated stepping stones). But Phase 2/3 capped this on the WebGPU IBL ambient-grading gap and that reason is still fully in force. |
+| Texture quality and UV correctness | **5/5** | Nominally unchanged, but **Phase 3's 5/5 was not warranted at the time and this should be recorded as a correction.** A defect squarely inside this criterion — the standee content crop sampling the wrong V band, losing most of every habitat symbol — was live when Phase 3 scored this 5/5 on texture resolution and seam handling alone. It is now genuinely 5/5: that crop is fixed and verified against source art on all six cards, and the new path pieces added rotation-aware UV handling plus a CLAMP wrap mode to kill edge-bleed fringing at tile joins. |
+| Polish vs. placeholder appearance | **4/5** | **Lowered from Phase 3's 5/5** — not because anything regressed, but because the bevelled-geometry pass raised the surrounding standard enough that the flat scenery cards now read as the placeholder element in frame. Next to 960-triangle bevelled pots with rim highlights and foot tiers, the rocks are flat grey diamonds and the water accents flat blue ellipses lying on the ground. Phase 3 credited their detail pass and scored 5/5; against the current frame that is no longer defensible. To earn 5/5 back: give rocks low rounded pebble volumes using the existing procedural stone material (never manifest art on a volume — that is the UV-wrap trap the flat cards were the fix for), and recess or rim the water accents. Deliberately deferred this pass to avoid re-introducing a previously-fixed defect while five other defects were in flight. |
+| Web performance | **4/5** | Held. This pass replaced Phase 3's architectural argument with direct measurement — whole-scene triangles 696 → 5936 and FPS steady at 60.0–60.2 after the change, on a cold restart — and the added cost is geometry only, with no new textures and 5 new shared materials total. Still not a 5 for the same honest reason as Phase 2/3: this is one machine on one backend (WebGPU), not a multi-device frame-rate profile. |
+
+All nine required categories score ≥4/5, so this pass passes. Five score 5/5
+(Material richness, Readability — newly raised by closing its named gap,
+Silhouette, Animation, Texture/UV). Two are held at 4/5 because their named
+cap (the WebGPU IBL gap) is untouched, one is held at 4/5 pending real
+multi-device profiling, and **one was lowered** — see Polish above.
+
+## Deliberately deferred
+
+- **Scenery volume.** Rocks/foliage/water stay flat cards. Named and scored
+  against, not hidden. See the Polish row for the exact remedy and why it was not
+  attempted this pass.
+- **WebGPU IBL.** Unchanged engine-level limitation, fully investigated in Phase 3.
+- **Multi-device performance profile.** Single-machine, single-backend measurement
+  only.
+- **`cross` path piece is authored but unused** by the shipped layout, which never
+  crosses itself. Kept so a future layout does not silently fall back to a wrong
+  piece.
+- **Refreshed screenshot PNGs.** `docs/qa-screenshots/` still holds the Phase 1
+  set and is stale for everything this pass touched; findings above cite
+  reproducible `qaCamera` parameters and measured numbers instead.

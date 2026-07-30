@@ -39,6 +39,40 @@
 // and resize/re-anchor the card to that content's aspect ratio instead of
 // the artwork's full (mostly-transparent) square canvas, so the illustration
 // actually fills the standee and sits flush on the surface it's standing on.
+//
+// Fourth bug (reported by the player as "the symbols above the habitats are
+// clipped"): that crop was computing its V window with the wrong sign, so it
+// showed the WRONG SLICE of the canvas. The V convention here is settled by
+// two independent facts, not by guesswork:
+//
+//   1. assets.ts rasterizes into a DynamicTexture and calls
+//      `texture.update(false)` — invertY = false, so the canvas is uploaded
+//      without a vertical flip and texture v = 0 samples the canvas's TOP row.
+//   2. Independently confirmed in the running scene via the garden path's
+//      orientation: `groundBuilder.js` puts ground v = 0 at z = -height/2, and
+//      a rendered path corner showed the source SVG's top edge facing world
+//      -Z. Same conclusion — v = 0 is the canvas top.
+//
+// The previous code set `vOffset = 1 - bbox.maxV`, which is only correct if
+// v runs bottom-up. Because these illustrations are bottom-anchored in their
+// canvas (a wide ground-shadow ellipse near the bottom edge), that sign error
+// showed the canvas's TOP band instead of the content band. Measured in the
+// browser before the fix, `habitat.dewPond.base` has its content in canvas
+// rows 0.434..1.0 while the card was sampling rows 0.0..0.566 — an overlap of
+// barely a fifth of the canvas, i.e. most of every habitat symbol was simply
+// not on the card.
+//
+// Two consequences are handled below:
+//   * The V window is `[bbox.minV, bbox.maxV]`, expressed as a NEGATIVE
+//     vScale anchored at maxV. Negative, because a plane's own v = 0 is at its
+//     BOTTOM edge (`planeBuilder.js`) while texture v = 0 is the canvas TOP —
+//     so a positive scale would render the art upside down.
+//   * The card is anchored by its BOTTOM EDGE, and that anchoring is
+//     recomputed from the POST-CROP height. Callers now pass the local Y of
+//     the surface the card stands on and this module owns all the half-height
+//     arithmetic; previously each caller pre-computed `localY` from the
+//     ORIGINAL requested height, which stopped being the card's real
+//     half-height the moment the content crop resized it.
 
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
@@ -54,18 +88,29 @@ export interface FlatCap {
   material: PBRMetallicRoughnessMaterial;
 }
 
+/** Gap left between the surface a standee stands on and the card's bottom
+ * edge. Small but non-zero on purpose: a card whose bottom edge is exactly
+ * coplanar with the top face it stands on z-fights with that face along its
+ * whole bottom row, which reads as a clipped//frayed edge. */
+const STANDEE_GROUND_CLEARANCE = 0.02;
+
 /**
  * Upright "standee" card — a vertical plane, billboarded (BILLBOARDMODE_Y,
  * same as src/render/sprouts.ts's Sprout sprites) so it always faces the
- * camera while staying vertical. `width`/`height` are a MAXIMUM bounding
- * footprint — see the content-crop note above, the actual rendered card is
- * fit inside this box at the source art's real content aspect ratio, not
- * forced to fill it. `localY` is the FALLBACK center height (used until/
- * unless a content crop applies) above `parent`'s pivot — pass
- * `drumTopLocalY + height / 2` so the box's bottom edge sits right at the
- * top surface it's standing on; once the real content aspect is known the
- * card is re-anchored to keep that same bottom contact point exactly (so it
- * never ends up floating above, or sunk into, the surface it stands on).
+ * camera while staying vertical.
+ *
+ * `width`/`height` are a MAXIMUM bounding footprint — see the content-crop
+ * note above; the actual rendered card is fit inside this box at the source
+ * art's real content aspect ratio, not forced to fill it.
+ *
+ * `surfaceLocalY` is the parent-local Y of the TOP FACE the card stands on
+ * (e.g. `halfHeight(body)` for a drum whose pivot is its vertical centre) —
+ * NOT a centre height. This function owns all the half-height arithmetic,
+ * including redoing it against the post-crop height, so the card's bottom edge
+ * is always just clear of that surface no matter how the content crop resizes
+ * it. Callers used to pass a pre-computed centre height derived from the
+ * ORIGINAL `height`, which silently stopped matching the card's real
+ * half-height once the crop applied.
  */
 export function attachStandee(
   scene: Scene,
@@ -75,18 +120,18 @@ export function attachStandee(
   fallbackColor: Color3,
   width: number,
   height: number,
-  localY: number,
+  surfaceLocalY: number,
 ): FlatCap {
   const mesh = MeshBuilder.CreatePlane(name, { width, height }, scene);
   mesh.billboardMode = Mesh.BILLBOARDMODE_Y;
   mesh.parent = parent;
-  mesh.position.set(0, localY, 0);
+  const bottomY = surfaceLocalY + STANDEE_GROUND_CLEARANCE;
+  mesh.position.set(0, bottomY + height / 2, 0);
   mesh.isPickable = false;
   const material = createManifestMaterial(scene, `${name}.mat`, key, fallbackColor);
   material.backFaceCulling = false;
   mesh.material = material;
 
-  const bottomY = localY - height / 2;
   // Bbox readiness is tracked independently of the texture's own
   // isReady()/onReady (see onManifestContentBBoxReady's doc comment) — a
   // DynamicTexture reports ready as soon as it's constructed, before its
@@ -116,11 +161,15 @@ export function attachStandee(
     // crop; safe to mutate directly rather than cloning per-instance.
     texture.uOffset = bbox.minU;
     texture.uScale = contentW;
-    // Canvas-space V is top-down (v=0 at the top row, matching how the art
-    // reads visually); Babylon's default texture V sampling is bottom-up, so
-    // the offset is measured from the bottom of the source canvas.
-    texture.vOffset = 1 - bbox.maxV;
-    texture.vScale = contentH;
+    // V window = [bbox.minV, bbox.maxV] in canvas rows, expressed with a
+    // NEGATIVE scale anchored at maxV. See the module doc comment: texture
+    // v = 0 is the canvas's TOP row (assets.ts uploads with invertY = false)
+    // while a plane's own v = 0 is its BOTTOM edge, so sampling must run
+    // backwards for the art to come out upright. Sampled v at the card's
+    // bottom edge (mesh v = 0) is maxV — the content's bottom row — and at its
+    // top edge (mesh v = 1) it is maxV - contentH = minV.
+    texture.vOffset = bbox.maxV;
+    texture.vScale = -contentH;
   });
 
   return { mesh, material };

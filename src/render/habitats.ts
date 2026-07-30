@@ -4,7 +4,6 @@
 // wobble on an incorrect placement ("friendly retry", never a fail state).
 
 import { Color3 } from '@babylonjs/core/Maths/math.color';
-import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import type { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
 import type { Scene } from '@babylonjs/core/scene';
@@ -13,10 +12,12 @@ import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGener
 import { swapManifestMaterialTexture } from './assets';
 import { tileToWorld, tileDistance, type TileCoord } from './coords';
 import { attachStandee } from './flatArt';
+import { createRoundedPrism } from './geometry';
 import { HABITAT_TILES } from './layout';
 import type { MotionConfig } from './motion';
 import { createRippleRing, createSparkleBurst } from './particles';
 import { createStoneBodyMaterial } from './pbrMaterials';
+import { bodyRings, halfHeight, HABITAT_BODIES, habitatTopY } from './propDims';
 import type { HabitatId } from '../core/ids';
 
 const HABITAT_FALLBACK_COLOR: Record<HabitatId, Color3> = {
@@ -45,17 +46,13 @@ interface HabitatVisual {
   bodyMaterial: PBRMetallicRoughnessMaterial;
   tile: TileCoord;
   worldCenter: { x: number; y: number; z: number };
+  /** Tile centre lifted to this drum's TOP face — where reaction effects have
+   * to be emitted from. Emitting at `worldCenter` (tile y = 0) put the sparkle
+   * burst and the Dew Pond ripple ring *inside* the opaque drum; see
+   * src/render/propDims.ts for the full note on that bug class. */
+  topCenter: { x: number; y: number; z: number };
   baseEmissive: Color3;
 }
-
-/** Per-habitat body dimensions, mirrored from buildHabitatMesh below so the
- * flat art cap can be sized/positioned to sit exactly on each drum's top
- * face without re-deriving MeshBuilder's own math. */
-const HABITAT_DIMS: Record<HabitatId, { halfHeight: number; topRadius: number }> = {
-  emberNook: { halfHeight: 0.25, topRadius: 1.1 },
-  dewPond: { halfHeight: 0.125, topRadius: 1.3 },
-  sunflowerMeadow: { halfHeight: 0.2, topRadius: 1.3 },
-};
 
 export interface HabitatManager {
   get: (id: HabitatId) => HabitatVisual;
@@ -68,16 +65,33 @@ export interface HabitatManager {
   dispose: () => void;
 }
 
+/**
+ * Habitat drum body. Previously three raw `MeshBuilder.CreateCylinder` calls
+ * with tessellation 6 (Ember Nook) / 8 (Sunflower Meadow) / 28 (Dew Pond) —
+ * i.e. two of the three read as visibly faceted hexagonal/octagonal prisms
+ * with razor-sharp unbevelled vertical edges, which is exactly what the brief
+ * forbids and what the player reported as "extremely blocky".
+ *
+ * Now every drum is a `createRoundedPrism` built from its `HABITAT_BODIES`
+ * entry: a round cross-section at 48-56 segments, a rounded top rim, a
+ * chamfered base, a wider foot with a shelf step, and (for the Sunflower
+ * Meadow) the same taper its original diameterTop/diameterBottom gave. Heights
+ * and outer radii are unchanged, so nothing that measures off the top face
+ * moved.
+ */
 function buildHabitatMesh(scene: Scene, id: HabitatId): Mesh {
-  switch (id) {
-    case 'emberNook':
-      return MeshBuilder.CreateCylinder(`terrarium.habitat.${id}`, { height: 0.5, diameter: 2.2, tessellation: 6 }, scene);
-    case 'dewPond':
-      return MeshBuilder.CreateCylinder(`terrarium.habitat.${id}`, { height: 0.25, diameter: 2.6, tessellation: 28 }, scene);
-    case 'sunflowerMeadow':
-    default:
-      return MeshBuilder.CreateCylinder(`terrarium.habitat.${id}`, { height: 0.4, diameterTop: 2.6, diameterBottom: 2.2, tessellation: 8 }, scene);
-  }
+  const body = HABITAT_BODIES[id];
+  return createRoundedPrism(
+    `terrarium.habitat.${id}`,
+    {
+      halfWidth: body.halfWidth,
+      halfDepth: body.halfDepth,
+      cornerRadius: body.cornerRadius,
+      radialSegments: body.radialSegments,
+      rings: bodyRings(body),
+    },
+    scene,
+  );
 }
 
 export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenerator): HabitatManager {
@@ -86,8 +100,9 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
   for (const id of Object.keys(HABITAT_TILES) as HabitatId[]) {
     const tile = HABITAT_TILES[id];
     const world = tileToWorld(tile);
+    const body = HABITAT_BODIES[id];
     const mesh = buildHabitatMesh(scene, id);
-    mesh.position.set(world.x, 0.2, world.z);
+    mesh.position.set(world.x, body.centreY, world.z);
     mesh.receiveShadows = true;
     mesh.isPickable = true;
     mesh.metadata = { kind: 'habitat', habitatId: id, tile };
@@ -109,11 +124,10 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
     // to the source art's real content aspect ratio, so this is a maximum
     // bounding footprint, not the final rendered size — kept modest (0.9x
     // rather than an earlier 1.5x) so the card can't grow tall enough to
-    // occlude a settled Sprout resting on top at SPROUT_FLOAT_HEIGHT
-    // (src/render/sprouts.ts, y=0.55-0.8) — verified in browser QA, see
+    // occlude a settled Sprout resting on top (see src/render/sprouts.ts's
+    // derived settle height) — verified in browser QA, see
     // docs/ART_QA_REPORT.md.
-    const dims = HABITAT_DIMS[id];
-    const standeeSize = dims.topRadius * 0.9;
+    const standeeSize = body.halfWidth * 0.9;
     const cap = attachStandee(
       scene,
       mesh,
@@ -122,7 +136,7 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
       HABITAT_FALLBACK_COLOR[id],
       standeeSize,
       standeeSize,
-      dims.halfHeight + standeeSize / 2,
+      halfHeight(body),
     );
     cap.material.emissiveColor = Color3.Black();
 
@@ -133,6 +147,7 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
       bodyMaterial,
       tile,
       worldCenter: world,
+      topCenter: { x: world.x, y: habitatTopY(id), z: world.z },
       baseEmissive: Color3.Black(),
     };
   }
@@ -179,11 +194,16 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
   const reactCorrect = (id: HabitatId, motion: MotionConfig): void => {
     const visual = visuals[id];
     visual.mesh.scaling.set(1, 1, 1);
-    createSparkleBurst(scene, visual.worldCenter, {
+    // Emitted from the drum's TOP face, not its tile centre: the burst's own
+    // +0.3 internal offset off a tile-centre y of 0 landed at 0.30, inside an
+    // Ember Nook drum whose top face is at 0.45, and the ripple ring's +0.02
+    // landed at 0.02 inside a Dew Pond drum whose top is at 0.325 — so the
+    // "you got it right" feedback was rendering *inside* opaque geometry.
+    createSparkleBurst(scene, visual.topCenter, {
       color: undefined,
       count: Math.round(28 * motion.particleDensity) || 1,
     });
-    if (id === 'dewPond') createRippleRing(scene, visual.worldCenter, 900 * (motion.backgroundMotion > 0 ? 1 : 0.6));
+    if (id === 'dewPond') createRippleRing(scene, visual.topCenter, 900 * (motion.backgroundMotion > 0 ? 1 : 0.6));
 
     swapManifestMaterialTexture(scene, visual.material, `habitat.${id}.base`); // re-affirm base texture in case a future "growth" variant key gets swapped in on repeated correct placements
 

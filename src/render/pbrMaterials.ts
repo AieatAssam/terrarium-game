@@ -38,11 +38,12 @@
 //     close-up instead of only being visible pressed up against the mesh.
 
 import { Color3 } from '@babylonjs/core/Maths/math.color';
+import { Material } from '@babylonjs/core/Materials/material';
 import { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import type { Scene } from '@babylonjs/core/scene';
-import { createManifestMaterial, type ManifestKey } from './assets';
+import { createManifestMaterial, getManifestTexture, type ManifestKey } from './assets';
 
 // ---------------------------------------------------------------------------
 // Procedural texture generation helpers
@@ -615,22 +616,141 @@ export function createSoilMaterial(scene: Scene): PBRMetallicRoughnessMaterial {
   return material;
 }
 
-/** Garden path — satin-worn stone/soil tread carrying Subagent C's manifest
- * path illustration (`path.segment.straight`) as the albedo, with a shared
- * normal/AO/roughness detail pass layered on top. ONE shared material
- * instance for every path tile (world.ts creates this once, not per-tile —
- * converting each tile to its own PBRMaterial would multiply shader/uniform
- * cost for what is visually the same repeated surface; see
- * docs/MATERIAL_LIBRARY.md). */
-export function createPathMaterial(scene: Scene, manifestKey: ManifestKey, fallbackColor: Color3): PBRMetallicRoughnessMaterial {
+/** Garden path — satin-worn stone/soil tread carrying a manifest path
+ * illustration as the albedo, with a shared normal/AO/roughness detail pass
+ * layered on top. ONE shared material instance per PIECE TYPE (straight /
+ * corner / tee / cross / end), not one per tile: world.ts creates at most five
+ * of these and every tile of a given piece type reuses the same material,
+ * rotating its own mesh instead. Converting each tile to its own material
+ * would multiply shader/uniform cost for what is visually the same repeated
+ * surface (see docs/MATERIAL_LIBRARY.md). */
+export function createPathMaterial(scene: Scene, name: string, manifestKey: ManifestKey, fallbackColor: Color3): PBRMetallicRoughnessMaterial {
   // tiling=1: path art is one illustration per tile, not a tiled repeat —
   // only the detail maps' own generation frequency matters, not a repeat
   // count (see getOrCreateFamily's doc comment on why tiling is baked into
   // the family rather than mutated post-hoc).
   const family = getOrCreateFamily(scene, 'path', { ...PATH_RECIPE, tiling: 1 });
-  const material = createManifestMaterial(scene, 'terrarium.path.mat', manifestKey, fallbackColor);
+  const material = createManifestMaterial(scene, name, manifestKey, fallbackColor);
   applyFamily(material, family);
+  // Clamp rather than repeat the path art specifically. Babylon textures
+  // default to WRAP_ADDRESSMODE, so bilinear sampling at u/v = 0 or 1 blends
+  // in the OPPOSITE edge of the canvas. That is harmless on a straight tile
+  // (both edges carry the same tread) but on a corner/tee/end piece the two
+  // opposite edges differ — tread against transparent surround — which shows
+  // as a faint one-pixel fringe exactly along a tile join. The path art is
+  // one illustration per tile and never tiled, so clamping costs nothing.
+  getManifestTexture(scene, manifestKey, (texture) => {
+    texture.wrapU = Texture.CLAMP_ADDRESSMODE;
+    texture.wrapV = Texture.CLAMP_ADDRESSMODE;
+  });
   return material;
+}
+
+/**
+ * Conveyor flow chevrons for the garden path — ONE shared material and ONE
+ * shared texture for every path tile in the garden. Direction of travel is
+ * carried by each tile's own quad ROTATION (see GARDEN_PATH_PIECES'
+ * flowQuarterTurns), so a single scrolling u offset animates all of them in
+ * their own correct direction; nothing here is per-tile, and `advance` only
+ * writes two numbers, so there is no per-frame allocation.
+ *
+ * Deliberate stylised exception to the "PBR world geometry" rule, documented
+ * per the brief: this is a light marker travelling OVER the tread, not a
+ * physical surface, so it is emissive-led with no normal/AO/roughness pass —
+ * layering the path family's bump onto a moving overlay would read as the
+ * *ground* rippling. It stays a lit PBR material (not `disableLighting`) so it
+ * still sits inside the scene's warm/cool light rather than glowing flatly.
+ *
+ * The chevrons are directional by SHAPE as well as by motion, which is what
+ * makes the reduced-motion path honest: with `backgroundMotion: 0` the scroll
+ * halts completely (see world.ts) and the arrows still say which way traffic
+ * goes.
+ */
+export interface PathFlowMaterial {
+  material: PBRMetallicRoughnessMaterial;
+  /** Scrolls the chevrons. `speed` of 0 freezes them at a stable phase. */
+  advance: (nowMs: number, speed: number) => void;
+  /** Disposes the material AND the shared chevron texture, clearing the module
+   * cache. Unlike the procedural texture families — whose `familyCache`
+   * deliberately outlives a scene so a re-init reuses them — this texture must
+   * not: `advance` mutates its `uOffset` every frame, so a stale handle left
+   * behind by a renderer dispose→re-init would have the new scene writing into
+   * a texture belonging to the disposed one. */
+  dispose: () => void;
+}
+
+/** Chevrons per tile length. The u offset wraps on 1/CHEVRONS_PER_TILE so the
+ * march is seamless. */
+const CHEVRONS_PER_TILE = 2;
+
+/** Single shared chevron texture for the whole path network. */
+let pathFlowTexture: DynamicTexture | undefined;
+
+function createPathFlowTexture(scene: Scene): DynamicTexture {
+  if (pathFlowTexture) return pathFlowTexture;
+  const size = 128;
+  const texture = new DynamicTexture('terrarium.pbr.pathFlow.albedo', size, scene, false, Texture.TRILINEAR_SAMPLINGMODE);
+  const ctx = texture.getContext() as CanvasRenderingContext2D;
+  ctx.clearRect(0, 0, size, size);
+  // One chevron pointing toward +u (the quad's local +X, which each tile
+  // rotates onto its own flow direction). Drawn with a soft leading edge so it
+  // reads as a travelling glow rather than a hard UI arrow.
+  const mid = size / 2;
+  const gradient = ctx.createLinearGradient(0, 0, size, 0);
+  gradient.addColorStop(0, 'rgba(255,246,214,0)');
+  gradient.addColorStop(0.55, 'rgba(255,246,214,0.55)');
+  gradient.addColorStop(0.86, 'rgba(255,252,236,0.95)');
+  gradient.addColorStop(1, 'rgba(255,246,214,0)');
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  // Chevron: a thick ">" spanning the full v range, apex at the +u end.
+  const inset = size * 0.16;
+  const thickness = size * 0.3;
+  ctx.moveTo(inset, inset);
+  ctx.lineTo(size - inset, mid);
+  ctx.lineTo(inset, size - inset);
+  ctx.lineTo(inset + thickness, size - inset);
+  ctx.lineTo(size - inset - thickness * 0.72, mid);
+  ctx.lineTo(inset + thickness, inset);
+  ctx.closePath();
+  ctx.fill();
+  texture.update(false);
+  texture.hasAlpha = true;
+  texture.wrapU = Texture.WRAP_ADDRESSMODE;
+  texture.wrapV = Texture.CLAMP_ADDRESSMODE;
+  texture.uScale = CHEVRONS_PER_TILE;
+  pathFlowTexture = texture;
+  return texture;
+}
+
+export function createPathFlowMaterial(scene: Scene): PathFlowMaterial {
+  const texture = createPathFlowTexture(scene);
+  const material = new PBRMetallicRoughnessMaterial('terrarium.path.flow.mat', scene);
+  material.baseColor = new Color3(1, 0.95, 0.78);
+  material.baseTexture = texture;
+  material.emissiveColor = new Color3(0.5, 0.44, 0.3);
+  material.metallic = 0;
+  material.roughness = 0.5;
+  material.alpha = 0.62;
+  material.backFaceCulling = false;
+  material.transparencyMode = Material.MATERIAL_ALPHABLEND;
+  (material as unknown as { _useAlphaFromAlbedoTexture: boolean })._useAlphaFromAlbedoTexture = true;
+
+  const dispose = (): void => {
+    material.dispose();
+    texture.dispose();
+    pathFlowTexture = undefined;
+  };
+
+  const advance = (nowMs: number, speed: number): void => {
+    // Negative, because scrolling the texture window backwards moves the
+    // pattern forwards along +u (the tile's flow direction).
+    const cycle = 1 / CHEVRONS_PER_TILE;
+    const phase = speed === 0 ? 0 : (-(nowMs / 1000) * speed * cycle) % cycle;
+    texture.uOffset = phase;
+  };
+
+  return { material, advance, dispose };
 }
 
 /** Rounded stone habitat drum body — bevel-friendly warm stone/ceramic, dry
@@ -720,4 +840,5 @@ export function applyFoliageDetail(scene: Scene, material: PBRMetallicRoughnessM
  * runs (mirrors the _reset helpers in assets.ts/environment.ts). */
 export function _resetPbrMaterialsForTests(): void {
   familyCache.clear();
+  pathFlowTexture = undefined;
 }

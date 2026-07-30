@@ -14,10 +14,14 @@ import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGener
 import { createManifestMaterial, getManifestTexture } from './assets';
 import { GRID_SIZE, tileToWorld } from './coords';
 import { attachStandee } from './flatArt';
-import { GARDEN_PATH_TILES, NURSERY_TILE, SCENERY_PLACEMENTS } from './layout';
+import { createRoundedPrism } from './geometry';
+import { GARDEN_PATH_PIECES, PATH_DIRECTION_OFFSETS, NURSERY_TILE, SCENERY_PLACEMENTS, type PathPiece } from './layout';
+import { bodyRings, halfHeight, NURSERY_BODY } from './propDims';
+import type { MotionConfig } from './motion';
 import {
   applyFoliageDetail,
   applyRockDetail,
+  createPathFlowMaterial,
   createPathMaterial,
   createSoilMaterial,
   createWaterMaterial,
@@ -39,11 +43,27 @@ export interface GardenWorld {
   ground: Mesh;
   paths: Mesh[];
   scenery: Mesh[];
-  /** Advances animated water-accent ripple normal maps — call once per frame
-   * (wired from src/render/index.ts's render loop). */
-  update: (nowMs: number) => void;
+  /** Advances animated water-accent ripple normal maps and the garden path's
+   * conveyor-flow chevrons — call once per frame (wired from
+   * src/render/index.ts's render loop). Takes the MotionConfig because the
+   * conveyor has to respect the reduced-motion preference. */
+  update: (motion: MotionConfig, nowMs: number) => void;
   dispose: () => void;
 }
+
+/** One full grid tile — mirrors TILE_WORLD_SIZE in src/sim/grid.ts, which is
+ * private there (src/render/coords.ts mirrors the same constant for the
+ * inverse mapping). Path tiles are exactly tile-sized so adjacent treads abut
+ * with no gap. */
+const PATH_TILE_SIZE = 1;
+
+/** Width of the tread band inside a path tile, matching the 68/160 band every
+ * piece SVG in public/assets/paths/ is drawn with. The conveyor overlay is cut
+ * to this so the chevrons stay on the path. */
+const PATH_TREAD_WIDTH = (PATH_TILE_SIZE * 68) / 160;
+
+/** Chevron marches per second along a tile at full motion. */
+const PATH_FLOW_SPEED = 0.55;
 
 export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator): GardenWorld {
   const ground = MeshBuilder.CreateGround(
@@ -61,19 +81,69 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator)
   // See src/render/pbrMaterials.ts createSoilMaterial.
   ground.material = createSoilMaterial(scene);
 
-  // ONE shared path material for every tile (not one per tile — see
-  // createPathMaterial's doc comment) carrying C's manifest illustration
-  // plus a PBR detail pass.
-  const pathMaterial = createPathMaterial(scene, 'path.segment.straight', new Color3(0.62, 0.55, 0.42));
+  // Garden path. Piece type + rotation come from each tile's neighbours (see
+  // src/render/layout.ts's GARDEN_PATH_PIECES) rather than every tile being
+  // drawn as an unrotated straight run, which is what made corners, the
+  // Nursery junction and the dead ends all point the same way.
+  //
+  // One shared material PER PIECE TYPE (at most five), not per tile — tiles
+  // of the same type reuse the material and rotate their own mesh.
+  const pathMaterials = new Map<PathPiece, PBRMetallicRoughnessMaterial>();
+  const pathMaterialFor = (piece: PathPiece): PBRMetallicRoughnessMaterial => {
+    const cached = pathMaterials.get(piece);
+    if (cached) return cached;
+    const material = createPathMaterial(
+      scene,
+      `terrarium.path.${piece}.mat`,
+      `path.segment.${piece}`,
+      new Color3(0.62, 0.55, 0.42),
+    );
+    pathMaterials.set(piece, material);
+    return material;
+  };
+  // Conveyor flow overlay: one shared scrolling-chevron material (see
+  // createPathFlowMaterial) plus one thin quad per tile, each ROTATED so its
+  // local +X points the way Sprouts actually travel — outward from the Nursery
+  // toward the habitats. Because direction lives in the per-tile rotation, a
+  // single u offset animates the whole network correctly, including round the
+  // corners and through the junction; nothing scrolls in a global screen
+  // direction.
+  const pathFlow = createPathFlowMaterial(scene);
   const paths: Mesh[] = [];
-  for (const tile of GARDEN_PATH_TILES) {
+  for (const { tile, piece, quarterTurns, flowSegments } of GARDEN_PATH_PIECES) {
     const world = tileToWorld(tile);
-    const path = MeshBuilder.CreateGround(`terrarium.path.${tile.x}.${tile.z}`, { width: 0.92, height: 0.92 }, scene);
+    // A FULL tile wide (was 0.92): the piece art's arms run right to the
+    // canvas edge, so anything under 1.0 leaves a visible gap of bare soil at
+    // every tile join and the road reads as separated stepping stones.
+    const path = MeshBuilder.CreateGround(`terrarium.path.${tile.x}.${tile.z}`, { width: PATH_TILE_SIZE, height: PATH_TILE_SIZE }, scene);
     path.position.set(world.x, 0.01, world.z);
+    path.rotation.y = quarterTurns * (Math.PI / 2);
     path.receiveShadows = true;
-    path.material = pathMaterial;
+    path.material = pathMaterialFor(piece);
     path.isPickable = false;
+    path.metadata = { kind: 'path', tile, piece, quarterTurns };
     paths.push(path);
+
+    // One quad per HALF tile (arriving half + leaving half), each only as wide
+    // as the tread band. Half-tiles rather than one full-tile quad because a
+    // corner has no tread in the quadrant opposite its bend — a full-tile quad
+    // rotated to the outgoing direction spilled chevrons onto bare soil past
+    // every corner.
+    for (const segment of flowSegments) {
+      const step = PATH_DIRECTION_OFFSETS[segment.halfDirection];
+      const flow = MeshBuilder.CreateGround(
+        `terrarium.path.flow.${tile.x}.${tile.z}.${segment.halfDirection}`,
+        { width: PATH_TILE_SIZE / 2, height: PATH_TREAD_WIDTH },
+        scene,
+      );
+      flow.position.set(world.x + step.x * PATH_TILE_SIZE * 0.25, 0.02, world.z + step.z * PATH_TILE_SIZE * 0.25);
+      flow.rotation.y = segment.travelQuarterTurns * (Math.PI / 2);
+      flow.material = pathFlow.material;
+      flow.isPickable = false;
+      flow.receiveShadows = false;
+      flow.metadata = { kind: 'path.flow', tile, segment };
+      paths.push(flow);
+    }
   }
 
   const waterMaterials: WaterMaterial[] = [];
@@ -145,8 +215,24 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator)
   }
 
   const nurseryWorld = tileToWorld(NURSERY_TILE);
-  const nursery = MeshBuilder.CreateCylinder('terrarium.nursery', { height: 0.7, diameter: 1.6, tessellation: 24 }, scene);
-  nursery.position.set(nurseryWorld.x, 0.35, nurseryWorld.z);
+  // Bevelled mound rather than a bare 24-sided cylinder: rounded top rim,
+  // chamfered base, a wider foot with a shelf step, and a gentle taper — a
+  // two-tier "pot with a foot" silhouette in one mesh. Dimensions come from
+  // NURSERY_BODY (src/render/propDims.ts), which is also what the Sprout float
+  // height and the Pod standee's localY are derived from, so the top surface
+  // can't drift out of sync with the things that stand on it.
+  const nursery = createRoundedPrism(
+    'terrarium.nursery',
+    {
+      halfWidth: NURSERY_BODY.halfWidth,
+      halfDepth: NURSERY_BODY.halfDepth,
+      cornerRadius: NURSERY_BODY.cornerRadius,
+      radialSegments: NURSERY_BODY.radialSegments,
+      rings: bodyRings(NURSERY_BODY),
+    },
+    scene,
+  );
+  nursery.position.set(nurseryWorld.x, NURSERY_BODY.centreY, nurseryWorld.z);
   const nurseryFallback = new Color3(0.55, 0.4, 0.28);
   // Warm wood/soil-mound PBR body (src/render/pbrMaterials.ts
   // createWoodBodyMaterial) rather than a flat StandardMaterial fill.
@@ -156,25 +242,33 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator)
   shadowGenerator.addShadowCaster(nursery);
   // Pod illustration standing upright as a billboarded card, not lying flat
   // on top of the drum — see src/render/flatArt.ts's attachStandee doc
-  // comment. localY = drum half-height (0.35) + standee half-height (0.5).
+  // comment. localY = mound half-height + standee half-height, derived rather
+  // than hard-coded so it follows NURSERY_BODY.
+  const NURSERY_CAP_SIZE = 1.0;
   const nurseryCap = attachStandee(
     scene,
     nursery,
     'terrarium.nursery.cap',
     'structure.nursery.base',
     nurseryFallback,
-    1.0,
-    1.0,
-    0.85,
+    NURSERY_CAP_SIZE,
+    NURSERY_CAP_SIZE,
+    halfHeight(NURSERY_BODY),
   );
 
-  const update = (nowMs: number): void => {
+  const update = (motion: MotionConfig, nowMs: number): void => {
     for (const water of waterMaterials) water.update(nowMs);
+    // Reduced motion sets backgroundMotion to 0, which stops the conveyor
+    // dead rather than merely slowing it. The chevrons are directional by
+    // shape, so a frozen conveyor still tells the player which way traffic
+    // moves — the information survives, only the animation goes.
+    pathFlow.advance(nowMs, PATH_FLOW_SPEED * motion.backgroundMotion);
   };
 
   const dispose = (): void => {
     ground.dispose();
-    pathMaterial.dispose(); // one shared instance across every path tile — dispose once, not per-tile
+    for (const material of pathMaterials.values()) material.dispose(); // one shared instance per piece type, not per tile
+    pathFlow.dispose(); // material AND its shared chevron texture — see PathFlowMaterial.dispose
     for (const p of paths) p.dispose();
     for (const s of scenery) s.dispose();
     nurseryCap.mesh.dispose();

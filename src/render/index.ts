@@ -17,7 +17,7 @@ import { createGardenBackground, type GardenBackground } from './background';
 import { createGardenCamera, type GardenCamera } from './camera';
 import { createHabitatManager, type HabitatManager } from './habitats';
 import { createGardenLighting, type GardenLighting } from './lighting';
-import { getMotionConfig, prefersReducedMotion } from './motion';
+import { getMotionConfig, prefersReducedMotion, watchReducedMotion } from './motion';
 import { getQualityLevel, onQualityChange } from './quality';
 import { createSproutManager, type SproutManager } from './sprouts';
 import { installVisibilityThrottle } from './visibility';
@@ -78,6 +78,32 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
         const v = Vector3.Project(new Vector3(x, y, z), Matrix.Identity(), scene.getTransformMatrix(), vp);
         return v.asArray();
       },
+      // Mesh-name enumerator. Several QA questions ("is a settled Sprout's
+      // card bottom edge above the drum top?") need meshInfoDeep on a mesh
+      // whose name embeds a sim-generated id, so it can't be spelled out
+      // ahead of time — this lists what's actually in the scene so the
+      // follow-up inspection can target it.
+      meshNames: (filter?: string) =>
+        scene.meshes.map((m) => m.name).filter((n) => (filter ? n.includes(filter) : true)),
+      // Vertical extents of every mesh matching a name filter, plus the
+      // whole scene's triangle count — the two things an art pass needs to
+      // check "does this sit clear of that" and "did poly count blow up"
+      // without reading numbers off a screenshot.
+      extents: (filter: string) =>
+        scene.meshes
+          .filter((m) => m.name.includes(filter))
+          .map((m) => {
+            m.computeWorldMatrix(true);
+            const bb = m.getBoundingInfo().boundingBox;
+            return {
+              name: m.name,
+              minY: Number(bb.minimumWorld.y.toFixed(4)),
+              maxY: Number(bb.maximumWorld.y.toFixed(4)),
+              tris: m.getTotalIndices() / 3,
+            };
+          }),
+      sceneTriangles: () => scene.meshes.reduce((sum, m) => sum + m.getTotalIndices() / 3, 0),
+      fps: () => Number(engine.getFps().toFixed(1)),
       // Scene-graph inspector for diagnosing "mesh present but not visibly
       // rendering" bugs (missing vs. mispositioned vs. invisible vs. unlit)
       // without guessing from a screenshot alone.
@@ -173,21 +199,21 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
   lighting.setQuality(getQualityLevel());
   const stopQualityWatch = onQualityChange((level) => lighting.setQuality(level));
 
+  // Tracks the RESOLVED reduced-motion preference: the OS media query, plus
+  // the Settings panel's own toggle (reflected onto <html data-reduced-motion>
+  // by src/ui/prefs.ts). Previously this only watched the media query, so a
+  // player who turned "Reduced motion" on in-game still got the full ambient
+  // animation set — see watchReducedMotion's doc comment.
   let reducedMotion = prefersReducedMotion();
-  const mediaQuery =
-    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-      ? window.matchMedia('(prefers-reduced-motion: reduce)')
-      : undefined;
-  const handleMotionPrefChange = (): void => {
-    reducedMotion = mediaQuery?.matches ?? false;
-  };
-  mediaQuery?.addEventListener?.('change', handleMotionPrefChange);
+  const stopReducedMotionWatch = watchReducedMotion((reduced) => {
+    reducedMotion = reduced;
+  });
 
   const renderObserver = scene.onBeforeRenderObservable.add(() => {
     const motion = getMotionConfig(reducedMotion, getQualityLevel());
     background.update(motion);
     sprouts.update(motion, performance.now());
-    world.update(performance.now());
+    world.update(motion, performance.now());
   });
 
   // Subagent C's assets/manifest.json may not exist yet when this session
@@ -204,7 +230,7 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
   const dispose = (): void => {
     clearInterval(integrationInterval);
     scene.onBeforeRenderObservable.remove(renderObserver);
-    mediaQuery?.removeEventListener?.('change', handleMotionPrefChange);
+    stopReducedMotionWatch();
     stopQualityWatch();
     stopVisibilityThrottle();
     automation.dispose();

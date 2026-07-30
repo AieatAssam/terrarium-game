@@ -192,23 +192,57 @@ No new emissive usage was introduced by this pass's material work.
 
 ### Garden path (`createPathMaterial`, `src/render/world.ts`)
 - Physical character: satin-worn stone/soil tread.
-- Maps: Subagent C's manifest illustration (`path.segment.straight`) as
+- Maps: the piece's manifest illustration (`path.segment.<piece>`) as
   `baseTexture` (the actual path artwork/linework), with the `path` family's
   normal/AO/metallic-roughness layered on top for surface detail — 256px,
   40 worn-tread patches + 140 fine grit/pebble specks + grain.
-- **One shared material instance reused across every path tile** — the
-  brief explicitly calls out avoiding "one material per repeated object";
-  converting each tile to its own PBR material would have multiplied
-  shader/uniform cost for what is visually the same repeated surface (this
-  was flagged and fixed in an earlier pass — the original StandardMaterial
-  implementation *did* create one material per tile).
+- **One shared material instance PER PIECE TYPE** (at most five: straight /
+  corner / tee / cross / end), never per tile — the brief explicitly calls out
+  avoiding "one material per repeated object", and an earlier pass had to fix
+  exactly that (the original StandardMaterial implementation *did* create one
+  material per tile). Tiles of the same piece type reuse the material and
+  rotate their own mesh, so adding piece variety cost 4 extra materials, not
+  22. The shipped layout instantiates 4 (no `cross` tile exists).
+- **Wrap mode is CLAMP, not the Babylon default WRAP.** Bilinear sampling at
+  u/v = 0 or 1 otherwise blends in the OPPOSITE canvas edge. That is harmless
+  on a straight tile (both edges carry the same tread) but on a corner/tee/end
+  piece the opposite edges differ — tread against transparent surround — which
+  shows as a faint one-pixel fringe exactly along a tile join. The art is one
+  illustration per tile and never tiled, so clamping costs nothing.
 - Tiling fixed at 1 as part of the family's own generation this pass (no
   longer mutated onto a shared texture after construction — see "Procedural
   texture families" above).
 
+### Garden path conveyor flow (`createPathFlowMaterial`, `src/render/pbrMaterials.ts`)
+- Physical character: a travelling light marker riding OVER the tread —
+  warm cream chevrons with a soft leading edge, marching in the direction
+  Sprouts actually travel.
+- Maps: one 128px procedural chevron texture with a transparent surround,
+  `uScale` 1 (one chevron per half-tile quad). Emissive-led base colour, no
+  normal/AO/roughness pass.
+- **Documented stylised exception** to the "PBR detail pass on world geometry"
+  rule: this is not a physical surface, and layering the path family's bump
+  onto a moving overlay would read as the *ground* rippling. It remains a lit
+  `PBRMetallicRoughnessMaterial` (not `disableLighting`) so it still sits
+  inside the scene's warm key / cool fill rather than glowing flatly.
+- Perf: **one** material and **one** texture for the entire network. Direction
+  lives in each overlay quad's ROTATION, not in a per-tile material, so the
+  per-frame cost is two number writes (`texture.uOffset`) in the existing
+  `world.update` — no per-frame allocation, no per-tile material. 43 overlay
+  quads x 2 triangles = 86 triangles total.
+- Reduced motion sets the scroll rate to exactly 0 (`MotionConfig.backgroundMotion`),
+  freezing the chevrons at a stable phase; direction stays legible because the
+  chevrons are directional by shape. See `docs/ART_DIRECTION.md` §10.5.
+
 ### Habitat drum bodies (`createStoneBodyMaterial`, `src/render/habitats.ts`)
-- Physical character: rounded stone/ceramic, no razor-sharp edges (bevels
-  come from the existing rounded-cylinder geometry, unchanged this pass).
+- Physical character: rounded stone/ceramic, no razor-sharp edges. As of this
+  pass the bevels are REAL geometry, not an aspiration: the drums were
+  `CreateCylinder` at tessellation 6/8/28 (two of the three visibly faceted
+  prisms with sharp vertical edges) and are now `createRoundedPrism` bodies
+  with a rounded top rim, chamfered base and a wider foot with a shelf step.
+  See `docs/ART_DIRECTION.md` §11. The material recipe itself is unchanged —
+  but it now has curvature to catch light across, which is most of why the
+  stone reads better than it did.
 - Maps: shared `stone` family (tiling 3), tinted per-habitat via `baseColor`
   (Ember Nook warm red-brown, Dew Pond cool blue, Sunflower Meadow olive).
   256px, 70 macro chip blotches + 220 fine pore flecks + grain.
@@ -413,3 +447,79 @@ texture-creation-path bug. All materials above still function fully
 correctly without it (directional key + hemispheric fill carry the scene);
 only the ambient/ "faint global bounce" contribution IBL would add is
 absent on WebGPU until Babylon fixes this.
+
+---
+
+## Standee texture cropping: V-window sign error (fixed this pass)
+
+`attachStandee` (`src/render/flatArt.ts`) crops each standee card's UV to the
+source art's opaque-content bounding box, because the habitat/Nursery/automation
+illustrations are authored as bottom-anchored top-down decals with a lot of
+transparent margin. The crop's V window was computed with the **wrong sign** —
+`vOffset = 1 - bbox.maxV`, which is only correct if texture v runs bottom-up.
+
+It does not. Two independent facts settle it:
+
+1. `assets.ts` rasterizes into a `DynamicTexture` and calls
+   `texture.update(false)` — invertY = false — so the canvas is uploaded without
+   a vertical flip and **texture v = 0 samples the canvas's TOP row**.
+2. Independently confirmed in the running scene via the garden path's
+   orientation (see `docs/ART_DIRECTION.md` §10.3): same conclusion.
+
+Measured in the browser BEFORE the fix, the damage was severe and worst exactly
+where the player reported it (`__debug.contentBBox(key)`):
+
+| Key | Content occupies canvas rows | Card was sampling rows | Overlap |
+|---|---|---|---|
+| `habitat.dewPond.base` | 0.434 – 1.000 | 0.000 – 0.566 | 0.13 of canvas |
+| `habitat.emberNook.base` | 0.395 – 1.000 | 0.000 – 0.606 | 0.21 |
+| `habitat.sunflowerMeadow.base` | 0.356 – 1.000 | 0.000 – 0.645 | 0.29 |
+| `structure.nursery.base` | 0.273 – 1.000 | 0.000 – 0.727 | 0.45 |
+| `structure.gardenSlide.base` | 0.258 – 0.828 | 0.172 – 0.742 | 0.48 |
+| `structure.colourGate.base` | 0.172 – 0.805 | 0.195 – 0.828 | 0.61 |
+
+Most of every habitat symbol simply was not on the card — which is precisely the
+"the symbols above the habitats are clipped" report. The automation cards looked
+less broken only because their art happens to sit nearer the vertical centre of
+its canvas, where the sign error cancels.
+
+**Fix, two parts:**
+
+- The V window is now `[bbox.minV, bbox.maxV]`, expressed as a **negative**
+  `vScale` anchored at `maxV`. Negative because a plane's own v = 0 is at its
+  BOTTOM edge (`planeBuilder.js`) while texture v = 0 is the canvas TOP — a
+  positive scale would render the art upside down.
+- The card is anchored by its **bottom edge**, and that anchoring is recomputed
+  from the **post-crop** height. Callers now pass the local Y of the surface the
+  card stands on and `attachStandee` owns all the half-height arithmetic;
+  previously each caller pre-computed a centre height from the ORIGINAL requested
+  height, which stopped being the card's real half-height the moment the content
+  crop resized it. A caller can no longer get this wrong.
+- A 0.02 `STANDEE_GROUND_CLEARANCE` keeps the bottom edge just clear of the face
+  it stands on rather than exactly coplanar with it, which z-fights along the
+  whole bottom row and itself reads as a frayed/clipped edge.
+
+Verified in-browser after the fix: all six cards measure exactly 0.02 above their
+surface, and each renders its complete illustration upright (checked against the
+source SVG opened directly in the browser).
+
+## Procedural geometry (`src/render/geometry.ts`)
+
+Not a material, but it is what the material recipes above are now applied to, and
+it has its own performance envelope.
+
+| Prop | Triangles | Notes |
+|---|---|---|
+| Habitat drum (Ember Nook, Sunflower Meadow) | 960 each | 48 radial segments |
+| Habitat drum (Dew Pond) | 1120 | 56 radial segments |
+| Nursery mound | 960 | 48 radial segments |
+| Automation plinth | 720 each | 32 radial segments, rounded-rect section |
+| Conveyor overlay | 2 each (86 total) | 43 half-tile quads |
+
+Whole-scene triangle count went **696 → 5936** and measured FPS stayed at **60**
+on the dev machine (WebGPU). That is a ~8.5x increase on a budget that was
+trivially small to begin with; 5936 triangles is still far below anything a
+mainstream laptop would notice, and the win in silhouette quality is large.
+Textures, materials and draw-call structure are unchanged apart from the 4 path
+piece materials and 1 conveyor material — the geometry pass added no new texture
+memory at all.

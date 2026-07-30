@@ -14,7 +14,15 @@ import type { Scene } from '@babylonjs/core/scene';
 
 import { gridCenterWorld } from './coords';
 
-const ISO_ALPHA = -Math.PI / 2 - Math.PI / 4; // classic 3/4 iso-ish yaw
+/** Classic 3/4 iso-ish yaw. Exported because it is a standing INVARIANT that
+ * other render modules depend on: no input path ever rotates alpha (pan and
+ * zoom only — see the note below on deliberately not calling attachControl),
+ * so the world direction "toward the viewer" is fixed for the whole session.
+ * src/render/sprouts.ts uses that to park settled Sprouts on the camera-facing
+ * side of a habitat's standee card, and relies on the same invariant for
+ * billboard lighting stability. */
+export const GARDEN_CAMERA_ALPHA = -Math.PI / 2 - Math.PI / 4;
+const ISO_ALPHA = GARDEN_CAMERA_ALPHA;
 const ISO_BETA = Math.PI / 2.9; // ~62deg from vertical
 const DEFAULT_RADIUS = 19;
 const MIN_RADIUS = 7;
