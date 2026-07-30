@@ -12,8 +12,9 @@ import { getEffectiveHabitatCapacity } from '../data/habitats';
 import type { EventBus } from '../events/bus';
 import type { GameEvent } from '../events/types';
 import { computeOfflineProgress } from '../data/offlineProgress';
+import { getNurseryRhythm } from '../data/spawning';
 import { clearSave, loadGame, saveGame } from '../persistence';
-import { HABITAT_TILES, NURSERY_TILE } from './layout';
+import { habitatAtTile, NURSERY_TILE, type ColourGateLane, type ColourGateLanes } from './layout';
 import { advanceClock, createSimClock } from './loop';
 import { createInitialSimState, type SimState } from './state';
 import { colourGateLockReason } from '../data/unlocks';
@@ -21,7 +22,10 @@ import {
   adjudicatePlacement,
   checkAchievements,
   colourGateBehavioralState,
+  colourGateLaneNote,
+  countWaitingSprouts,
   purchaseUpgrade as purchaseUpgradeSystem,
+  setColourGateLane as setColourGateLaneSystem,
   TICK_SYSTEMS,
 } from './systems';
 import { runTick } from './tick';
@@ -39,6 +43,16 @@ export interface SimRuntime {
    * SimState directly.
    */
   getUpgradeLockReason: (upgradeId: UpgradeId) => string | null;
+  /**
+   * The Colour Gate's control surface, exposed as plain functions for exactly
+   * the reason `purchaseUpgrade` is (see docs/ARCHITECTURE.md): the GameEvent
+   * union is sim-originated announcements, there is no player-intent event, and
+   * the UI must never read or write SimState directly. Changing a lane emits
+   * `automation:colourGateRuleChanged`, so everything else still learns about it
+   * over the bus in the normal way.
+   */
+  getColourGateRule: () => { lanes: ColourGateLanes; notes: Record<ColourGateLane, string | null> };
+  setColourGateLane: (lane: ColourGateLane, sproutType: SproutTypeId | null) => void;
   resetSave: () => Promise<void>;
   getState: () => SimState;
   dispose: () => void;
@@ -78,13 +92,6 @@ function automationTargetsOf(state: SimState): Partial<Record<AutomationId, Habi
     if (instance.targetHabitatId) targets[instance.automationId] = instance.targetHabitatId;
   }
   return targets;
-}
-
-/** Which habitat occupies `tile`, if any. Used to reconstruct where a restored settled Sprout lives, since SimState records only its tile. */
-function habitatAtTile(tile: { x: number; z: number }): HabitatId | undefined {
-  return (Object.keys(HABITAT_TILES) as HabitatId[]).find(
-    (id) => HABITAT_TILES[id].x === tile.x && HABITAT_TILES[id].z === tile.z,
-  );
 }
 
 /** Applies a batch of events to `state` via the achievement checker, emits every event (originals + any achievement unlocks) through `emit` in order, and returns the final state. Centralizing this means achievements react identically regardless of whether the batch came from a tick or an immediate player action. */
@@ -145,8 +152,14 @@ export async function startSimRuntime(
           settled: s.state === 'settled',
           // SproutInstance has no explicit "which home" field — a settled
           // Sprout's habitat is implied by the tile it was moved to.
-          habitatId: s.state === 'settled' ? habitatAtTile(s.tile) : undefined,
+          habitatId: s.state === 'settled' ? (habitatAtTile(s.tile) ?? undefined) : undefined,
         })),
+        colourGateLanes: { ...state.colourGateLanes },
+        // Recomputed here rather than read from `nurseryWaitingCount` (which is
+        // the last-ANNOUNCED figure, deliberately reset by the v2→v3 migration)
+        // so a returning garden's note is accurate from the first frame.
+        nurseryRhythm: getNurseryRhythm(countWaitingSprouts(state)),
+        waitingSproutCount: countWaitingSprouts(state),
       },
     });
     if (offline.dewdropsEarned > 0) {
@@ -237,6 +250,17 @@ export async function startSimRuntime(
     },
     getUpgradeLockReason: (upgradeId) =>
       upgradeId === 'colourGateUnlock' ? colourGateLockReason(colourGateBehavioralState(state)) : null,
+    getColourGateRule: () => ({
+      lanes: { ...state.colourGateLanes },
+      notes: {
+        west: colourGateLaneNote(state.colourGateLanes, 'west'),
+        east: colourGateLaneNote(state.colourGateLanes, 'east'),
+      },
+    }),
+    setColourGateLane: (lane, sproutType) => {
+      const result = setColourGateLaneSystem(state, lane, sproutType);
+      state = commit(emit, result.state, result.events);
+    },
     resetSave: async () => {
       await clearSave();
     },

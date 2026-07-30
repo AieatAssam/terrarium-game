@@ -32,6 +32,20 @@ function tileToWorld(tile: TileCoord): { x: number; y: number; z: number }; // s
 ```
 Nursery, habitats, paths, slides, gates all place via `TileCoord`. Automation routing in sim references tiles only — no screen-space math in sim.
 
+`src/sim/layout.ts` owns every gameplay tile position and the garden's topology:
+a shared **trunk** north out of the Nursery (8,8) → Garden Slide (8,7) → Colour
+Gate (8,6), which is a genuine **fork** — a west lane to Ember Nook (4,4) and an
+east lane to Dew Pond (12,4) — plus an untouched southern run from the Nursery to
+Sunflower Meadow (8,13) that serves as the hand-carried fallback route.
+`COLOUR_GATE_LANE_HABITATS` maps each lane to the home it leads to; that mapping
+is a fact about the garden's shape and is never player-editable (the player
+chooses which *kind* each lane invites, not where a lane goes).
+`src/render/layout.ts` re-exports all of it and derives the painted path tiles
+from the same four runs, so the road on screen and the routes in sim can never
+disagree. `tileDistance(Nursery, Gate) + tileDistance(Gate, home)` equals
+`tileDistance(Nursery, home)` for both northern homes, so travelling *through*
+the Gate costs a Sprout nothing.
+
 ## Core string ids (do not rename)
 
 ```ts
@@ -70,6 +84,8 @@ type GameEvent =
   | { type: 'sprout:transportCompleted'; sproutId: string; automationId: AutomationId; instanceId: string }
   | { type: 'automation:built'; automationId: AutomationId; instanceId: string; targetHabitatId?: HabitatId }
   | { type: 'automation:unlocked'; automationId: AutomationId }
+  | { type: 'automation:colourGateRuleChanged'; lanes: { west: SproutTypeId | null; east: SproutTypeId | null } }
+  | { type: 'nursery:rhythmChanged'; rhythm: 'lively' | 'easing' | 'resting'; waitingCount: number }
   | { type: 'upgrade:purchased'; upgradeId: UpgradeId; level: number }
   | { type: 'achievement:unlocked'; achievementId: AchievementId }
   | { type: 'journal:entryDiscovered'; sproutType: SproutTypeId }
@@ -83,6 +99,11 @@ interface SaveLoadedSnapshot {
   unlockedAchievements: AchievementId[];
   journalDiscovered: SproutTypeId[];
   fullHabitats?: HabitatId[];
+  automationTargets?: Partial<Record<AutomationId, HabitatId>>;
+  sprouts?: { id: string; sproutType: SproutTypeId; tile: TileCoord; settled: boolean; habitatId?: HabitatId }[];
+  colourGateLanes?: { west: SproutTypeId | null; east: SproutTypeId | null };
+  nurseryRhythm?: 'lively' | 'easing' | 'resting';
+  waitingSproutCount?: number;
 }
 ```
 
@@ -122,7 +143,45 @@ downstream could not do its job without them. See the doc comments in
   *reaches* capacity, so after a reload nothing downstream would otherwise know a
   home is already full. It is carried in the snapshot rather than by replaying
   `habitat:full` on load, because replaying it would also replay its SFX and
-  celebratory reactions.
+  celebratory reactions. `snapshot.sprouts` and `snapshot.automationTargets`
+  followed for the same reason. `snapshot.colourGateLanes`,
+  `snapshot.nurseryRhythm` and `snapshot.waitingSproutCount` are the same pattern
+  again for the two members added below — both announce only on *change*, so
+  without them a reload would show a Colour Gate with no rule and a
+  lively-looking Nursery that is in fact resting under a crowd.
+
+### Members added when the Colour Gate was given a real fork to govern
+
+- **`automation:colourGateRuleChanged`** — the Gate's active rule: which Sprout
+  kind each lane of the fork currently invites (`null` = nobody). GameRules §9.4
+  requires the Gate to "visibly show its active rule", and that rule is
+  player-authored state living in `SimState.colourGateLanes`. Both the Gate's own
+  panel (`src/ui/components/colourGate.ts`) and the structure in the world
+  (`src/render/automation.ts`, which lights a lamp over each lane in that lane's
+  colour) must show it without reaching into SimState — which this document
+  forbids — so it is announced rather than read. Emitted on every player change
+  **and** once when the Gate is built, carrying its safe default (Ember west, Dew
+  east), so a listener that subscribed before the build still learns the rule.
+  The *inbound* half — the player setting a lane — stays a plain function on
+  `SimRuntime` (`setColourGateLane`), exactly like `purchaseUpgrade`: the union
+  is sim-originated announcements and holds no player-intent members.
+- **`nursery:rhythmChanged`** — the Nursery pod changed how briskly it opens,
+  because of how many Sprouts are waiting for a home
+  (`src/data/spawning.ts`'s "Nursery rhythm" section). Pods used to spawn on a
+  fixed cadence regardless, so once all three habitats filled every further
+  Sprout became permanent clutter — a measured save held 768 live Sprouts, which
+  GameRules §7.4 (no visual chaos or selection frustration) and §9.7 (a
+  bottleneck must be kind and legible, shown through world state, with a simple
+  recommended solution) both rule out. The pod now eases off and finally rests;
+  nothing is ever deleted, and it resumes the moment the player settles Sprouts
+  or buys Habitat Room. This event is how the UI knows to show that in warm
+  language (`src/ui/components/nurseryNote.ts`). Fired on a change of rhythm,
+  **and** on a change of `waitingCount` while the pod is not `'lively'` — the
+  note quotes that number, and announcing on rhythm alone froze it at whatever it
+  was when the pod dozed off while the real figure kept dropping (a stale number
+  is worse than no number; caught in browser QA against a real 814-Sprout
+  garden). While lively the note is hidden, so ordinary spawns do not
+  re-announce.
 
 ## Simulation boundary
 
@@ -169,3 +228,9 @@ Original Web Audio synthesis only (no external license risk). F implements a sma
 ## Save format
 
 Versioned JSON object in IndexedDB, top-level `{ version: number, sim: SimState, meta: { lastSavedAt: number } }`. Any sim state shape change bumps `version`; A owns migration stub (no-op for v1).
+
+Current version is **3**. v2→v3 backfills `SimState.colourGateLanes` (the Colour
+Gate's lane rule, defaulting to the safe recommendation) and
+`SimState.nurseryRhythm` (defaulting to `'lively'`, which the very next tick
+re-derives from how many Sprouts are actually waiting — so a returning,
+overcrowded garden correctly settles into `'resting'` immediately).

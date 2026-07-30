@@ -63,6 +63,7 @@ export const UI_CSS = /* css */ `
 .tt-onboarding,
 .tt-panel-overlay,
 .tt-toast-region,
+.tt-nursery-note,
 .tt-debug-panel {
   pointer-events: auto;
 }
@@ -172,6 +173,14 @@ export const UI_CSS = /* css */ `
   border: 2px solid transparent;
   background: var(--tt-panel-raised);
   color: var(--tt-text);
+}
+
+/* The "display: flex" above beats the hidden attribute's UA "display: none", so
+   a nav entry gated on ownership (the Colour Gate) stayed visible even with
+   hidden set — caught in browser QA, where the Gate's button sat in the bar of a
+   garden that did not own one. */
+.tt-nav-btn[hidden] {
+  display: none;
 }
 
 .tt-nav-btn[aria-pressed='true'],
@@ -695,6 +704,170 @@ export const UI_CSS = /* css */ `
   .tt-nav-btn {
     min-width: var(--tt-touch);
   }
+}
+
+/* ---------- Nursery note (GameRules §9.7 bottleneck, §11 recovery copy) ----- */
+/* Sits directly under the Dewdrop counter, so the reason the garden has gone
+   quiet is right where the player is already looking. Warm amber, deliberately
+   never red — this is an invitation to tidy up, not an alarm. */
+
+.tt-nursery-note {
+  position: fixed;
+  top: 74px;
+  left: 14px;
+  z-index: 19;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  background: var(--tt-panel);
+  border: 2px solid var(--tt-accent);
+  border-left-width: 6px;
+  border-radius: var(--tt-radius-md);
+  padding: 10px 14px;
+  box-shadow: 0 4px 14px var(--tt-shadow);
+}
+
+.tt-nursery-note[hidden] {
+  display: none;
+}
+
+.tt-nursery-note-title {
+  font-size: 0.95rem;
+  color: var(--tt-accent);
+}
+
+.tt-nursery-note-body {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--tt-text-muted);
+}
+
+.tt-nursery-note-action {
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: var(--tt-radius-sm);
+  border: 2px solid var(--tt-accent);
+  background: transparent;
+  color: var(--tt-accent);
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+.tt-nursery-note-action:hover {
+  background: var(--tt-accent);
+  color: #2b1a05;
+}
+
+/* ---------- Colour Gate panel (GameRules §9.4 pictorial controls) ---------- */
+/* Everything the player touches here is a big picture with a name under it.
+   No text field, no dropdown, no logic — a lane card and a row of portraits. */
+
+.tt-gate-intro {
+  margin: 0 0 14px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--tt-text-muted);
+}
+
+.tt-gate-lanes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.tt-gate-lane {
+  flex: 1 1 260px;
+  background: var(--tt-panel-raised);
+  border: 2px solid var(--tt-border);
+  border-radius: var(--tt-radius-md);
+  padding: 14px;
+}
+
+/* A lane whose card names a kind that lane's home does not welcome. Amber, and
+   paired with the note text below it — never colour alone. */
+.tt-gate-lane.is-mismatched {
+  border-color: var(--tt-accent);
+}
+
+.tt-gate-lane h3 {
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+}
+
+.tt-gate-summary {
+  margin: 0 0 12px;
+  font-size: 0.85rem;
+  color: var(--tt-text-muted);
+}
+
+.tt-gate-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tt-gate-choice {
+  flex: 1 1 84px;
+  min-width: 84px;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 6px;
+  background: var(--tt-panel);
+  border: 2px solid var(--tt-border);
+  border-radius: var(--tt-radius-md);
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+
+.tt-gate-choice:hover {
+  transform: translateY(-2px);
+}
+
+/* Chosen state carries THREE signals at once — border, background lift and a
+   raised weight — so it never depends on colour perception alone. */
+.tt-gate-choice.is-active {
+  border-color: var(--tt-accent);
+  background: var(--tt-panel-raised);
+  box-shadow: inset 0 0 0 2px var(--tt-accent);
+}
+
+.tt-gate-choice-art {
+  width: 44px;
+  height: 44px;
+  display: block;
+}
+
+.tt-gate-choice-art svg {
+  width: 100%;
+  height: 100%;
+}
+
+.tt-gate-choice-art--none {
+  color: var(--tt-text-muted);
+}
+
+.tt-gate-choice-name {
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.25;
+}
+
+.tt-gate-note {
+  margin: 12px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--tt-accent);
+}
+
+.tt-gate-note[hidden] {
+  display: none;
 }
 `;
 

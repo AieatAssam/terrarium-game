@@ -16,7 +16,7 @@ import {
   GARDEN_PATH_TILES,
   pathDistancesFromNursery,
 } from '../../src/render/layout';
-import { HABITAT_TILES, NURSERY_TILE } from '../../src/sim/layout';
+import { COLOUR_GATE_TILE, GARDEN_SLIDE_TILE, HABITAT_TILES, NURSERY_TILE } from '../../src/sim/layout';
 
 /** Art-space direction bits, mirroring PATH_DIRECTIONS in layout.ts. */
 const UP = 1 << 0;
@@ -66,10 +66,12 @@ describe('GARDEN_PATH_PIECES', () => {
   it('produces real piece variety, not an all-straight network', () => {
     const counts = new Map<string, number>();
     for (const { piece } of GARDEN_PATH_PIECES) counts.set(piece, (counts.get(piece) ?? 0) + 1);
-    // Layout: Nursery (8,8) with runs to (4,4), (12,4) and (8,13) — a junction
-    // at the Nursery, two corners where the runs turn, three dead ends at the
-    // habitats, straights everywhere else. No cross piece is used by this
-    // network (the cross art exists for future layouts).
+    // Layout: a trunk north out of the Nursery (8,8) to the Colour Gate (8,6),
+    // which forks west to (4,4) and east to (12,4), plus the untouched southern
+    // run to (8,13) — one junction at the Gate, two corners where the lanes
+    // turn north, three dead ends at the habitats, straights everywhere else.
+    // No cross piece is used by this network (the cross art exists for future
+    // layouts).
     expect(counts.get('tee')).toBe(1);
     expect(counts.get('corner')).toBe(2);
     expect(counts.get('end')).toBe(3);
@@ -77,9 +79,31 @@ describe('GARDEN_PATH_PIECES', () => {
     expect(counts.get('cross')).toBeUndefined();
   });
 
-  it('puts the junction on the Nursery tile and a dead end on each habitat tile', () => {
+  it('puts the one junction on the Colour Gate tile — the fork the Gate exists to govern', () => {
+    // This is the whole point of the topology redesign. The previous layout
+    // unioned three Nursery-rooted runs, whose only shared tile was the Nursery
+    // itself, so the network fanned out immediately and contained no fork
+    // anywhere a Colour Gate could make a decision (GameRules §9.4). The
+    // junction now sits exactly where the Gate stands.
     const at = (x: number, z: number) => GARDEN_PATH_PIECES.find((p) => p.tile.x === x && p.tile.z === z);
-    expect(at(NURSERY_TILE.x, NURSERY_TILE.z)?.piece).toBe('tee');
+    const gate = at(COLOUR_GATE_TILE.x, COLOUR_GATE_TILE.z);
+    expect(gate?.piece).toBe('tee');
+    // ...and it is a real three-way: trunk in from the south, one lane out west,
+    // one out east.
+    const arms = new Set(gate?.flowSegments.map((s) => s.halfDirection));
+    expect(arms).toEqual(new Set([1 /* west lane */, 3 /* east lane */, 2 /* trunk, inbound */]));
+  });
+
+  it('runs the trunk through the Garden Slide and the Nursery, and dead-ends at each habitat', () => {
+    const at = (x: number, z: number) => GARDEN_PATH_PIECES.find((p) => p.tile.x === x && p.tile.z === z);
+    // Both automations stand ON the path now — GameRules §9.2 requires Phase 1
+    // paths to connect Nursery, Slide, Gate and Habitat, and both site tiles
+    // used to sit in open grass.
+    expect(at(GARDEN_SLIDE_TILE.x, GARDEN_SLIDE_TILE.z)).toBeDefined();
+    expect(at(COLOUR_GATE_TILE.x, COLOUR_GATE_TILE.z)).toBeDefined();
+    // The Nursery is a plain straight now: the trunk leaves north, the Meadow
+    // run leaves south, and nothing else touches it.
+    expect(at(NURSERY_TILE.x, NURSERY_TILE.z)?.piece).toBe('straight');
     for (const tile of Object.values(HABITAT_TILES)) {
       expect(at(tile.x, tile.z)?.piece).toBe('end');
     }
@@ -87,15 +111,15 @@ describe('GARDEN_PATH_PIECES', () => {
 
   it('orients the two corners so their arms point at their actual neighbours', () => {
     const at = (x: number, z: number) => GARDEN_PATH_PIECES.find((p) => p.tile.x === x && p.tile.z === z);
-    // (4,8) joins the z=8 run (neighbour +X) to the x=4 run (neighbour -Z).
-    // The corner art opens up+right, art-up is world -Z and art-right is world
-    // +X, so this one needs no rotation at all.
-    // (12,8) joins the z=8 run (neighbour -X) to the x=12 run (-Z): one turn.
-    // These exact values were checked against a browser render — the first
-    // attempt used a mirrored art→world mapping, which reported 1 and 2 here
-    // and drew both corners with an arm pointing away from the road.
-    expect(at(4, 8)).toMatchObject({ piece: 'corner', quarterTurns: 0 });
-    expect(at(12, 8)).toMatchObject({ piece: 'corner', quarterTurns: 1 });
+    // (4,6) joins the west lane (neighbour +X) to the x=4 run up to Ember Nook
+    // (neighbour -Z). The corner art opens up+right, art-up is world -Z and
+    // art-right is world +X, so this one needs no rotation at all.
+    // (12,6) joins the east lane (neighbour -X) to the x=12 run up to Dew Pond
+    // (-Z): one turn. The art→world mapping these depend on was checked against
+    // a browser render — a mirrored mapping reports 1 and 2 here and draws both
+    // corners with an arm pointing away from the road.
+    expect(at(4, 6)).toMatchObject({ piece: 'corner', quarterTurns: 0 });
+    expect(at(12, 6)).toMatchObject({ piece: 'corner', quarterTurns: 1 });
   });
 
   it('keeps every reported rotation consistent with the tile it sits on', () => {

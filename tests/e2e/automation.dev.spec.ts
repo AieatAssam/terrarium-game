@@ -30,13 +30,13 @@ test.describe('Garden Slide: unlock + auto-build at 20 correct placements', () =
     await waitForDevHooks(page);
     await installBusRecorder(page, ['automation:unlocked', 'automation:built', 'achievement:unlocked']);
 
-    // 3 habitats x base capacity 6 = 18 total settled slots — strictly less
-    // than the 20-placement unlock threshold (see docs/GAME_DESIGN.md
-    // "Capacity pressure -> habitatCapacity upgrade": hitting capacity and
-    // needing this upgrade to keep going is intentional). Buy one level of
-    // Habitat Capacity first (100 Dewdrops -> +3 capacity/habitat = 9 each,
-    // 27 total) so 20 correct placements are actually reachable, exactly
-    // like a real player would need to.
+    // Base capacity now covers the unlock threshold on its own (3 habitats x
+    // BASE_CAPACITY, versus 20 required) — it deliberately did not before, and
+    // the Garden Slide was unreachable by play as a result. Buying a level of
+    // Habitat Capacity here is therefore no longer strictly required; it is
+    // kept because it exercises a real purchase through the Upgrades panel on
+    // the way to the unlock, and it leaves headroom so a single refused
+    // placement can't strand the run.
     await grantDewdrops(page, 3); // +150
     await buyUpgradeViaUI(page, 'Habitat Capacity');
     await expect
@@ -77,7 +77,7 @@ test.describe('Colour Gate: behavioral purchase gate', () => {
     await waitForDevHooks(page);
     await installBusRecorder(page, ['automation:built', 'upgrade:purchased']);
 
-    // Affordable (450+) but Garden Slide doesn't exist yet, so the
+    // Affordable but Garden Slide doesn't exist yet, so the
     // behavioral gate in purchaseUpgrade (src/sim/systems.ts) must reject
     // this silently: no charge, no level change, no automation:built.
     await grantDewdrops(page, 10); // +500
@@ -131,10 +131,13 @@ test.describe('Colour Gate: behavioral purchase gate', () => {
       await page.click('[data-testid="debug-spawn-sun"]');
     }
 
-    // 4) Afford Colour Gate (450) and buy it via the real Upgrades panel.
-    await grantDewdrops(page, 10); // +500, on top of whatever's left from step 1's spend
+    // 4) Afford the Colour Gate and buy it via the real Upgrades panel.
+    // Derived from the price so a repricing can't quietly make this grant
+    // insufficient and the purchase silently fail: each click grants 50, and
+    // the +2 is headroom over step 1's spend.
+    await grantDewdrops(page, Math.ceil(UPGRADES.colourGateUnlock.costForLevel(1) / 50) + 2);
     const before = await getUiState(page);
-    expect(before.dewdropTotal).toBeGreaterThanOrEqual(450);
+    expect(before.dewdropTotal).toBeGreaterThanOrEqual(UPGRADES.colourGateUnlock.costForLevel(1));
 
     await buyUpgradeViaUI(page, 'Colour Gate');
 
@@ -143,14 +146,17 @@ test.describe('Colour Gate: behavioral purchase gate', () => {
     const after = await getUiState(page);
     expect(after.upgradeLevels.colourGateUnlock).toBe(1);
     expect(after.lastBuiltAutomation).toBe('colourGate');
-    // Assert the exact -450 charge via the emitted event rather than a
+    // Assert the exact charge via the emitted event rather than a
     // before/after dewdropTotal diff: with 20 Sprouts already settled and
     // dewdropSystem accruing income every tick in the background (including
     // during the real-time waits above), a simple subtraction would be
     // flaky — dewdrops earned between the `before` snapshot and the actual
     // deduction are a real, expected source of drift, not a bug.
     const events = await getRecordedEvents(page);
-    expect(events.some((e) => e.type === 'currency:dewdropsChanged' && e.delta === -450)).toBe(true);
+    // Derived from the upgrade table, not a literal: this assertion silently
+    // went stale when the Colour Gate was repriced during an economy rebalance.
+    const gateCost = UPGRADES.colourGateUnlock.costForLevel(1);
+    expect(events.some((e) => e.type === 'currency:dewdropsChanged' && e.delta === -gateCost)).toBe(true);
     expect(events.some((e) => e.type === 'automation:built' && e.automationId === 'colourGate')).toBe(true);
 
     console_.assertNone();

@@ -6,7 +6,9 @@
 // something stable.
 
 import type { AchievementId, AutomationId, HabitatId, SproutTypeId, UpgradeId } from '../core/ids';
+import type { NurseryRhythm } from '../data/spawning';
 import type { TileCoord } from './grid';
+import { defaultColourGateLanes, type ColourGateLanes } from './layout';
 
 export type SproutInstanceState = 'idle' | 'walking' | 'transporting' | 'settled';
 
@@ -59,9 +61,33 @@ export interface SimState {
   correctPlacementCount: number;
   /** Fractional Dewdrop remainder per habitat not yet flushed into `dewdrops` as a whole unit. */
   habitatDewdropFraction: Partial<Record<HabitatId, number>>;
+  /**
+   * The Colour Gate's active rule: which Sprout kind each lane of the fork
+   * currently invites (`null` = "nobody yet"). Set by the player through the
+   * Gate's pictorial lane cards; the lane→habitat mapping itself is a fixed
+   * fact about the garden's shape (src/sim/layout.ts) and is never edited.
+   * Lives here rather than on the AutomationInstance so the rule survives even
+   * if the instance is ever rebuilt, and so it is trivially serializable.
+   */
+  colourGateLanes: ColourGateLanes;
+  /**
+   * The Nursery pod's last-announced rhythm, and the waiting-Sprout count that
+   * went with it. Both are purely derived from how many Sprouts are waiting
+   * (see src/data/spawning.ts) — they are stored only so
+   * `nursery:rhythmChanged` fires once per CHANGE instead of every tick, and so
+   * a restored save knows whether it is already resting.
+   *
+   * The count is cached as well as the rhythm because the player-facing note
+   * quotes it ("814 little ones are waiting"). Announcing only on a change of
+   * RHYTHM left that number frozen at whatever it was when the pod went to
+   * sleep, while the real figure kept dropping as the player settled Sprouts —
+   * a stale number is worse than no number (caught in browser QA).
+   */
+  nurseryRhythm: NurseryRhythm;
+  nurseryWaitingCount: number;
 }
 
-export const SIM_SHAPE_VERSION = 2;
+export const SIM_SHAPE_VERSION = 3;
 
 export function createInitialSimState(seed: number): SimState {
   return {
@@ -79,5 +105,8 @@ export function createInitialSimState(seed: number): SimState {
     spawnAccumulatorMs: 0,
     correctPlacementCount: 0,
     habitatDewdropFraction: {},
+    colourGateLanes: defaultColourGateLanes(),
+    nurseryRhythm: 'lively',
+    nurseryWaitingCount: 0,
   };
 }

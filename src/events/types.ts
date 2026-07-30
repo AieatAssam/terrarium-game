@@ -63,6 +63,39 @@ export type GameEvent =
       targetHabitatId?: HabitatId;
     }
   | { type: 'automation:unlocked'; automationId: AutomationId }
+  | {
+      /**
+       * The Colour Gate's active rule changed — which Sprout kind each lane of
+       * the fork now invites, `null` meaning "nobody yet".
+       *
+       * GameRules §9.4 requires the Gate to "visibly show its active rule", and
+       * the rule is player-authored state that lives in SimState. Both the
+       * Gate's own panel (src/ui) and the structure in the world
+       * (src/render/automation.ts) have to be able to show it without reaching
+       * into SimState, which docs/CONTRACTS.md forbids — hence an event rather
+       * than a getter. Emitted on every change AND once when the Gate is first
+       * built (with its safe default: Ember west, Dew east), so a listener that
+       * subscribed before the build still learns the starting rule.
+       */
+      type: 'automation:colourGateRuleChanged';
+      lanes: { west: SproutTypeId | null; east: SproutTypeId | null };
+    }
+  | {
+      /**
+       * The Nursery pod changed how briskly it opens, because of how many
+       * Sprouts are currently waiting for a home (see src/data/spawning.ts).
+       *
+       * `'easing'` and `'resting'` are the world-state signal GameRules §9.7
+       * asks a bottleneck to be shown through, and the UI turns them into the
+       * warm, concrete recovery copy §11 requires ("settle a few, or add
+       * Habitat Room"). Fired only when the rhythm actually CHANGES, never per
+       * tick — `waitingCount` rides along so the copy can be specific about how
+       * many little ones are queueing.
+       */
+      type: 'nursery:rhythmChanged';
+      rhythm: 'lively' | 'easing' | 'resting';
+      waitingCount: number;
+    }
   | { type: 'upgrade:purchased'; upgradeId: UpgradeId; level: number }
   | { type: 'achievement:unlocked'; achievementId: AchievementId }
   | { type: 'journal:entryDiscovered'; sproutType: SproutTypeId }
@@ -132,6 +165,18 @@ export type GameEvent =
           settled: boolean;
           habitatId?: HabitatId;
         }[];
+        /**
+         * The Colour Gate's restored rule, and the Nursery's restored rhythm.
+         * Both are live SimState the UI has to show, and both are announced
+         * elsewhere only on CHANGE — so without them in the snapshot a reload
+         * would show a Gate with no rule and a lively-looking Nursery that is
+         * in fact resting under a queue of waiting Sprouts. Optional so
+         * consumers/tests written before them still typecheck.
+         */
+        colourGateLanes?: { west: SproutTypeId | null; east: SproutTypeId | null };
+        nurseryRhythm?: 'lively' | 'easing' | 'resting';
+        /** How many Sprouts are waiting for a home right now, to go with `nurseryRhythm`. */
+        waitingSproutCount?: number;
       };
     }
   | { type: 'save:written' };

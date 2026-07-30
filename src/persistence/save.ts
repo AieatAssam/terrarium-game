@@ -3,10 +3,11 @@
 // SimState shape together; any SimState shape change bumps it, and a new
 // case is added to migrateEnvelope. v1 migration is a no-op stub.
 
-import type { SimState } from '../sim/state';
+import { defaultColourGateLanes } from '../sim/layout';
+import { createInitialSimState, type SimState } from '../sim/state';
 import { idbDelete, idbGet, idbSet } from './db';
 
-export const CURRENT_SAVE_VERSION = 2;
+export const CURRENT_SAVE_VERSION = 3;
 
 const SAVE_KEY = 'default';
 
@@ -30,7 +31,39 @@ export async function saveGame(sim: SimState, now: number = Date.now()): Promise
 export async function loadGame(): Promise<SaveEnvelope | undefined> {
   const raw = await idbGet<SaveEnvelope>(SAVE_KEY);
   if (!raw) return undefined;
-  return migrateEnvelope(raw);
+  return normaliseEnvelope(migrateEnvelope(raw));
+}
+
+/**
+ * Last line of defence after migration: fill in any field the current SimState
+ * shape requires but this particular envelope does not carry.
+ *
+ * Migration handles the honest case — a save written by an older version, whose
+ * `version` says exactly which upgrade to run. This handles the dishonest one: a
+ * save LABELLED with the current version that nonetheless lacks a current field.
+ * That is not hypothetical. It happened during development the moment
+ * `CURRENT_SAVE_VERSION` was bumped in one edit and the matching migration case
+ * landed in the next: the running dev build loaded a v2 save through the
+ * not-yet-written case, fell through to the "unrecognised version" branch, and
+ * then autosaved the result back out stamped as v3 with the new fields missing.
+ * From then on no migration would ever touch it again, and the Colour Gate came
+ * back with an empty rule that routed nobody (found in browser QA).
+ *
+ * It is deliberately a narrow, additive backfill rather than a deep merge over
+ * defaults: it can only ADD a missing key, never overwrite a real saved value,
+ * so it cannot silently paper over a migration that is genuinely wrong.
+ */
+function normaliseEnvelope(envelope: SaveEnvelope): SaveEnvelope {
+  const sim = envelope.sim as Partial<SimState> | undefined;
+  if (!sim) return envelope;
+  const defaults = createInitialSimState(sim.rngSeed ?? 0);
+  let patched: SimState | null = null;
+  for (const key of Object.keys(defaults) as Array<keyof SimState>) {
+    if (sim[key] !== undefined) continue;
+    patched ??= { ...(sim as SimState) };
+    (patched as unknown as Record<string, unknown>)[key] = defaults[key];
+  }
+  return patched ? { ...envelope, sim: patched } : envelope;
 }
 
 export async function clearSave(): Promise<void> {
@@ -68,7 +101,28 @@ function migrateEnvelope(envelope: SaveEnvelope): SaveEnvelope {
       };
       return migrateEnvelope({ ...envelope, version: 2, sim: migratedSim });
     }
-    case 2:
+    case 2: {
+      // v2 predates the Colour Gate's player-set lane rule and the Nursery's
+      // rhythm bookkeeping. Backfill both with the same values a fresh garden
+      // starts from — the safe recommended lane cards, and a lively pod, which
+      // the very next tick re-derives from how many Sprouts are actually
+      // waiting (so a returning 700-Sprout garden correctly settles into
+      // 'resting' immediately rather than being told it is lively).
+      const sim = envelope.sim as unknown as SimState &
+        Partial<Pick<SimState, 'colourGateLanes' | 'nurseryRhythm' | 'nurseryWaitingCount'>>;
+      const migratedSim: SimState = {
+        ...sim,
+        shapeVersion: 3,
+        colourGateLanes: sim.colourGateLanes ?? defaultColourGateLanes(),
+        nurseryRhythm: sim.nurseryRhythm ?? 'lively',
+        // Deliberately 0, not the real count: it is the LAST-ANNOUNCED figure,
+        // so leaving it at zero guarantees the first tick after a load announces
+        // the true crowd size instead of assuming the player already knows it.
+        nurseryWaitingCount: sim.nurseryWaitingCount ?? 0,
+      };
+      return migrateEnvelope({ ...envelope, version: 3, sim: migratedSim });
+    }
+    case 3:
       return envelope;
     default:
       // Unknown version (older pre-migration save, or a newer one this build

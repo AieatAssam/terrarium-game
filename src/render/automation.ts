@@ -48,12 +48,19 @@ import { GARDEN_CAMERA_ALPHA } from './camera';
 import { tileToWorld, type TileCoord } from './coords';
 import { attachStandee, type FlatCap } from './flatArt';
 import { createRoundedPrism } from './geometry';
-import { AUTOMATION_SITE_TILES, HABITAT_TILES, isReservedTile } from './layout';
+import {
+  AUTOMATION_SITE_TILES,
+  COLOUR_GATE_LANE_HABITATS,
+  COLOUR_GATE_LANE_LIST,
+  HABITAT_TILES,
+  isReservedTile,
+} from './layout';
 import { prefersReducedMotion, watchReducedMotion } from './motion';
 import { createPaintedMetalMaterial } from './pbrMaterials';
 import { bodyRings, halfHeight, AUTOMATION_BODIES, AUTOMATION_PREVIEW_BODY, type PropBody } from './propDims';
+import { SPROUT_TYPES } from '../data/sproutTypes';
 import type { EventBus } from '../events/bus';
-import type { AutomationId, HabitatId } from '../core/ids';
+import type { AutomationId, HabitatId, SproutTypeId } from '../core/ids';
 
 const SITE_FALLBACK_COLOR: Record<AutomationId, Color3> = {
   gardenSlide: new Color3(0.55, 0.45, 0.7),
@@ -181,6 +188,36 @@ export interface AutomationManager {
   previewAt: (automationId: AutomationId, tile: TileCoord, valid: boolean) => void;
   clearPreview: () => void;
   dispose: () => void;
+}
+
+// ---------------------------------------------------------------------------
+// The Colour Gate's active rule, shown in the world
+// ---------------------------------------------------------------------------
+// GameRules §9.4 requires the Gate to "visibly show its active rule" — not only
+// inside its panel. The Gate stands on the fork with a lane running west and a
+// lane running east, so it carries one glowing lamp over each lane, lit in that
+// lane's chosen Sprout colour.
+//
+// Colour is not the only signal (§4.1, §11 accessibility): an unset or refused
+// lane's lamp goes dark and small, so "this lane is carrying somebody" versus
+// "this lane is quiet" reads by brightness and size as well as hue, and the
+// panel states the same rule in words. The lamps are placed on the world ±X
+// axis (not the camera's lateral axis) because west and east are facts about
+// the garden, not about where the camera happens to be.
+
+/** How far out along world ±X the lane lamps sit from the Gate's centre. */
+const LANE_LAMP_OFFSET = 0.44;
+/** Nudge toward the viewer so a lamp is never lost behind the billboarded card. */
+const LANE_LAMP_FORWARD = 0.3;
+const LANE_LAMP_DIAMETER = 0.19;
+/** Tint for a lane nobody is assigned to — a lamp that is simply not lit. */
+const LANE_LAMP_UNSET = new Color3(0.4, 0.44, 0.42);
+
+function laneColour(sproutType: SproutTypeId | null): Color3 {
+  if (!sproutType) return LANE_LAMP_UNSET.clone();
+  const hex = SPROUT_TYPES[sproutType]?.primaryColor;
+  const parsed = hex && /^#[0-9a-f]{6}$/i.test(hex) ? Color3.FromHexString(hex) : null;
+  return parsed ?? LANE_LAMP_UNSET.clone();
 }
 
 /**
@@ -321,12 +358,80 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     };
   }
 
+  // --- Colour Gate lane lamps -------------------------------------------------
+  // Built once, on the Gate's own plinth, and simply left dark until a rule
+  // arrives. `automation:colourGateRuleChanged` fires when the Gate is built
+  // (with its default rule) and on every player change, and `save:loaded`
+  // carries the restored rule — so these are correct in all three cases.
+  const gateSite = sites.colourGate;
+  const laneLamps = {} as Record<(typeof COLOUR_GATE_LANE_LIST)[number], { mesh: Mesh; material: PBRMetallicRoughnessMaterial }>;
+  if (gateSite) {
+    for (const lane of COLOUR_GATE_LANE_LIST) {
+      const sign = lane === 'west' ? -1 : 1;
+      const mesh = MeshBuilder.CreateSphere(
+        `terrarium.automation.colourGate.lane.${lane}`,
+        { diameter: LANE_LAMP_DIAMETER, segments: 10 },
+        scene,
+      );
+      mesh.parent = gateSite.mesh;
+      mesh.isPickable = false;
+      mesh.position.set(
+        sign * LANE_LAMP_OFFSET + VIEWER_X * LANE_LAMP_FORWARD,
+        gateSite.beadLocalY,
+        VIEWER_Z * LANE_LAMP_FORWARD,
+      );
+      const material = createPaintedMetalMaterial(scene, `terrarium.automation.colourGate.lane.${lane}.mat`, LANE_LAMP_UNSET.clone());
+      material.emissiveColor = LANE_LAMP_UNSET.scale(0.15);
+      mesh.material = material;
+      mesh.scaling.setAll(0.7); // dim + small until a kind is assigned
+      laneLamps[lane] = { mesh, material };
+    }
+  }
+
   // Habitats known to be at capacity. Kept as a set rather than resolved
   // eagerly onto each site because `habitat:full` routinely fires BEFORE the
   // Garden Slide exists: the Slide unlocks at 20 correct manual placements,
   // which at base capacity means a habitat has already filled and reported it.
   // Seeded on load from `save:loaded`, since `habitat:full` never replays.
   const fullHabitats = new Set<HabitatId>();
+
+  /** The Gate's rule as last announced, so a lamp can be re-evaluated when a
+   * home fills or frees up without waiting for the rule itself to change. */
+  let gateLanes: { west: SproutTypeId | null; east: SproutTypeId | null } = { west: null, east: null };
+
+  /**
+   * Lights each lane lamp for what that lane is actually DOING right now, in
+   * three readable states — GameRules §9.4 wants the active rule visible, and
+   * §9.7 wants a blockage shown through world state rather than left to a panel:
+   *
+   *   quiet   — no kind assigned: small and unlit.
+   *   waiting — a kind is assigned but nobody is going that way, because the
+   *             lane's home is full or because that home is not a home for that
+   *             kind at all. Warm amber (never red: §11), full size.
+   *   sending — the lane is carrying somebody: lit in that kind's own colour.
+   *
+   * Size and brightness carry the distinction as well as hue, so the three
+   * states stay apart without colour vision.
+   */
+  const refreshLaneLamps = (): void => {
+    for (const lane of COLOUR_GATE_LANE_LIST) {
+      const lamp = laneLamps[lane];
+      if (!lamp) continue;
+      const assigned = gateLanes[lane];
+      const home = COLOUR_GATE_LANE_HABITATS[lane];
+      const welcome = assigned ? SPROUT_TYPES[assigned]?.habitatId === home : false;
+      const waiting = assigned !== null && (!welcome || fullHabitats.has(home));
+      const colour = waiting ? BLOCKED_GLOW.clone() : laneColour(assigned);
+      lamp.material.baseColor.copyFrom(colour);
+      lamp.material.emissiveColor.copyFrom(colour.scale(assigned ? 0.75 : 0.15));
+      lamp.mesh.scaling.setAll(assigned ? 1 : 0.7);
+    }
+  };
+
+  const applyGateRule = (lanes: { west: SproutTypeId | null; east: SproutTypeId | null }): void => {
+    gateLanes = { ...lanes };
+    refreshLaneLamps();
+  };
 
   const markBuilt = (id: AutomationId, targetHabitatId: HabitatId | null): void => {
     const site = sites[id];
@@ -345,6 +450,8 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
   const unsubscribers = [
     bus.subscribe('automation:built', (e) => markBuilt(e.automationId, e.targetHabitatId ?? null)),
 
+    bus.subscribe('automation:colourGateRuleChanged', (e) => applyGateRule(e.lanes)),
+
     // A restored save replays no `automation:built` — runtime.ts emits only
     // `save:loaded` with a snapshot — so without this an already-built Slide
     // came back as a translucent "not yet built" ghost after every reload, and
@@ -355,6 +462,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       // Targets first, then fullHabitats above, so a garden that was jammed
       // when the player left still reads as jammed when they return.
       for (const id of e.snapshot.unlockedAutomations) markBuilt(id, targets[id] ?? null);
+      if (e.snapshot.colourGateLanes) applyGateRule(e.snapshot.colourGateLanes);
     }),
 
     bus.subscribe('sprout:transportStarted', (e) => {
@@ -384,6 +492,9 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       for (const site of Object.values(sites)) {
         if (site.targetHabitatId === e.habitatId) site.destinationFull = true;
       }
+      // The Colour Gate has no single `targetHabitatId` — it routes per lane, so
+      // its congestion lives on the lamps rather than on the structure.
+      refreshLaneLamps();
     }),
 
     // More room means the queue can move again. Phase 1 habitats never lose a
@@ -392,6 +503,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       if (e.upgradeId !== 'habitatCapacity') return;
       fullHabitats.clear();
       for (const site of Object.values(sites)) site.destinationFull = false;
+      refreshLaneLamps();
     }),
   ];
 
@@ -564,8 +676,9 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     scene.onBeforeRenderObservable.remove(activityObserver);
     stopReducedMotionWatch();
     clearPreview();
+    for (const lamp of Object.values(laneLamps)) lamp.material.dispose(); // meshes are children of the Gate, disposed below
     for (const site of Object.values(sites)) {
-      site.mesh.dispose(); // recursively disposes the cap + every bead child mesh too
+      site.mesh.dispose(); // recursively disposes the cap + every bead + lane lamp child mesh too
       site.material.dispose();
       site.bodyMaterial.dispose();
       site.beadMaterial.dispose();

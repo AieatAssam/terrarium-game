@@ -11,11 +11,27 @@
 
 import type { TileCoord } from '../sim/grid';
 import { GRID_SIZE, tileToWorld } from '../sim/grid';
-import { AUTOMATION_SITE_TILES, HABITAT_TILES, NURSERY_TILE } from '../sim/layout';
+import {
+  AUTOMATION_SITE_TILES,
+  COLOUR_GATE_LANE_HABITATS,
+  COLOUR_GATE_LANE_LIST,
+  COLOUR_GATE_TILE,
+  GARDEN_SLIDE_TILE,
+  HABITAT_TILES,
+  NURSERY_TILE,
+} from '../sim/layout';
 
-export { AUTOMATION_SITE_TILES, HABITAT_TILES, NURSERY_TILE };
+export {
+  AUTOMATION_SITE_TILES,
+  COLOUR_GATE_LANE_HABITATS,
+  COLOUR_GATE_LANE_LIST,
+  COLOUR_GATE_TILE,
+  GARDEN_SLIDE_TILE,
+  HABITAT_TILES,
+  NURSERY_TILE,
+};
 
-/** Straight-line (Manhattan step) path tiles from the Nursery to one habitat, inclusive of both ends. */
+/** Straight-line (Manhattan step) path tiles between two points, inclusive of both ends. */
 function pathBetween(from: TileCoord, to: TileCoord): TileCoord[] {
   const tiles: TileCoord[] = [];
   let x = from.x;
@@ -32,11 +48,36 @@ function pathBetween(from: TileCoord, to: TileCoord): TileCoord[] {
   return tiles;
 }
 
+/**
+ * The painted garden path network, as the union of four runs (see the topology
+ * diagram in src/sim/layout.ts):
+ *
+ *   1. the shared TRUNK, Nursery -> Colour Gate, with the Garden Slide on it;
+ *   2. the Gate's WEST lane, Gate -> Ember Nook;
+ *   3. the Gate's EAST lane, Gate -> Dew Pond;
+ *   4. the untouched southern run, Nursery -> Sunflower Meadow (the fallback /
+ *      hand-carried route, which deliberately does NOT pass the Gate).
+ *
+ * Runs 2 and 3 start at the GATE, not at the Nursery — that is the whole point
+ * of the redesign. Unioning three Nursery-rooted runs (the previous shape) gave
+ * a network whose only shared tile was the Nursery, i.e. no fork anywhere for
+ * the Colour Gate to govern.
+ *
+ * Because `pathBetween` walks x before z, run 2 leaves the Gate westward along
+ * z=6 and only then turns north at x=4 (and run 3 mirrors it) — so the two lanes
+ * genuinely leave the fork sideways, which is what makes the decision readable
+ * from the garden camera.
+ */
 export const GARDEN_PATH_TILES: TileCoord[] = (() => {
+  const runs: TileCoord[][] = [
+    pathBetween(NURSERY_TILE, COLOUR_GATE_TILE),
+    ...COLOUR_GATE_LANE_LIST.map((lane) => pathBetween(COLOUR_GATE_TILE, HABITAT_TILES[COLOUR_GATE_LANE_HABITATS[lane]])),
+    pathBetween(NURSERY_TILE, HABITAT_TILES.sunflowerMeadow),
+  ];
   const seen = new Set<string>();
   const tiles: TileCoord[] = [];
-  for (const habitatTile of Object.values(HABITAT_TILES)) {
-    for (const tile of pathBetween(NURSERY_TILE, habitatTile)) {
+  for (const run of runs) {
+    for (const tile of run) {
       const key = `${tile.x},${tile.z}`;
       if (!seen.has(key)) {
         seen.add(key);
@@ -54,13 +95,13 @@ function tileKey(tile: TileCoord): string {
 // ---------------------------------------------------------------------------
 // Garden path piece typing
 // ---------------------------------------------------------------------------
-// GARDEN_PATH_TILES above is the UNION of three Manhattan runs out of the
-// Nursery, so the network genuinely contains corners, a junction and dead
-// ends: with NURSERY_TILE (8,8) and habitats at (4,4)/(12,4)/(8,13) it is a
-// horizontal run along z=8 from x=4..12, vertical runs at x=4 and x=12 up to
-// z=4, and a vertical run at x=8 down to z=13. The first render pass drew
-// EVERY tile with the single `path.segment.straight` key at zero rotation, so
-// corners, the junction and the dead ends all rendered as straight runs
+// GARDEN_PATH_TILES above is the UNION of four Manhattan runs (trunk, two Gate
+// lanes, southern Meadow run), so the network genuinely contains corners, a
+// fork and dead ends: a trunk at x=8 from z=8 up to z=6, a horizontal run along
+// z=6 from x=4..12 forking at the Gate tile (8,6), vertical runs at x=4 and
+// x=12 up to z=4, and a vertical run at x=8 down to z=13. The first render pass
+// drew EVERY tile with the single `path.segment.straight` key at zero rotation,
+// so corners, the junction and the dead ends all rendered as straight runs
 // pointing the same way — the road just stopped mattering at every turn.
 //
 // Piece type and orientation are derived here from each tile's four
@@ -143,11 +184,18 @@ export interface PathTilePiece {
   flowDirection: number;
   /**
    * The conveyor overlay for this tile, as HALF-tile segments. A tile gets one
-   * segment for the half traffic arrives across and one for the half it leaves
+   * segment for the half traffic arrives across and one for EACH half it leaves
    * across, so a corner's chevrons follow the bend and — crucially — nothing is
    * drawn over the quadrant a corner has no tread in. A single full-tile quad
    * rotated to the outgoing direction spilled chevrons onto bare soil past
    * every corner (seen in browser QA).
+   *
+   * "Each half it leaves across" is load-bearing now that the network has a
+   * genuine fork: the Colour Gate's tile leaves in TWO directions (west lane and
+   * east lane), and the Nursery's leaves north up the trunk and south toward the
+   * Sunflower Meadow. With only the single primary `flowDirection` drawn, one
+   * whole branch of every junction read as unmarked ground and the fork did not
+   * look like a fork at all — GameRules §9.2 requires paths to show direction.
    *
    * Along a straight run the two halves are collinear and share the animation
    * phase, so the march is continuous from tile to tile.
@@ -216,25 +264,42 @@ export function pathDistancesFromNursery(): Map<string, number> {
 }
 
 /**
- * Which way traffic flows across a tile: outward, away from the Nursery.
+ * Every direction traffic leaves this tile in — i.e. toward a neighbour FURTHER
+ * from the Nursery along the path graph. Usually one; two at the Nursery (trunk
+ * north, Meadow run south) and two at the Colour Gate's fork (west lane, east
+ * lane). Empty at a dead end, which has no outward neighbour at all.
+ */
+function outwardDirectionsFor(tile: TileCoord, connectionMask: number, distance: Map<string, number>): number[] {
+  const here = distance.get(tileKey(tile));
+  if (here === undefined) return [];
+  const out: number[] = [];
+  for (let d = 0; d < 4; d++) {
+    if (!(connectionMask & (1 << d))) continue;
+    const there = distance.get(tileKey({ x: tile.x + PATH_DIRECTION_OFFSETS[d].x, z: tile.z + PATH_DIRECTION_OFFSETS[d].z }));
+    if (there !== undefined && there > here) out.push(d);
+  }
+  return out;
+}
+
+/**
+ * The tile's PRIMARY flow direction: outward, away from the Nursery.
  *
  * A dead end (a habitat tile) has no neighbour further out, so it keeps
  * travelling in the direction it was already heading — the conveyor should
  * point INTO the habitat, not turn round. A fan-out junction has several
- * outward neighbours and only one overlay quad, so it deterministically takes
- * the first in PATH_DIRECTION_OFFSETS order (in the shipped layout that tile is the
- * Nursery's own, completely hidden under the mound).
+ * outward neighbours and deterministically takes the first in
+ * PATH_DIRECTION_OFFSETS order; every one of them still gets its own conveyor
+ * segment (see `outwardDirectionsFor` and PathTilePiece.flowSegments), so
+ * nothing is lost by that choice — it only decides which arm the tile's single
+ * `flowDirection` field names.
  */
 function flowDirectionFor(tile: TileCoord, connectionMask: number, distance: Map<string, number>): number {
   const here = distance.get(tileKey(tile));
   const neighbourDistance = (d: number): number | undefined =>
     distance.get(tileKey({ x: tile.x + PATH_DIRECTION_OFFSETS[d].x, z: tile.z + PATH_DIRECTION_OFFSETS[d].z }));
   if (here !== undefined) {
-    for (let d = 0; d < 4; d++) {
-      if (!(connectionMask & (1 << d))) continue;
-      const there = neighbourDistance(d);
-      if (there !== undefined && there > here) return d;
-    }
+    const outward = outwardDirectionsFor(tile, connectionMask, distance);
+    if (outward.length > 0) return outward[0];
     for (let d = 0; d < 4; d++) {
       if (!(connectionMask & (1 << d))) continue;
       const there = neighbourDistance(d);
@@ -272,11 +337,17 @@ export const GARDEN_PATH_PIECES: PathTilePiece[] = (() => {
     }
     const flowDirection = flowDirectionFor(tile, connectionMask, distance);
     const inbound = inboundDirectionFor(tile, connectionMask, distance);
-    const flowSegments: PathFlowSegment[] = [
+    // One leaving half per outward arm, so a fork is chevroned down BOTH lanes.
+    // A dead end has no outward neighbour and falls back to its primary
+    // direction, which continues into the habitat rather than doubling back.
+    const outward = outwardDirectionsFor(tile, connectionMask, distance);
+    const leaving = outward.length > 0 ? outward : [flowDirection];
+    const flowSegments: PathFlowSegment[] = leaving.map((d) => ({
       // Leaving half: covers centre → outgoing edge, travelling outward.
-      { halfDirection: flowDirection, travelQuarterTurns: (flowDirection + 1) % 4 },
-    ];
-    if (inbound !== null && inbound !== flowDirection) {
+      halfDirection: d,
+      travelQuarterTurns: (d + 1) % 4,
+    }));
+    if (inbound !== null && !leaving.includes(inbound)) {
       // Arriving half: covers centre → the edge traffic came in across, and
       // travel there runs from that edge toward the centre — the OPPOSITE of
       // the direction the inbound neighbour lies in.

@@ -210,6 +210,149 @@ opens) around minute 6–8, well before the 15–25 minute target; the rest of
 that window is about affording its 450-Dewdrop cost, not waiting on the
 condition.
 
+### Garden topology: the trunk and the fork
+
+The Colour Gate needs somewhere to *be* a gate. The first layout gave each
+habitat its own straight run out of the Nursery, so the three routes shared
+exactly one tile — the Nursery itself — and then fanned out immediately. There
+was no junction anywhere in the garden, so there was nothing for a routing
+helper to govern; and both automation site tiles sat in open grass, off every
+path, which GameRules §9.2 explicitly rules out.
+
+The garden now has a short shared **trunk** ending in a real **fork**:
+
+```
+              Ember Nook (4,4)                    Dew Pond (12,4)
+                    |                                   |
+                  (4,5)                               (12,5)
+                    |                                   |
+   (4,6)--(5,6)--(6,6)--(7,6)--[ COLOUR GATE 8,6 ]--(9,6)--(10,6)--(11,6)--(12,6)
+                                        |
+                                [ GARDEN SLIDE 8,7 ]
+                                        |
+                                  Nursery (8,8)
+                                        |
+                                (8,9) ... (8,12)
+                                        |
+                              Sunflower Meadow (8,13)
+```
+
+Why this shape:
+
+- **Two homes at the same z make a natural two-way decision.** Ember Nook is
+  west, Dew Pond is east, and a Sprout leaving the Gate visibly turns left or
+  right. That turn *is* the Gate's decision, made legible without a single word
+  of UI.
+- **The Slide sits on the trunk, before the fork.** It is the earlier, simpler
+  helper — one destination, no choice — and it is physically upstream of the
+  thing that adds choice. The order on the ground matches the order in which the
+  player meets them (§9.6's complexity curve, stages 1 → 3).
+- **The southern run is untouched.** Sunflower Meadow leaves the Nursery
+  directly and never passes the Gate, so it stays the hand-carried route and the
+  fallback the Colour Gate's non-matches fall back onto — plus the Nursery's own
+  waiting area.
+- **Travelling through the Gate is free.** `tileDistance(Nursery, Gate) +
+  tileDistance(Gate, home)` equals `tileDistance(Nursery, home)` (2 + 6 = 8) for
+  both northern homes, so a Gate delivery takes the same time as the old direct
+  ride. If a future layout breaks that, Gate routes silently become a penalty —
+  it is asserted in `tests/unit/sim.colourGate.test.ts`.
+
+### The Colour Gate's rule
+
+**"This garden sign guides one kind of Sprout down the right path."** (§9.4)
+
+The whole control is two large picture cards, one per lane, each naming which
+kind of Sprout that lane invites — or nobody. Choosing is one tap on a portrait.
+There is no boolean logic, no condition syntax and no numeric entry (§9.4,
+§6.4), and the words "filter" and "splitter" appear nowhere (§2.1).
+
+A matching Sprout **physically passes through the Gate**, in two legs: up the
+trunk from the Nursery to the Gate tile, a beat at the signpost while the Gate
+reads it, then down its lane to its home. Both legs travel painted path tiles.
+The beat is one sim tick — without it the arrival and the departure land in the
+same event batch, the Sprout never visibly stops, and the decision becomes
+invisible.
+
+Everything else falls back to the waiting area it is already standing in: the
+Gate simply does not call it forward. Three cases, all kind, all legible:
+
+| Case | What happens | Why not otherwise |
+|---|---|---|
+| A kind on no lane card (Sun, Star) | Waits by the pods for the player; the southern run stays hand-carried | Star is deliberately never offered as a lane choice — automating it away would rob the player of the rare-reveal moment (§6.5, §7.2) |
+| A lane card naming a kind that lane's home does not welcome | The Gate declines, and the card says why in garden language | Carrying them there would get them turned away and bounced back — an endless shuttle. §5.3's friendly retry is for a *player's* drop, not a machine's loop |
+| A lane whose home is currently full | They wait, exactly as the Garden Slide already waits | Forcing a rejected delivery is neither kind nor useful |
+
+A Sprout that reaches the Gate and can no longer go on — its home filled while it
+was travelling, or the player changed the rule mid-ride — stands at the signpost
+as an ordinary idle Sprout. Still pickable, still counted as waiting, never lost,
+and re-checked every tick so it moves on by itself the moment the way is clear.
+
+A newly built Gate opens with the safe recommended rule (Ember west, Dew east)
+per §9.1, so it works immediately rather than arriving blank and reading as
+broken.
+
+### Nursery rhythm: why Sprouts stop accumulating
+
+Three habitats cap at 8 each — 24 settled slots — while the pod used to open on
+a fixed cadence forever. Once every home filled, every further Sprout became
+permanent clutter waiting at the Nursery; a measured save held **768** live
+Sprouts. That is neither the kind, legible bottleneck §9.7 asks for nor free of
+the "visual chaos or selection frustration" §7.4 forbids.
+
+The pod now reads the room. With `waiting` = Sprouts still looking for a home
+(idle at the Nursery, or paused at the Gate's signpost):
+
+| Waiting | Rhythm | Pod interval |
+|---|---|---|
+| 0–6 | lively | normal |
+| 7–11 | easing | stretches smoothly, up to 6× |
+| 12+ | resting | the pod dozes; nothing spawns |
+
+The four properties this has to hold simultaneously, each pinned by a test in
+`tests/unit/sim.nurseryRhythm.test.ts`:
+
+1. **Bounded.** That's the bug. 120,000 ticks of a completely full, unattended
+   garden never exceeds the rest threshold.
+2. **Nothing is ever deleted.** §7.4 forbids despawning for player inaction, so
+   the cap comes from *not spawning*, never from removing. Sprout population is
+   monotonically non-decreasing.
+3. **No punishment, no stall.** The spawn accumulator is clamped while resting,
+   so a garden that rested for forty pod-intervals owes exactly *one* pod on
+   recovery, not forty — tidying up must not immediately produce a bigger mess.
+   Recovery is always available: settle Sprouts by hand, or buy Habitat Room.
+   Settled Sprouts keep earning Dewdrops throughout, so the means to buy room is
+   always accumulating.
+4. **The player is told.** `nursery:rhythmChanged` drives a warm note beside the
+   Dewdrop counter (`src/ui/components/nurseryNote.ts`) naming how many little
+   ones are waiting, promising nobody is going anywhere, and offering the two
+   real ways out with a button straight to Upgrades — §9.7's "simple recommended
+   solution", in §11's concrete, friendly voice. The count is re-announced as it
+   shrinks: announcing on a change of *rhythm* alone froze the quoted figure at
+   whatever it was when the pod dozed off, while the real one kept dropping as
+   the player settled Sprouts. A stale number is worse than no number.
+
+The note reads, at rest:
+
+> **The nursery is having a rest.**
+> 809 little ones are waiting for somewhere to live, so the pod is dozing rather
+> than adding to the crowd. Nobody is going anywhere — settle some of them, or
+> clear a little more room in the habitats, and it will wake up straight away.
+> **[ Find more room ]**
+
+and, while merely easing:
+
+> **The nursery is taking its time.**
+> 8 little ones are still looking for a home, so the pod has slowed to a gentle
+> rhythm. Settle a few into their habitats and it will pick right back up.
+
+The ramp matters as much as the cap: a pod that goes straight from normal to
+stopped reads as a bug, whereas one that visibly slows down first is the
+world-state warning §9.7 asks for. The ease threshold (6) also sits comfortably
+above the Colour Gate's own unlock condition (a pile of 3 unsorted Sprouts), so
+easing can never throttle the automation chain out of reach — the same class of
+coupling that already bit once between habitat capacity and the Garden Slide
+threshold.
+
 ### Income & affordability by minute ~20 (projection)
 
 Using a simple linear-ramp estimate — average settled Sprout count rising

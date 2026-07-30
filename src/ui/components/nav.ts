@@ -13,6 +13,13 @@ export interface NavItem {
   iconHtml: () => string;
   isOpen: () => boolean;
   open: (trigger?: HTMLElement) => void;
+  /**
+   * Whether this entry should be in the bar at all right now. Omitted means
+   * "always". Used by the Colour Gate, which the player does not own until they
+   * buy it — GameRules §2.2 forbids introducing a mechanic before its moment,
+   * and a permanently dead button in the nav is exactly that.
+   */
+  isAvailable?: () => boolean;
 }
 
 export interface NavHandle {
@@ -54,8 +61,12 @@ export function createNav(items: NavItem[]): NavHandle {
       const open = item.isOpen();
       button.setAttribute('aria-pressed', String(open));
       button.setAttribute('aria-expanded', String(open));
+      // `hidden` (not just display:none) so the button leaves the tab order
+      // entirely while its feature is not yet owned.
+      button.hidden = item.isAvailable ? !item.isAvailable() : false;
     }
   }
+  syncPressedStates();
   const interval = window.setInterval(syncPressedStates, 200);
 
   return {

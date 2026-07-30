@@ -51,6 +51,14 @@ const ui = mountUI(document.body, bus, {
     void simRuntimePromise.then((sim) => sim.purchaseUpgrade(upgradeId));
   },
   getUpgradeLockReason: (upgradeId) => simRuntime?.getUpgradeLockReason(upgradeId) ?? null,
+  // The Colour Gate's lane cards. Same shape as onPurchaseUpgrade: a plain
+  // function on the runtime, because docs/CONTRACTS.md's GameEvent union is all
+  // sim-originated announcements and the UI must never touch SimState. The
+  // resulting `automation:colourGateRuleChanged` is what the UI and the world
+  // both read the new rule back from.
+  onSetColourGateLane: (lane, sproutType) => {
+    void simRuntimePromise.then((sim) => sim.setColourGateLane(lane, sproutType));
+  },
   debug: {
     spawnSprout: (sproutType) => {
       void simRuntimePromise.then((sim) => sim.debug.spawnSprout(sproutType));

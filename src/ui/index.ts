@@ -9,14 +9,16 @@
 //  - Owns and creates its own AudioSystem (src/audio) unless one is injected
 //    (tests, or a future integrator wiring point).
 
-import type { UpgradeId } from '../core/ids';
+import type { SproutTypeId, UpgradeId } from '../core/ids';
 import { isDev } from '../core/env';
 import type { EventBus } from '../events';
 import { createAudioSystem, type AudioSystem } from '../audio';
 
 import { createAchievementsPanel, createAchievementToastRegion } from './components/achievements';
 import { createBuildMenu, type BuildMenuHooks } from './components/buildMenu';
+import { createColourGatePanel, type ColourGateLane } from './components/colourGate';
 import { createCreditsPanel } from './components/credits';
+import { createNurseryNote } from './components/nurseryNote';
 import { createDebugPanel, type DebugPanelHooks } from './components/debugPanel';
 import { createHud } from './components/hud';
 import { createJournalPanel } from './components/journal';
@@ -37,6 +39,8 @@ export interface MountUIOptions extends BuildMenuHooks {
   onPurchaseUpgrade?: (upgradeId: UpgradeId) => void;
   /** See UpgradesPanelHooks — explains a behavioral (non-price) lock, e.g. the Colour Gate's. */
   getUpgradeLockReason?: (upgradeId: UpgradeId) => string | null;
+  /** Sets one of the Colour Gate's two lane cards; null means "nobody for now". */
+  onSetColourGateLane?: (lane: ColourGateLane, sproutType: SproutTypeId | null) => void;
   /** Dev-only debug controls — only rendered when isDev is true AND this is provided. */
   debug?: DebugPanelHooks;
 }
@@ -45,6 +49,8 @@ export interface UIHandle {
   dispose: () => void;
   audio: AudioSystem;
 }
+
+export type { ColourGateLane };
 
 export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOptions = {}): UIHandle {
   injectUiStyles();
@@ -89,12 +95,17 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
     getUpgradeLockReason: options.getUpgradeLockReason,
   });
   const achievementsPanel = createAchievementsPanel(store);
+  const colourGatePanel = createColourGatePanel(store, { onSetColourGateLane: options.onSetColourGateLane });
   const settingsPanel = createSettingsPanel(audio);
   const creditsPanel = createCreditsPanel();
   const returnDialog = createReturnDialog(bus);
   const debugPanel = isDev && options.debug ? createDebugPanel(options.debug) : undefined;
+  // The Nursery's "I'm easing off / resting" note. Its recommended action opens
+  // Upgrades (Habitat Room), which is the one purchase that makes more space —
+  // GameRules §9.7 wants the recommendation, not just the diagnosis.
+  const nurseryNote = createNurseryNote(store, { onOpenUpgrades: (trigger) => upgradesPanel.open(trigger) });
 
-  preloadManifestIcons(['ui.icon.journal', 'ui.icon.settings', 'ui.icon.credits']);
+  preloadManifestIcons(['ui.icon.journal', 'ui.icon.settings', 'ui.icon.credits', 'ui.icon.colourGate']);
 
   const nav = createNav([
     {
@@ -119,6 +130,15 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
       open: achievementsPanel.open,
     },
     {
+      key: 'colourGate',
+      label: 'Colour Gate',
+      iconHtml: () => iconHtml('ui.icon.colourGate', icons.colourGate),
+      isOpen: colourGatePanel.isOpen,
+      open: colourGatePanel.open,
+      // Hidden until the player actually owns a Gate.
+      isAvailable: colourGatePanel.isAvailable,
+    },
+    {
       key: 'settings',
       label: 'Settings',
       iconHtml: () => iconHtml('ui.icon.settings', icons.settings),
@@ -136,6 +156,7 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
 
   layer.append(
     hud.element,
+    nurseryNote.element,
     onboarding.element,
     buildMenu.element,
     nav.element,
@@ -143,6 +164,7 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
     journalPanel.overlay,
     upgradesPanel.overlay,
     achievementsPanel.overlay,
+    colourGatePanel.overlay,
     settingsPanel.overlay,
     creditsPanel.overlay,
     returnDialog.overlay,
@@ -161,6 +183,8 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
       journalPanel.dispose();
       upgradesPanel.dispose();
       achievementsPanel.dispose();
+      colourGatePanel.dispose();
+      nurseryNote.dispose();
       settingsPanel.dispose();
       returnDialog.dispose();
       debugPanel?.dispose();

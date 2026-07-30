@@ -46,3 +46,60 @@ export function getPodSpawnIntervalMs(podRhythmLevel: number): number {
   const factor = (1 - UPGRADES.podRhythm.effect.magnitudePerLevel) ** podRhythmLevel;
   return BASE_POD_SPAWN_INTERVAL_MS * factor;
 }
+
+// ---------------------------------------------------------------------------
+// Nursery rhythm — how the pod responds to a queue of unclaimed Sprouts
+// ---------------------------------------------------------------------------
+// The pod used to spawn on a fixed cadence no matter what, while the three
+// habitats cap at 8 each (24 total). Once every home filled, every subsequent
+// spawn was permanent clutter waiting at the Nursery forever — a measured save
+// held 768 live Sprouts. GameRules §7.4 forbids Sprouts creating "visual chaos
+// or selection frustration" (and equally forbids ever despawning them for
+// player inaction), and §9.7 requires a bottleneck to be a KIND, LEGIBLE
+// opportunity to solve a problem, shown through world state, with a simple
+// recommended solution.
+//
+// So the pod reads the room instead. It stays lively while the waiting area is
+// comfortable, EASES OFF as the queue grows, and finally RESTS — it keeps
+// breathing, it just doesn't open. Nothing is ever deleted, nothing is lost,
+// there is no failure state and no punishment: the moment the player settles a
+// few Sprouts or buys Habitat Room, the queue shrinks and the pod picks straight
+// back up. That recovery is always available, which is why this can never
+// permanently stall progress.
+//
+// The thresholds are deliberately generous compared with the moments the game
+// needs a queue to exist for: the Colour Gate's behavioural unlock wants only
+// 3 unsorted Sprouts waiting at once (src/data/unlocks.ts), well under
+// NURSERY_EASE_THRESHOLD, so easing never blocks the automation chain. Covered
+// by the reachability tests in tests/unit/sim.systems.test.ts.
+
+/** How the Nursery pod is currently behaving. Player-facing wording lives in src/ui. */
+export type NurseryRhythm = 'lively' | 'easing' | 'resting';
+
+/** Waiting Sprouts the Nursery is perfectly happy about; below this it spawns at full pace. */
+export const NURSERY_EASE_THRESHOLD = 6;
+
+/** Waiting Sprouts at which the Nursery rests entirely rather than adding to the crowd. */
+export const NURSERY_REST_THRESHOLD = 12;
+
+export function getNurseryRhythm(waitingCount: number): NurseryRhythm {
+  if (waitingCount >= NURSERY_REST_THRESHOLD) return 'resting';
+  if (waitingCount > NURSERY_EASE_THRESHOLD) return 'easing';
+  return 'lively';
+}
+
+/**
+ * Multiplier applied to the pod interval as the queue grows: 1 while lively,
+ * rising smoothly to NURSERY_MAX_PACE_MULTIPLIER just before the pod rests. The
+ * ramp matters — a hard cliff from "normal" to "stopped" reads as a bug,
+ * whereas a pod that visibly slows down first is the world-state warning §9.7
+ * asks for.
+ */
+export const NURSERY_MAX_PACE_MULTIPLIER = 6;
+
+export function getNurseryPaceMultiplier(waitingCount: number): number {
+  if (waitingCount <= NURSERY_EASE_THRESHOLD) return 1;
+  const span = NURSERY_REST_THRESHOLD - NURSERY_EASE_THRESHOLD;
+  const over = Math.min(waitingCount - NURSERY_EASE_THRESHOLD, span);
+  return 1 + (over / span) * (NURSERY_MAX_PACE_MULTIPLIER - 1);
+}

@@ -13,6 +13,12 @@ export interface OfflineReturnInfo {
   offlineDewdrops: number;
 }
 
+/** Mirrors SimState.colourGateLanes — which Sprout kind each Gate lane invites. */
+export interface ColourGateLaneState {
+  west: SproutTypeId | null;
+  east: SproutTypeId | null;
+}
+
 export interface UiState {
   dewdropTotal: number;
   unlockedAutomations: Set<AutomationId>;
@@ -22,6 +28,11 @@ export interface UiState {
   lastOfflineReturn: OfflineReturnInfo | undefined;
   lastAchievementUnlocked: AchievementId | undefined;
   lastBuiltAutomation: AutomationId | undefined;
+  /** The Colour Gate's active rule (GameRules §9.4: it must visibly show it). */
+  colourGateLanes: ColourGateLaneState;
+  /** How briskly the Nursery pod is opening, and how many little ones are waiting. */
+  nurseryRhythm: 'lively' | 'easing' | 'resting';
+  waitingSproutCount: number;
 }
 
 export type UiStateListener = (state: UiState) => void;
@@ -42,6 +53,11 @@ function createInitialState(): UiState {
     lastOfflineReturn: undefined,
     lastAchievementUnlocked: undefined,
     lastBuiltAutomation: undefined,
+    // Matches the Gate's own safe default (src/sim/layout.ts) so the panel
+    // never flashes an empty rule between mount and the first event.
+    colourGateLanes: { west: 'ember', east: 'dew' },
+    nurseryRhythm: 'lively',
+    waitingSproutCount: 0,
   };
 }
 
@@ -83,8 +99,20 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
       ...prev,
       journalDiscovered: new Set(prev.journalDiscovered).add(event.sproutType),
     })),
+    on('automation:colourGateRuleChanged', (prev, event) => ({
+      ...prev,
+      colourGateLanes: { ...event.lanes },
+    })),
+    on('nursery:rhythmChanged', (prev, event) => ({
+      ...prev,
+      nurseryRhythm: event.rhythm,
+      waitingSproutCount: event.waitingCount,
+    })),
     on('save:loaded', (prev, event) => ({
       ...prev,
+      colourGateLanes: event.snapshot.colourGateLanes ? { ...event.snapshot.colourGateLanes } : prev.colourGateLanes,
+      nurseryRhythm: event.snapshot.nurseryRhythm ?? prev.nurseryRhythm,
+      waitingSproutCount: event.snapshot.waitingSproutCount ?? prev.waitingSproutCount,
       // Silent hydration from the restored save — deliberately does NOT
       // touch lastAchievementUnlocked/lastBuiltAutomation, so old history
       // doesn't replay a toast/SFX on load (see the GameEvent doc comment
