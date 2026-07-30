@@ -20,7 +20,16 @@ import type { AutomationInstance, HabitatState, SimState, SproutInstance } from 
 import type { TickResult } from './tick';
 
 const HABITAT_ORDER: HabitatId[] = ['emberNook', 'dewPond', 'sunflowerMeadow'];
-const BASE_TRANSPORT_MS_PER_TILE = 420; // matches src/render/sprouts.ts's own per-tile animation duration
+/**
+ * Unupgraded ride time per tile of Manhattan distance. This is the ONLY place
+ * transport pace is defined: the renderer used to hold its own copy of the same
+ * 420 and animate from it, which meant the `gardenSlideSpeed` upgrade (applied
+ * here, in `transportMsPerTile`) changed when a Sprout settled but never how
+ * fast it looked like it was travelling. The resolved duration now rides along
+ * on `sprout:transportStarted` (see src/events/types.ts) so the animation and
+ * the simulation share one clock.
+ */
+const BASE_TRANSPORT_MS_PER_TILE = 420;
 
 /** Deterministic id — never Date.now()/Math.random(), so sim stays reproducible per docs/CONTRACTS.md. */
 function makeSproutId(state: SimState): string {
@@ -121,7 +130,7 @@ export function unlockSystem(state: SimState): TickResult {
     },
     events: [
       { type: 'automation:unlocked', automationId: 'gardenSlide' },
-      { type: 'automation:built', automationId: 'gardenSlide', instanceId },
+      { type: 'automation:built', automationId: 'gardenSlide', instanceId, targetHabitatId: target },
     ],
   };
 }
@@ -145,11 +154,30 @@ function destinationFor(instance: AutomationInstance, sprout: SproutInstance): H
   return SPROUT_TYPES[sprout.sproutType].habitatId; // colourGate: sprout's own correct habitat (null only for star, already excluded above)
 }
 
-function transportMsPerTile(instance: AutomationInstance, upgradeLevels: SimState['upgradeLevels']): number {
+export function transportMsPerTile(instance: AutomationInstance, upgradeLevels: SimState['upgradeLevels']): number {
   if (instance.automationId !== 'gardenSlide') return BASE_TRANSPORT_MS_PER_TILE;
   const level = upgradeLevels.gardenSlideSpeed ?? 0;
   const factor = (1 - UPGRADES.gardenSlideSpeed.effect.magnitudePerLevel) ** level;
   return BASE_TRANSPORT_MS_PER_TILE * factor;
+}
+
+/**
+ * Whole ticks a ride takes, and the exact wall-clock interval those ticks
+ * represent. `durationMs` is deliberately derived from the ROUNDED tick count
+ * rather than from `msPerTile * distance` directly: the sim settles the Sprout
+ * on a tick boundary, so the tick count — not the un-rounded ideal — is the
+ * interval the renderer has to match to arrive at the same moment.
+ *
+ * Exported for unit tests and so nothing has to re-derive this rounding.
+ */
+export function transportDuration(
+  instance: AutomationInstance,
+  upgradeLevels: SimState['upgradeLevels'],
+  distanceTiles: number,
+): { durationTicks: number; durationMs: number } {
+  const msPerTile = transportMsPerTile(instance, upgradeLevels);
+  const durationTicks = Math.max(1, Math.round((msPerTile * distanceTiles) / TICK_MS));
+  return { durationTicks, durationMs: durationTicks * TICK_MS };
 }
 
 /**
@@ -258,8 +286,7 @@ export function automationSystem(state: SimState): TickResult {
     }
 
     const distance = tileDistance(NURSERY_TILE, HABITAT_TILES[dest]);
-    const msPerTile = transportMsPerTile(instance, working.upgradeLevels);
-    const durationTicks = Math.max(1, Math.round((msPerTile * distance) / TICK_MS));
+    const { durationTicks, durationMs } = transportDuration(instance, working.upgradeLevels, distance);
 
     sprouts = sprouts.map((s) => (s.id === eligible.id ? { ...s, state: 'transporting' as const, tile: HABITAT_TILES[dest] } : s));
     events.push({
@@ -269,6 +296,10 @@ export function automationSystem(state: SimState): TickResult {
       instanceId: instance.id,
       fromTile: NURSERY_TILE,
       toTile: HABITAT_TILES[dest],
+      // Sim is the single authority on ride time — the renderer animates over
+      // exactly this interval instead of deriving its own (see the field's doc
+      // comment in src/events/types.ts).
+      durationMs,
     });
     nextAutomations.push({ ...instance, carryingSproutId: eligible.id, completesAtTick: working.tickCount + durationTicks });
   }

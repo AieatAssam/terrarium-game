@@ -66,18 +66,63 @@ type GameEvent =
   | { type: 'habitat:dewdropTick'; habitatId: HabitatId; amount: number }
   | { type: 'habitat:full'; habitatId: HabitatId }
   | { type: 'currency:dewdropsChanged'; total: number; delta: number }
-  | { type: 'sprout:transportStarted'; sproutId: string; automationId: AutomationId; instanceId: string; fromTile: TileCoord; toTile: TileCoord }
+  | { type: 'sprout:transportStarted'; sproutId: string; automationId: AutomationId; instanceId: string; fromTile: TileCoord; toTile: TileCoord; durationMs: number }
   | { type: 'sprout:transportCompleted'; sproutId: string; automationId: AutomationId; instanceId: string }
-  | { type: 'automation:built'; automationId: AutomationId; instanceId: string }
+  | { type: 'automation:built'; automationId: AutomationId; instanceId: string; targetHabitatId?: HabitatId }
   | { type: 'automation:unlocked'; automationId: AutomationId }
   | { type: 'upgrade:purchased'; upgradeId: UpgradeId; level: number }
   | { type: 'achievement:unlocked'; achievementId: AchievementId }
   | { type: 'journal:entryDiscovered'; sproutType: SproutTypeId }
-  | { type: 'save:loaded'; offlineSeconds: number; offlineDewdrops: number }
+  | { type: 'save:loaded'; offlineSeconds: number; offlineDewdrops: number; snapshot: SaveLoadedSnapshot }
   | { type: 'save:written' };
+
+interface SaveLoadedSnapshot {
+  dewdrops: number;
+  unlockedAutomations: AutomationId[];
+  upgradeLevels: Partial<Record<UpgradeId, number>>;
+  unlockedAchievements: AchievementId[];
+  journalDiscovered: SproutTypeId[];
+  fullHabitats?: HabitatId[];
+}
 ```
 
 Simulation emits events; rendering/audio/UI/achievements subscribe. No system reaches into another system's internal state.
+
+### Fields added after the original contract (and why)
+
+The union above is the live shape in `src/events/types.ts`. Three members carry
+fields the first draft of this document did not, each because something
+downstream could not do its job without them. See the doc comments in
+`src/events/types.ts` for the long form.
+
+- **`sprout:transportStarted.durationMs`** — how long the ride will actually
+  take, in ms, as the *simulation* computed it (`durationTicks * TICK_MS`,
+  already including the `gardenSlideSpeed` upgrade). **The renderer must animate
+  over exactly this interval and must not derive its own.** Both sides used to
+  compute a duration independently from the same 420ms-per-tile constant, but
+  only sim applied the speed upgrade — so buying Garden Slide Speed changed when
+  a Sprout settled without changing how fast it appeared to travel, and the two
+  clocks drifted further apart with every level. GameRules §8.3 requires every
+  upgrade to visibly affect the garden. `src/sim/systems.ts`'s exported
+  `transportDuration()` is the single place this is derived;
+  `tests/unit/sim.systems.test.ts` pins `durationMs` against the sim's own
+  `completesAtTick`. Consumers should still tolerate its absence at runtime (a
+  stale bundle mid-HMR) by falling back to a per-tile default.
+- **`automation:built.targetHabitatId`** — the one habitat this instance
+  delivers to, when it has one (Garden Slide). Absent for the Colour Gate, which
+  routes each Sprout to its own matching habitat. Optional so older
+  emitters/tests still typecheck. The renderer needs it to show a built Slide as
+  *blocked* (GameRules §9.7) the moment its destination fills — including before
+  the Slide has ever run a delivery, which is exactly the case that carries no
+  `sprout:transportStarted` to infer a destination from.
+- **`save:loaded.snapshot`** — full restored-state snapshot so UI-side stores can
+  hydrate on load rather than only mirroring live events going forward (see
+  docs/QA_REPORT.md finding #8). `snapshot.fullHabitats` was added alongside
+  `targetHabitatId`: `habitat:full` fires only on the exact tick a habitat
+  *reaches* capacity, so after a reload nothing downstream would otherwise know a
+  home is already full. It is carried in the snapshot rather than by replaying
+  `habitat:full` on load, because replaying it would also replay its SFX and
+  celebratory reactions.
 
 ## Simulation boundary
 

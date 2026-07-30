@@ -24,7 +24,16 @@ const bus = new EventBus();
 // Sim doesn't need the Babylon engine/scene at all — start it immediately,
 // in parallel with bootstrap()/UI mount, so Dewdrops/spawns/automation begin
 // on their own clock rather than waiting on asset or engine load.
-const simRuntimePromise = startSimRuntime(bus);
+// Resolved once the renderer has attached its bus subscriptions. The sim still
+// starts immediately (below) and ticks on its own clock; this gates ONLY the
+// restored-save announcement, which otherwise raced ahead of the renderer —
+// see startSimRuntime's `announceWhen` for what that race broke.
+let markRendererSubscribed: () => void;
+const rendererSubscribed = new Promise<void>((resolve) => {
+  markRendererSubscribed = resolve;
+});
+
+const simRuntimePromise = startSimRuntime(bus, Date.now(), rendererSubscribed);
 
 // Synchronous handle to the same runtime, for the one UI hook that must answer
 // *during* a render pass rather than in a promise callback
@@ -57,12 +66,16 @@ const ui = mountUI(document.body, bus, {
 });
 
 void bootstrap(root).then((result) => {
-  if (!result) return; // bootstrap already showed the fatal-error UI
+  if (!result) {
+    markRendererSubscribed(); // fatal-error UI is showing; don't strand the save:loaded announcement
+    return;
+  }
   const { engine, scene, dispose } = result;
   const canvas = scene.getEngine().getRenderingCanvas() as HTMLCanvasElement;
 
   void initRenderer({ engine, scene, canvas, bus }).then((renderer) => {
     const input = initInput(renderer, bus);
+    markRendererSubscribed();
     window.addEventListener('beforeunload', () => {
       input.dispose();
       renderer.dispose();

@@ -14,11 +14,13 @@ import {
   purchaseUpgrade,
   spawnSystem,
   TICK_SYSTEMS,
+  transportDuration,
+  transportMsPerTile,
   unlockSystem,
 } from '../../src/sim/systems';
 import { TICK_MS } from '../../src/sim/loop';
 import { runTick } from '../../src/sim/tick';
-import { NURSERY_TILE } from '../../src/sim/layout';
+import { HABITAT_TILES, NURSERY_TILE, tileDistance } from '../../src/sim/layout';
 import { BASE_POD_SPAWN_INTERVAL_MS } from '../../src/data/spawning';
 import { colourGateLockReason, isColourGateUnlocked, UNLOCK_THRESHOLDS } from '../../src/data/unlocks';
 import { UPGRADES } from '../../src/data/upgrades';
@@ -137,10 +139,16 @@ describe('adjudicatePlacement', () => {
 describe('dewdropSystem', () => {
   it('accrues Dewdrops from settled sprouts and flushes whole units', () => {
     let state = createInitialSimState(1);
-    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: 3, capacity: CAP } } };
-    // baseDewdropRate 0.02/tick/sprout * 3 sprouts = 0.06/tick; needs ~17 ticks to cross 1.0
+    const settled = 3;
+    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: settled, capacity: CAP } } };
+    // Derived, not hardcoded: the accrual rate is a balance value that has
+    // already changed once, and pinning a literal tick count here silently
+    // turned this assertion into "expected 0 to be greater than 0" rather than
+    // reporting a real regression. Run comfortably past the first whole unit.
+    const ticksPerWholeDewdrop = 1 / (HABITATS.emberNook.baseDewdropRate * settled);
+    const ticks = Math.ceil(ticksPerWholeDewdrop * 2);
     let totalEmitted = 0;
-    for (let i = 0; i < 20; i += 1) {
+    for (let i = 0; i < ticks; i += 1) {
       const result = dewdropSystem(state);
       state = result.state;
       for (const e of result.events) if (e.type === 'habitat:dewdropTick') totalEmitted += e.amount;
@@ -176,7 +184,10 @@ describe('unlockSystem (Garden Slide auto-build)', () => {
     const result = unlockSystem(state);
     expect(result.events).toEqual([
       { type: 'automation:unlocked', automationId: 'gardenSlide' },
-      { type: 'automation:built', automationId: 'gardenSlide', instanceId: 'gardenSlide-1' },
+      // targetHabitatId rides along so the renderer can show this Slide as
+      // blocked the moment its destination is full — including before it has
+      // ever run a delivery (see src/events/types.ts).
+      { type: 'automation:built', automationId: 'gardenSlide', instanceId: 'gardenSlide-1', targetHabitatId: 'emberNook' },
     ]);
     expect(result.state.automations[0].targetHabitatId).toBe('emberNook');
   });
@@ -301,6 +312,99 @@ describe('automationSystem', () => {
     const result = automationSystem(state);
     expect(result.events).toEqual([]);
     expect(result.state.automations[0].carryingSproutId).toBeNull();
+  });
+});
+
+// The renderer used to derive its own ride duration from its own copy of the
+// 420ms-per-tile constant, so the Garden Slide Speed upgrade (applied only
+// here, in sim) changed WHEN a Sprout settled without changing how fast it
+// looked like it was travelling — the upgrade had no visible effect and the
+// two clocks drifted apart with every level (GameRules §8.3 forbids an upgrade
+// that doesn't visibly affect the garden). The fix makes sim the single
+// authority by putting the resolved duration on `sprout:transportStarted`;
+// these tests pin that contract.
+describe('transport duration (sim is the single authority)', () => {
+  const slide = (): SimState['automations'][number] => ({
+    id: 'gardenSlide-1',
+    automationId: 'gardenSlide',
+    fromTile: NURSERY_TILE,
+    toTile: HABITAT_TILES.emberNook,
+    builtAtTick: 0,
+    targetHabitatId: 'emberNook',
+    carryingSproutId: null,
+    completesAtTick: null,
+  });
+
+  it('reports a whole number of ticks, and a durationMs that is exactly those ticks', () => {
+    const distance = tileDistance(NURSERY_TILE, HABITAT_TILES.emberNook);
+    const { durationTicks, durationMs } = transportDuration(slide(), {}, distance);
+    expect(Number.isInteger(durationTicks)).toBe(true);
+    expect(durationTicks).toBeGreaterThanOrEqual(1);
+    expect(durationMs).toBe(durationTicks * TICK_MS);
+  });
+
+  it('shortens with every gardenSlideSpeed level, by the upgrade’s own magnitude', () => {
+    const distance = tileDistance(NURSERY_TILE, HABITAT_TILES.emberNook);
+    const base = transportMsPerTile(slide(), {});
+    const magnitude = UPGRADES.gardenSlideSpeed.effect.magnitudePerLevel;
+    let previous = transportDuration(slide(), {}, distance).durationMs;
+    for (let level = 1; level <= UPGRADES.gardenSlideSpeed.maxLevel; level += 1) {
+      expect(transportMsPerTile(slide(), { gardenSlideSpeed: level })).toBeCloseTo(base * (1 - magnitude) ** level, 6);
+      const current = transportDuration(slide(), { gardenSlideSpeed: level }, distance).durationMs;
+      expect(current).toBeLessThan(previous);
+      previous = current;
+    }
+  });
+
+  it('leaves the Colour Gate alone — the speed upgrade is the Slide’s', () => {
+    const gate: SimState['automations'][number] = { ...slide(), id: 'colourGate-1', automationId: 'colourGate', targetHabitatId: undefined };
+    expect(transportMsPerTile(gate, { gardenSlideSpeed: 3 })).toBe(transportMsPerTile(gate, {}));
+  });
+
+  it('emits a durationMs on sprout:transportStarted that matches when the sim will actually settle the Sprout', () => {
+    for (const level of [0, UPGRADES.gardenSlideSpeed.maxLevel]) {
+      let state: SimState = {
+        ...createInitialSimState(1),
+        upgradeLevels: { gardenSlideSpeed: level },
+        automations: [slide()],
+      };
+      state = withSprout(state, 'ember');
+
+      // Started through runTick, exactly as the live loop does, so the tick
+      // accounting below is the real thing rather than an off-by-one fixture.
+      const startedAtTick = state.tickCount;
+      const result = runTick(state, [automationSystem]);
+      const started = result.events.find((e) => e.type === 'sprout:transportStarted');
+      expect(started).toBeDefined();
+      if (started?.type !== 'sprout:transportStarted') throw new Error('unreachable');
+
+      const completesAtTick = result.state.automations[0].completesAtTick;
+      expect(completesAtTick).not.toBeNull();
+      // The renderer animates over exactly `durationMs`; the sim settles at
+      // `completesAtTick`. If these ever disagree the animation and the
+      // gameplay drift apart again.
+      expect(started.durationMs).toBe(((completesAtTick as number) - startedAtTick) * TICK_MS);
+
+      // And the ride really does take that long when ticked forward.
+      let ticksRun = 0;
+      let done = false;
+      let ticking = result.state;
+      while (!done && ticksRun < 500) {
+        const tick = runTick(ticking, [automationSystem]);
+        ticking = tick.state;
+        ticksRun += 1;
+        if (tick.events.some((e) => e.type === 'sprout:transportCompleted')) done = true;
+      }
+      expect(done).toBe(true);
+      expect(ticksRun * TICK_MS).toBe(started.durationMs);
+    }
+  });
+
+  it('makes the fully upgraded Slide measurably faster end-to-end, not just on paper', () => {
+    const distance = tileDistance(NURSERY_TILE, HABITAT_TILES.emberNook);
+    const slow = transportDuration(slide(), {}, distance).durationMs;
+    const fast = transportDuration(slide(), { gardenSlideSpeed: UPGRADES.gardenSlideSpeed.maxLevel }, distance).durationMs;
+    expect(fast).toBeLessThan(slow * 0.7);
   });
 });
 

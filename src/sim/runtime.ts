@@ -6,13 +6,14 @@
 // next tick, and owns load/autosave. This module — not src/render or
 // src/ui — is the only place SimState is mutated.
 
-import type { SproutTypeId, UpgradeId } from '../core/ids';
+import type { AutomationId, HabitatId, SproutTypeId, UpgradeId } from '../core/ids';
 import { isDev } from '../core/env';
+import { getEffectiveHabitatCapacity } from '../data/habitats';
 import type { EventBus } from '../events/bus';
 import type { GameEvent } from '../events/types';
 import { computeOfflineProgress } from '../data/offlineProgress';
 import { clearSave, loadGame, saveGame } from '../persistence';
-import { NURSERY_TILE } from './layout';
+import { HABITAT_TILES, NURSERY_TILE } from './layout';
 import { advanceClock, createSimClock } from './loop';
 import { createInitialSimState, type SimState } from './state';
 import { colourGateLockReason } from '../data/unlocks';
@@ -49,16 +50,70 @@ export interface SimRuntime {
   };
 }
 
-/** Applies a batch of events to `state` via the achievement checker, emits every event (originals + any achievement unlocks) onto the bus in order, and returns the final state. Centralizing this means achievements react identically regardless of whether the batch came from a tick or an immediate player action. */
-function commit(bus: EventBus, state: SimState, events: readonly GameEvent[]): SimState {
-  for (const event of events) bus.emit(event);
+/**
+ * Habitats sitting at capacity right now. Needed in the `save:loaded` snapshot
+ * because `habitat:full` only ever fires on the tick a habitat reaches
+ * capacity — after a reload nothing downstream would otherwise know a home is
+ * already full, and the renderer uses exactly that to show a Garden Slide as
+ * blocked instead of idle (GameRules §9.7).
+ */
+function fullHabitatsOf(state: SimState): HabitatId[] {
+  const capacityLevel = state.upgradeLevels.habitatCapacity ?? 0;
+  return (Object.keys(state.habitats) as HabitatId[]).filter((id) => {
+    const habitat = state.habitats[id];
+    return habitat !== undefined && habitat.count >= getEffectiveHabitatCapacity(id, capacityLevel);
+  });
+}
+
+/**
+ * Where each built automation delivers to. Paired with `fullHabitatsOf` in the
+ * `save:loaded` snapshot: a restored save replays no `automation:built`, so
+ * without this the renderer would know a Garden Slide exists but not which home
+ * it serves, and could not tell whether that home being full is currently
+ * blocking it.
+ */
+function automationTargetsOf(state: SimState): Partial<Record<AutomationId, HabitatId>> {
+  const targets: Partial<Record<AutomationId, HabitatId>> = {};
+  for (const instance of state.automations) {
+    if (instance.targetHabitatId) targets[instance.automationId] = instance.targetHabitatId;
+  }
+  return targets;
+}
+
+/** Which habitat occupies `tile`, if any. Used to reconstruct where a restored settled Sprout lives, since SimState records only its tile. */
+function habitatAtTile(tile: { x: number; z: number }): HabitatId | undefined {
+  return (Object.keys(HABITAT_TILES) as HabitatId[]).find(
+    (id) => HABITAT_TILES[id].x === tile.x && HABITAT_TILES[id].z === tile.z,
+  );
+}
+
+/** Applies a batch of events to `state` via the achievement checker, emits every event (originals + any achievement unlocks) through `emit` in order, and returns the final state. Centralizing this means achievements react identically regardless of whether the batch came from a tick or an immediate player action. */
+function commit(emit: (event: GameEvent) => void, state: SimState, events: readonly GameEvent[]): SimState {
+  for (const event of events) emit(event);
   if (events.length === 0) return state;
   const achievementResult = checkAchievements(state, events);
-  for (const event of achievementResult.events) bus.emit(event);
+  for (const event of achievementResult.events) emit(event);
   return achievementResult.state;
 }
 
-export async function startSimRuntime(bus: EventBus, seed: number = Date.now()): Promise<SimRuntime> {
+/**
+ * `announceWhen` gates only the `save:loaded` announcement, never the
+ * simulation itself. The sim deliberately starts in parallel with Babylon
+ * bootstrap and asset loading, which meant the restored-save events fired as
+ * soon as IndexedDB resolved — reliably *before* the renderer had subscribed,
+ * since it was still awaiting bootstrap() and loadManifest(). The UI mounts
+ * synchronously and caught them; the renderer missed them every time, so a
+ * built Garden Slide came back as a translucent "not yet built" ghost and
+ * restored Sprouts had no meshes at all. Passing the renderer-ready promise
+ * here fixes both at the source. The snapshot payload is computed at load
+ * time and only *delivered* late, so its contents still describe the moment
+ * the save was restored rather than whenever the renderer happened to finish.
+ */
+export async function startSimRuntime(
+  bus: EventBus,
+  seed: number = Date.now(),
+  announceWhen?: Promise<unknown>,
+): Promise<SimRuntime> {
   let state = createInitialSimState(seed);
 
   const saved = await loadGame();
@@ -70,7 +125,8 @@ export async function startSimRuntime(bus: EventBus, seed: number = Date.now()):
     // Always emit save:loaded (with the full snapshot) when a save exists,
     // even with zero offline gain — the UI store's hydration depends on
     // this event firing, not just on there being something to celebrate.
-    bus.emit({
+    const loadedEvents: GameEvent[] = [];
+    loadedEvents.push({
       type: 'save:loaded',
       offlineSeconds: Math.round(offline.creditedMs / 1000),
       offlineDewdrops: offline.dewdropsEarned,
@@ -80,17 +136,31 @@ export async function startSimRuntime(bus: EventBus, seed: number = Date.now()):
         upgradeLevels: state.upgradeLevels,
         unlockedAchievements: state.unlockedAchievements,
         journalDiscovered: state.journalDiscovered,
+        fullHabitats: fullHabitatsOf(state),
+        automationTargets: automationTargetsOf(state),
+        sprouts: state.sprouts.map((s) => ({
+          id: s.id,
+          sproutType: s.sproutType,
+          tile: s.tile,
+          settled: s.state === 'settled',
+          // SproutInstance has no explicit "which home" field — a settled
+          // Sprout's habitat is implied by the tile it was moved to.
+          habitatId: s.state === 'settled' ? habitatAtTile(s.tile) : undefined,
+        })),
       },
     });
     if (offline.dewdropsEarned > 0) {
-      bus.emit({ type: 'currency:dewdropsChanged', total: state.dewdrops, delta: offline.dewdropsEarned });
+      loadedEvents.push({ type: 'currency:dewdropsChanged', total: state.dewdrops, delta: offline.dewdropsEarned });
+    }
+    const announce = (): void => {
+      for (const event of loadedEvents) bus.emit(event);
+    };
+    if (announceWhen) {
+      void announceWhen.then(announce, announce); // announce even if the renderer failed, so the UI still hydrates
+    } else {
+      announce();
     }
   }
-
-  const unsubDropped = bus.subscribe('sprout:dropped', (event) => {
-    const result = adjudicatePlacement(state, event.sproutId, event.overHabitat);
-    state = commit(bus, result.state, result.events);
-  });
 
   let clock = createSimClock();
   let lastFrameTime = performance.now();
@@ -102,6 +172,38 @@ export async function startSimRuntime(bus: EventBus, seed: number = Date.now()):
   // per animation frame.
   let speedMultiplier = 1;
 
+  /**
+   * Everything sim emits goes through here, so the one place that knows how sim
+   * time maps onto WALL-CLOCK time can say so.
+   *
+   * `sprout:transportStarted.durationMs` is authored in sim time
+   * (`durationTicks * TICK_MS`, from src/sim/systems.ts's `transportDuration`),
+   * which is the honest unit for the systems layer and what the unit tests pin.
+   * But the renderer animates against `performance.now()`, and the dev speed
+   * control deliberately breaks the 1:1 relationship by running N ticks per
+   * animation frame — at 5x, a 3.4s ride really does finish in 0.68s of real
+   * time. Emitting the unscaled figure would have the animation still gliding
+   * along the path a second after the Sprout had already settled, and the ride
+   * would then be cut short mid-journey: a visible snap, exactly the kind of
+   * jerk this whole pass is about.
+   *
+   * `speedMultiplier` is always 1 outside dev (`debug.setSpeedMultiplier`
+   * no-ops when `isDev` is false), so this is an identity transform in a
+   * production build.
+   */
+  const emit = (event: GameEvent): void => {
+    if (event.type === 'sprout:transportStarted' && speedMultiplier !== 1) {
+      bus.emit({ ...event, durationMs: event.durationMs / speedMultiplier });
+      return;
+    }
+    bus.emit(event);
+  };
+
+  const unsubDropped = bus.subscribe('sprout:dropped', (event) => {
+    const result = adjudicatePlacement(state, event.sproutId, event.overHabitat);
+    state = commit(emit, result.state, result.events);
+  });
+
   const step = (now: number): void => {
     if (disposed) return;
     const realDeltaMs = now - lastFrameTime;
@@ -112,7 +214,7 @@ export async function startSimRuntime(bus: EventBus, seed: number = Date.now()):
     const ticksToRun = advanced.ticksToRun * speedMultiplier;
     for (let i = 0; i < ticksToRun; i += 1) {
       const result = runTick(state, TICK_SYSTEMS);
-      state = commit(bus, result.state, result.events);
+      state = commit(emit, result.state, result.events);
     }
 
     rafHandle = requestAnimationFrame(step);
@@ -131,7 +233,7 @@ export async function startSimRuntime(bus: EventBus, seed: number = Date.now()):
   return {
     purchaseUpgrade: (upgradeId) => {
       const result = purchaseUpgradeSystem(state, upgradeId);
-      state = commit(bus, result.state, result.events);
+      state = commit(emit, result.state, result.events);
     },
     getUpgradeLockReason: (upgradeId) =>
       upgradeId === 'colourGateUnlock' ? colourGateLockReason(colourGateBehavioralState(state)) : null,
@@ -145,13 +247,13 @@ export async function startSimRuntime(bus: EventBus, seed: number = Date.now()):
         const sprout = { id: `debug-sprout-${state.tickCount}-${state.sprouts.length}`, sproutType, tile: NURSERY_TILE, state: 'idle' as const };
         state = { ...state, sprouts: [...state.sprouts, sprout] };
         const event: GameEvent = { type: 'sprout:spawned', sproutId: sprout.id, sproutType, podId: 'debug' };
-        state = commit(bus, state, [event]);
+        state = commit(emit, state, [event]);
       },
       grantDewdrops: (amount) => {
         if (!isDev) return;
         const total = state.dewdrops + amount;
         state = { ...state, dewdrops: total };
-        state = commit(bus, state, [{ type: 'currency:dewdropsChanged', total, delta: amount }]);
+        state = commit(emit, state, [{ type: 'currency:dewdropsChanged', total, delta: amount }]);
       },
       setSpeedMultiplier: (multiplier) => {
         if (!isDev) return;
