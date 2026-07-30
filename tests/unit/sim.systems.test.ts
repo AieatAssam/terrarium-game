@@ -9,17 +9,25 @@ import {
   adjudicatePlacement,
   automationSystem,
   checkAchievements,
+  colourGateBehavioralState,
   dewdropSystem,
   purchaseUpgrade,
   spawnSystem,
+  TICK_SYSTEMS,
   unlockSystem,
 } from '../../src/sim/systems';
 import { TICK_MS } from '../../src/sim/loop';
 import { runTick } from '../../src/sim/tick';
 import { NURSERY_TILE } from '../../src/sim/layout';
 import { BASE_POD_SPAWN_INTERVAL_MS } from '../../src/data/spawning';
-import { UNLOCK_THRESHOLDS } from '../../src/data/unlocks';
+import { colourGateLockReason, isColourGateUnlocked, UNLOCK_THRESHOLDS } from '../../src/data/unlocks';
 import { UPGRADES } from '../../src/data/upgrades';
+import { HABITATS } from '../../src/data/habitats';
+
+// Derived, never hardcoded: base capacity is coupled to the Garden Slide
+// unlock threshold (see src/data/unlocks.ts), so a balance change to either
+// must not quietly invalidate these fixtures.
+const CAP = HABITATS.emberNook.baseCapacity;
 
 function withSprout(state: SimState, sproutType: 'ember' | 'dew' | 'sun' | 'star', overrides: Partial<SimState['sprouts'][number]> = {}) {
   return {
@@ -95,7 +103,7 @@ describe('adjudicatePlacement', () => {
 
   it('rejects placement into an already-full habitat', () => {
     let state = createInitialSimState(1);
-    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: 6, capacity: 6 } } };
+    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: CAP, capacity: CAP } } };
     state = withSprout(state, 'ember');
     const result = adjudicatePlacement(state, 'test-sprout', 'emberNook');
     expect(result.events).toEqual([{ type: 'sprout:placed:incorrect', sproutId: 'test-sprout', habitatId: 'emberNook' }]);
@@ -119,7 +127,7 @@ describe('adjudicatePlacement', () => {
 
   it('emits habitat:full exactly on the tick capacity is reached, not before or after', () => {
     let state = createInitialSimState(1);
-    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: 5, capacity: 6 } } };
+    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: CAP - 1, capacity: CAP } } };
     state = withSprout(state, 'ember');
     const result = adjudicatePlacement(state, 'test-sprout', 'emberNook');
     expect(result.events.some((e) => e.type === 'habitat:full')).toBe(true);
@@ -129,7 +137,7 @@ describe('adjudicatePlacement', () => {
 describe('dewdropSystem', () => {
   it('accrues Dewdrops from settled sprouts and flushes whole units', () => {
     let state = createInitialSimState(1);
-    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: 3, capacity: 6 } } };
+    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: 3, capacity: CAP } } };
     // baseDewdropRate 0.02/tick/sprout * 3 sprouts = 0.06/tick; needs ~17 ticks to cross 1.0
     let totalEmitted = 0;
     for (let i = 0; i < 20; i += 1) {
@@ -161,8 +169,8 @@ describe('unlockSystem (Garden Slide auto-build)', () => {
       ...createInitialSimState(1),
       correctPlacementCount: UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements,
       habitats: {
-        emberNook: { id: 'emberNook' as const, count: 5, capacity: 6 },
-        dewPond: { id: 'dewPond' as const, count: 1, capacity: 6 },
+        emberNook: { id: 'emberNook' as const, count: CAP - 1, capacity: CAP },
+        dewPond: { id: 'dewPond' as const, count: 1, capacity: CAP },
       },
     };
     const result = unlockSystem(state);
@@ -275,7 +283,7 @@ describe('automationSystem', () => {
   it('does not dispatch toward an already-full habitat', () => {
     let state: SimState = {
       ...createInitialSimState(1),
-      habitats: { emberNook: { id: 'emberNook', count: 6, capacity: 6 } },
+      habitats: { emberNook: { id: 'emberNook', count: CAP, capacity: CAP } },
       automations: [
         {
           id: 'gardenSlide-1',
@@ -312,5 +320,73 @@ describe('checkAchievements', () => {
     expect(checkAchievements(state, common).events).toEqual([]);
     const rare = [{ type: 'sprout:spawned' as const, sproutId: 'b', sproutType: 'star' as const, podId: 'nursery' }];
     expect(checkAchievements(state, rare).events).toEqual([{ type: 'achievement:unlocked', achievementId: 'firstRareSprout' }]);
+  });
+});
+
+// Reachability of the whole Phase 1 automation chain. GameRules.md §16
+// ("Definition of Done") requires a player to unlock, place and observe both
+// the Garden Slide and the Colour Gate; §9 requires each automation to unlock
+// only after the player has felt the problem it solves. Those two pull in
+// opposite directions, and the Colour Gate's gate is behavioral rather than a
+// simple price, so "can this actually be reached by playing?" is not obvious
+// from reading the thresholds. This drives the real systems forward and
+// asserts it, rather than reasoning about it.
+describe('automation chain reachability (GameRules.md §9, §16)', () => {
+  it('reaches the Garden Slide by settling Sprouts, then the Colour Gate by playing on', () => {
+    let state = createInitialSimState(7);
+
+    // Manual placements unlock the Garden Slide, which then auto-builds.
+    // Spread across all three homes the way a player must: one habitat alone
+    // fills long before the threshold, which is the whole point of the
+    // capacity-vs-threshold coupling documented in data/unlocks.ts.
+    const needed = UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements;
+    const homes = [
+      ['emberNook', 'ember'],
+      ['dewPond', 'dew'],
+      ['sunflowerMeadow', 'sun'],
+    ] as const;
+    for (let i = 0; i < needed; i += 1) {
+      const [habitat, type] = homes[i % homes.length];
+      state = withSprout(state, type, { id: `manual-${i}` });
+      state = adjudicatePlacement(state, `manual-${i}`, habitat).state;
+    }
+    expect(state.correctPlacementCount).toBe(needed); // no placement silently refused by a full home
+    state = unlockSystem(state).state;
+
+    expect(state.unlockedAutomations).toContain('gardenSlide');
+    const slide = state.automations.find((a) => a.automationId === 'gardenSlide');
+    expect(slide).toBeDefined();
+    // Without a target the Colour Gate's pile check divides the world into
+    // "fed type" vs "everything else" against `undefined`, and can never arm.
+    expect(slide?.targetHabitatId).toBeDefined();
+
+    // Now just let the garden run: pods keep spawning mixed types, the Slide
+    // only carries its one type, so the others accumulate unsorted.
+    state = { ...state, dewdrops: 10_000 };
+    let becameUnlockable = false;
+    for (let tick = 0; tick < 6_000 && !becameUnlockable; tick += 1) {
+      state = runTick(state, TICK_SYSTEMS).state;
+      becameUnlockable = isColourGateUnlocked(colourGateBehavioralState(state));
+    }
+
+    expect(becameUnlockable).toBe(true);
+    expect(colourGateLockReason(colourGateBehavioralState(state))).toBeNull();
+
+    // And the purchase must actually go through once it is unlockable.
+    const purchased = purchaseUpgrade(state, 'colourGateUnlock').state;
+    expect(purchased.upgradeLevels.colourGateUnlock).toBe(1);
+    expect(purchased.unlockedAutomations).toContain('colourGate');
+    expect(purchased.automations.some((a) => a.automationId === 'colourGate')).toBe(true);
+  });
+
+  it('explains the Colour Gate lock instead of silently refusing, until it is armed', () => {
+    const fresh = createInitialSimState(3);
+    // No Slide yet: must be both locked and explained.
+    expect(isColourGateUnlocked(colourGateBehavioralState(fresh))).toBe(false);
+    expect(colourGateLockReason(colourGateBehavioralState(fresh))).toBeTruthy();
+    // And a purchase attempt must not silently consume Dewdrops.
+    const attempted = purchaseUpgrade({ ...fresh, dewdrops: 10_000 }, 'colourGateUnlock').state;
+    expect(attempted.dewdrops).toBe(10_000);
+    expect(attempted.upgradeLevels.colourGateUnlock ?? 0).toBe(0);
   });
 });

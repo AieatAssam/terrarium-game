@@ -300,8 +300,8 @@ export function adjudicatePlacement(state: SimState, sproutId: string, overHabit
   return settleSprout(state, sproutId, overHabitat);
 }
 
-/** Behavioral gate for purchasing colourGateUnlock — same rule as docs/data/unlocks.ts's ColourGateUnlockState, evaluated against live state. */
-function colourGateBehavioralState(state: SimState): ColourGateUnlockState {
+/** Behavioral gate for purchasing colourGateUnlock — same rule as docs/data/unlocks.ts's ColourGateUnlockState, evaluated against live state. Exported so the UI can explain the gate instead of offering a button that silently no-ops (see colourGateLockReason). */
+export function colourGateBehavioralState(state: SimState): ColourGateUnlockState {
   const slide = state.automations.find((a) => a.automationId === 'gardenSlide');
   if (!slide) return { gardenSlideBuilt: false, singleHabitatFeedTicks: 0, unsortedPileSize: 0 };
   const fedType = slide.targetHabitatId ? HABITATS[slide.targetHabitatId].matchSproutType : undefined;

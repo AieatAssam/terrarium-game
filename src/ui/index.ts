@@ -35,6 +35,8 @@ export interface MountUIOptions extends BuildMenuHooks {
   /** Inject an AudioSystem (e.g. in tests); otherwise one is created. */
   audio?: AudioSystem;
   onPurchaseUpgrade?: (upgradeId: UpgradeId) => void;
+  /** See UpgradesPanelHooks — explains a behavioral (non-price) lock, e.g. the Colour Gate's. */
+  getUpgradeLockReason?: (upgradeId: UpgradeId) => string | null;
   /** Dev-only debug controls — only rendered when isDev is true AND this is provided. */
   debug?: DebugPanelHooks;
 }
@@ -82,7 +84,10 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
   const toastRegion = createAchievementToastRegion(bus);
 
   const journalPanel = createJournalPanel(store);
-  const upgradesPanel = createUpgradesPanel(store, { onPurchaseUpgrade: options.onPurchaseUpgrade });
+  const upgradesPanel = createUpgradesPanel(store, {
+    onPurchaseUpgrade: options.onPurchaseUpgrade,
+    getUpgradeLockReason: options.getUpgradeLockReason,
+  });
   const achievementsPanel = createAchievementsPanel(store);
   const settingsPanel = createSettingsPanel(audio);
   const creditsPanel = createCreditsPanel();

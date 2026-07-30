@@ -15,13 +15,29 @@ import { clearSave, loadGame, saveGame } from '../persistence';
 import { NURSERY_TILE } from './layout';
 import { advanceClock, createSimClock } from './loop';
 import { createInitialSimState, type SimState } from './state';
-import { adjudicatePlacement, checkAchievements, purchaseUpgrade as purchaseUpgradeSystem, TICK_SYSTEMS } from './systems';
+import { colourGateLockReason } from '../data/unlocks';
+import {
+  adjudicatePlacement,
+  checkAchievements,
+  colourGateBehavioralState,
+  purchaseUpgrade as purchaseUpgradeSystem,
+  TICK_SYSTEMS,
+} from './systems';
 import { runTick } from './tick';
 
 const AUTOSAVE_INTERVAL_MS = 15_000;
 
 export interface SimRuntime {
   purchaseUpgrade: (upgradeId: UpgradeId) => void;
+  /**
+   * Why `upgradeId` can't be bought yet for reasons other than price, or null
+   * if nothing behavioral is blocking it. Only the Colour Gate has such a
+   * gate today. Exposed as a plain function for the same reason
+   * `purchaseUpgrade` is (see docs/ARCHITECTURE.md): there's no
+   * player-intent event in the GameEvent union, and the UI must not read
+   * SimState directly.
+   */
+  getUpgradeLockReason: (upgradeId: UpgradeId) => string | null;
   resetSave: () => Promise<void>;
   getState: () => SimState;
   dispose: () => void;
@@ -117,6 +133,8 @@ export async function startSimRuntime(bus: EventBus, seed: number = Date.now()):
       const result = purchaseUpgradeSystem(state, upgradeId);
       state = commit(bus, result.state, result.events);
     },
+    getUpgradeLockReason: (upgradeId) =>
+      upgradeId === 'colourGateUnlock' ? colourGateLockReason(colourGateBehavioralState(state)) : null,
     resetSave: async () => {
       await clearSave();
     },

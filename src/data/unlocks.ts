@@ -3,6 +3,7 @@
 // Colour Gate's condition is behavioral rather than a placement count.
 
 import type { AutomationId } from '../core/ids';
+import { TICK_MS } from '../sim/loop';
 
 export interface UnlockThreshold {
   automationId: AutomationId;
@@ -37,6 +38,21 @@ export interface UnlockThreshold {
 export const UNLOCK_THRESHOLDS: Record<AutomationId, UnlockThreshold> = {
   gardenSlide: {
     automationId: 'gardenSlide',
+    /**
+     * Must stay below the garden's total base capacity (three habitats x
+     * BASE_CAPACITY), because a placement into a full habitat is refused and
+     * does not count. This value is load-bearing in two directions at once:
+     * tests/unit/data.spawning.test.ts pins the intended 4-6 minute pacing to
+     * roughly this many placements, while total capacity sets a hard ceiling
+     * on how many are physically possible. BASE_CAPACITY was 6 (18 total),
+     * i.e. below this number, so the Garden Slide could not be reached by
+     * playing at all — every habitat filled, Sprouts piled up, and nothing
+     * happened unless the player guessed that buying Habitat Capacity was an
+     * unstated prerequisite. Raising BASE_CAPACITY to 8 (24 total) keeps the
+     * deliberate pacing and makes it reachable; changing either number alone
+     * re-breaks one side. Covered by the reachability test in
+     * tests/unit/sim.systems.test.ts.
+     */
     requiredCorrectPlacements: 20,
   },
   colourGate: {
@@ -70,4 +86,38 @@ export function isColourGateUnlocked(state: ColourGateUnlockState): boolean {
     state.singleHabitatFeedTicks >= (threshold.requiredSingleHabitatFeedTicks ?? 0) &&
     state.unsortedPileSize >= (threshold.requiredUnsortedPileSize ?? 0)
   );
+}
+
+/**
+ * Player-facing explanation of *why* the Colour Gate can't be bought yet, or
+ * null once it can. The gate is behavioral, so an affordable-looking price
+ * tag is not the whole story: without this, a player with plenty of Dewdrops
+ * sees an enabled-looking button that silently does nothing when clicked
+ * (purchaseUpgrade no-ops on the gate). GameRules.md §11 requires recovery
+ * copy to be friendly and concrete, and §8.3 requires every upgrade to be
+ * understandable — so this names the one specific thing still missing,
+ * cheapest-to-satisfy first, in garden language rather than thresholds.
+ */
+export function colourGateLockReason(state: ColourGateUnlockState): string | null {
+  if (isColourGateUnlocked(state)) return null;
+  const threshold = UNLOCK_THRESHOLDS.colourGate;
+
+  if (!state.gardenSlideBuilt) {
+    return 'Your Garden Slide needs to be carrying Sprouts first.';
+  }
+
+  const ticksLeft = (threshold.requiredSingleHabitatFeedTicks ?? 0) - state.singleHabitatFeedTicks;
+  if (ticksLeft > 0) {
+    const secondsLeft = Math.ceil((ticksLeft * TICK_MS) / 1000);
+    return `Let the Garden Slide work for about ${secondsLeft} more second${secondsLeft === 1 ? '' : 's'}.`;
+  }
+
+  const stillWaiting = (threshold.requiredUnsortedPileSize ?? 0) - state.unsortedPileSize;
+  if (stillWaiting > 0) {
+    return stillWaiting === 1
+      ? 'One more Sprout of a kind the Slide does not carry needs to be waiting for a home.'
+      : `${stillWaiting} more Sprouts of a kind the Slide does not carry need to be waiting for a home.`;
+  }
+
+  return null;
 }

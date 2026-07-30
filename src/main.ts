@@ -26,12 +26,22 @@ const bus = new EventBus();
 // on their own clock rather than waiting on asset or engine load.
 const simRuntimePromise = startSimRuntime(bus);
 
+// Synchronous handle to the same runtime, for the one UI hook that must answer
+// *during* a render pass rather than in a promise callback
+// (getUpgradeLockReason). Null only for the brief window before the sim
+// resolves, during which no upgrade is purchasable anyway.
+let simRuntime: Awaited<typeof simRuntimePromise> | null = null;
+void simRuntimePromise.then((sim) => {
+  simRuntime = sim;
+});
+
 // F: onboarding/HUD/build menu/panels + the Web Audio synth system. Mounted
 // immediately, before the async bootstrap() below, on purpose.
 const ui = mountUI(document.body, bus, {
   onPurchaseUpgrade: (upgradeId) => {
     void simRuntimePromise.then((sim) => sim.purchaseUpgrade(upgradeId));
   },
+  getUpgradeLockReason: (upgradeId) => simRuntime?.getUpgradeLockReason(upgradeId) ?? null,
   debug: {
     spawnSprout: (sproutType) => {
       void simRuntimePromise.then((sim) => sim.debug.spawnSprout(sproutType));

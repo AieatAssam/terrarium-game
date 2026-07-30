@@ -468,6 +468,20 @@ export const UI_CSS = /* css */ `
   margin-top: 2px;
 }
 
+/* Explains a behavioral (non-price) lock, e.g. the Colour Gate's. Warm and
+   advisory rather than an error colour — GameRules.md §11 asks recovery copy
+   to read as friendly guidance, not a failure. */
+.tt-upgrade-lock {
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--tt-accent-warm, #e0a24a);
+  margin-top: 4px;
+}
+
+.tt-upgrade-lock[hidden] {
+  display: none;
+}
+
 .tt-buy-btn {
   min-height: var(--tt-touch);
   min-width: 84px;

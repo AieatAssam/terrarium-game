@@ -35,6 +35,13 @@ export interface PurchaseUpgradeEventDetail {
 
 export interface UpgradesPanelHooks {
   onPurchaseUpgrade?: (upgradeId: UpgradeId) => void;
+  /**
+   * Why an upgrade is unavailable for reasons other than cost (the Colour
+   * Gate's behavioral gate), or null. Without this the panel could only see
+   * price, so a player holding plenty of Dewdrops got an enabled-looking
+   * button whose click the sim silently discarded.
+   */
+  getUpgradeLockReason?: (upgradeId: UpgradeId) => string | null;
 }
 
 export interface UpgradesPanelHandle {
@@ -59,11 +66,18 @@ export function createUpgradesPanel(store: UiStateStore, hooks: UpgradesPanelHoo
   // click kept hitting "element was detached from the DOM, retrying" on the
   // Colour Gate buy button). Stable elements make a click physically able to
   // complete regardless of how often the underlying numbers change.
-  const rows = new Map<UpgradeId, { row: HTMLElement; icon: HTMLElement; meta: HTMLElement; buyBtn: HTMLButtonElement }>();
+  const rows = new Map<
+    UpgradeId,
+    { row: HTMLElement; icon: HTMLElement; meta: HTMLElement; buyBtn: HTMLButtonElement; lockNote: HTMLElement }
+  >();
 
   for (const upgrade of UPGRADE_LIST) {
     const icon = el('span', { html: iconHtml(upgradeManifestKey(upgrade.id), icons.upgrades), 'aria-hidden': 'true' });
     const meta = el('div', { className: 'tt-upgrade-meta' }, [`Level 0 / ${upgrade.maxLevel}`]);
+    // Sits in the row (not a transient toast) so the requirement stays
+    // readable while the player watches the garden satisfy it.
+    const lockNote = el('p', { className: 'tt-upgrade-lock' }, ['']);
+    lockNote.hidden = true;
     const buyBtn = el('button', { type: 'button', className: 'tt-buy-btn' }, ['']);
     buyBtn.addEventListener('click', () => {
       if (buyBtn.disabled) return;
@@ -80,30 +94,40 @@ export function createUpgradesPanel(store: UiStateStore, hooks: UpgradesPanelHoo
 
     const row = el('div', { className: 'tt-upgrade-row' }, [
       icon,
-      el('div', { className: 'tt-upgrade-info' }, [el('h3', {}, [upgrade.displayName]), el('p', {}, [upgrade.description]), meta]),
+      el('div', { className: 'tt-upgrade-info' }, [
+        el('h3', {}, [upgrade.displayName]),
+        el('p', {}, [upgrade.description]),
+        meta,
+        lockNote,
+      ]),
       buyBtn,
     ]);
-    rows.set(upgrade.id, { row, icon, meta, buyBtn });
+    rows.set(upgrade.id, { row, icon, meta, buyBtn, lockNote });
   }
   body.replaceChildren(...UPGRADE_LIST.map((u) => rows.get(u.id)!.row));
 
   function render(): void {
     const state = store.getState();
     for (const upgrade of UPGRADE_LIST) {
-      const { meta, buyBtn } = rows.get(upgrade.id)!;
+      const { meta, buyBtn, lockNote } = rows.get(upgrade.id)!;
       const level = state.upgradeLevels[upgrade.id] ?? 0;
       const maxed = level >= upgrade.maxLevel;
       const cost = maxed ? 0 : upgrade.costForLevel(level);
       const canAfford = !maxed && state.dewdropTotal >= cost;
+      const lockReason = maxed ? null : (hooks.getUpgradeLockReason?.(upgrade.id) ?? null);
 
       meta.textContent = `Level ${level} / ${upgrade.maxLevel}`;
-      buyBtn.disabled = maxed || !canAfford;
+      lockNote.textContent = lockReason ?? '';
+      lockNote.hidden = lockReason === null;
+      buyBtn.disabled = maxed || !canAfford || lockReason !== null;
       buyBtn.textContent = maxed ? 'Max' : `${Math.max(0, Math.floor(cost)).toLocaleString()}`;
       buyBtn.setAttribute(
         'aria-label',
         maxed
           ? `${upgrade.displayName}, maximum level reached`
-          : `Buy ${upgrade.displayName} for ${cost} Dewdrops, currently level ${level} of ${upgrade.maxLevel}`,
+          : lockReason
+            ? `${upgrade.displayName}, not available yet. ${lockReason}`
+            : `Buy ${upgrade.displayName} for ${cost} Dewdrops, currently level ${level} of ${upgrade.maxLevel}`,
       );
     }
   }

@@ -19,7 +19,11 @@ export interface HabitatDefinition {
 // All three habitats share the same capacity/rate on purpose — Phase 1 has
 // no reason to make one biome objectively better than another; asymmetry
 // would just bias which corner of the garden players rush toward first.
-const BASE_CAPACITY = 6;
+// Three habitats x this is the hard ceiling on lifetime correct placements
+// before every home is full, so it must stay above
+// UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements (20) or the Garden
+// Slide becomes unreachable by play — see the note there.
+const BASE_CAPACITY = 8;
 const BASE_DEWDROP_RATE = 0.02; // per settled Sprout per tick == 12 Dewdrops/min/Sprout at 10 ticks/sec
 
 export const HABITATS: Record<HabitatId, HabitatDefinition> = {
