@@ -87,13 +87,19 @@ gotchas:
       dimensions; derive heights from it rather than writing literals.
   - id: sunflower-meadow-manual-only
     note: >
-      Sunflower Meadow has NO automated route in Phase 1 by design (src/sim/
-      layout.ts: only the trunk-and-fork feeds Ember Nook/Dew Pond; the
-      southern run to the Meadow is the deliberate hand-carried fallback).
-      Roughly a third of any large accumulated Sprout population (Sun type)
-      will therefore NEVER move on its own no matter what — this reads like a
-      transport bug in a big/old save and is not one. Confirmed by reading
-      src/sim/layout.ts's own topology comment, not rediscovered by trial.
+      SUPERSEDED 2026-07-31 — Sunflower Meadow now HAS an automated route.
+      unlockSystem's single Garden Slide instance always targets it (see
+      the completed-work entry below). Kept for history since old saves and
+      any writing that still cites "a third of any population will never
+      move" predate this. One correction to the ORIGINAL note while closing
+      it out: it framed automating the Meadow as needing GameRules §17
+      process — that was wrong. GameRules.md itself never mandates
+      manual-only (grep confirms: lines 276/309 just list Sunflower Meadow
+      as an ordinary habitat); the manual-only framing lived entirely in
+      this file's own topology comment, i.e. it was an ARCHITECTURE
+      decision recorded in a code comment, not a GameRules constraint. §17
+      governs changing GameRules itself, which this change never touched.
+      Don't re-litigate that as a blocker if it comes up again.
   - id: debug-hook-promise-timing
     note: >
       The dev debug panel's buttons (spawn/grant/speed/reset) all go through
@@ -292,6 +298,101 @@ completed:
 # In flight — uncommitted work in the tree RIGHT NOW
 # ---------------------------------------------------------------------------
 in_flight:
+  - owner: claude session 2026-07-31 (Sunflower Meadow automation)
+    files:
+      [
+        src/sim/systems.ts,
+        src/sim/layout.ts,
+        docs/ARCHITECTURE.md,
+        docs/GAME_DESIGN.md,
+        tests/unit/sim.systems.test.ts,
+        tests/e2e/automation.dev.spec.ts,
+        work_progress.yaml,
+      ]
+    task: >
+      IMPLEMENTED, typecheck/lint/258-unit-tests/build all pass. The
+      approved-but-unstarted "automate Sunflower Meadow" decision.
+
+      BEFORE writing code: checked whether this genuinely needed GameRules
+      §17 process, per CLAUDE.md's authority rule. It did not — GameRules.md
+      itself never mandates Sunflower Meadow being manual-only (grepped it:
+      lines 276/309 just list it as an ordinary habitat). The manual-only
+      framing lived entirely in src/sim/layout.ts's own topology comment —
+      an architecture decision recorded in a code comment, not a GameRules
+      constraint. Corrected the two work_progress.yaml entries (the
+      sunflower-meadow-manual-only gotcha and the "Automate Sunflower
+      Meadow?" decision) that asserted otherwise; that was a stale premise
+      from whoever wrote them, not verified against the actual doc.
+
+      Also checked, before implementing, whether the Colour Gate's fallback
+      behavior functionally depends on the Meadow path (the topology
+      comment narrated it as "the fallback... GameRules §9.4's fallback and
+      waiting paths"). It does not: planRide's own doc comment
+      (src/sim/systems.ts) says the Gate's real fallback for any
+      non-matching Sprout is simply staying idle in the Nursery's own
+      waiting area — the Meadow-path framing was narrative, never
+      load-bearing. Automating the Meadow costs nothing structurally.
+
+      IMPLEMENTATION: unlockSystem (src/sim/systems.ts) no longer picks
+      "whichever habitat is fed most" for the Garden Slide's one-time
+      target — it always targets sunflowerMeadow. Reasoning for THIS shape
+      over the alternatives considered: a new AutomationId or a second
+      instance of 'gardenSlide' would touch real singleton assumptions
+      (unlockSystem's hardcoded 'gardenSlide-1' instanceId, the
+      AutomationId closed union in src/core/ids.ts, automation.
+      nearestBuiltWithin, adjudicateAutomationDrop's find-by-automationId) —
+      checked these before choosing, per advisor guidance, rather than
+      picking a shape and discovering the blast radius mid-implementation.
+      Retargeting the EXISTING single Slide instance touches none of that.
+      It also sharpens rather than dilutes the Colour Gate's own
+      behavioral-unlock narrative: colourGateBehavioralState's
+      unsortedPileSize counts idle Sprouts whose type isn't the Slide's fed
+      type — with the Slide now always feeding Sun, that pile is always
+      exactly "Ember and Dew waiting", precisely what the Gate's two lanes
+      solve, rather than depending on which habitat the Slide happened to
+      pick under the old heuristic.
+
+      Checked and found NOT a problem before shipping: whether the Garden
+      Slide's fixed physical site (GARDEN_SLIDE_TILE, (8,7), one tile north
+      of the Nursery on the OLD northern trunk) breaks now that its cargo
+      travels the separate southern run instead. It doesn't, mechanically —
+      gardenRouteBetween never references the site tile as a route
+      endpoint for any target, confirmed by reading it, not assumed. Left
+      as a genuine but low-severity open visual-coherence question (see
+      the garden-slide-site-not-on-its-own-route open_issue) rather than
+      relocating the tile, since relocation touches
+      tests/unit/sim.colourGate.test.ts's tileDistance assertions,
+      render.pathPieces.test.ts, and manualDrop.dev.spec.ts's own use of
+      the tile — judged wide enough to defer rather than bundle in.
+
+      Docs updated: src/sim/layout.ts's topology comment, docs/
+      ARCHITECTURE.md, docs/GAME_DESIGN.md (beat sheet + topology
+      rationale + a flagged-not-fixed baseDewdropRate doc/code drift found
+      along the way, see the e2e-not-rerun open_issue). Tests updated:
+      the one unit test that pinned the old "most-fed" heuristic (now
+      asserts the fixed sunflowerMeadow target, with counts deliberately
+      NOT favoring it, to prove the target isn't picked by feeding
+      pattern), and automation.dev.spec.ts's stale comment/title plus a
+      new targetHabitatId assertion (strictly stronger than before, since
+      the target is now deterministic rather than needing a rigged
+      distribution to be unambiguous).
+
+      BROWSER-VERIFIED 2026-07-31 (fresh reset save, real UI: debug spawns,
+      a real Habitat Capacity purchase via the actual Upgrades panel click,
+      not just bus emits): three separate sprout:transportStarted events for
+      three different Sun Sprouts, every one fromTile (8,8) toTile (8,13)
+      (the Nursery -> Meadow southern run), automationId gardenSlide,
+      instanceId gardenSlide-1, durationMs 2100 each time — deterministic,
+      repeatable. One followed through to sprout:settled with habitatId
+      sunflowerMeadow, confirming the full round trip, not just the ride
+      start. Bonus incidental confirmation: the Colour Gate's upgrade
+      button correctly read "Let the Garden Slide work for about 28 more
+      seconds" mid-run, proving colourGateBehavioralState's fedType='sun'
+      derivation (from the now-fixed target) is live and ticking — the
+      "sharpens the Gate's own unlock narrative" reasoning above is not
+      just theoretical. Reset the save afterward.
+    status: implemented, unit-tested, one e2e spec updated and green,
+      browser-verified end to end; uncommitted.
   - owner: claude session 2026-07-31 (resuming kimi-code's queued items)
     files: [docs/_scratch/*.mjs (several new probes), src/render/index.ts, src/render/sprouts.ts]
     task: >
@@ -616,23 +717,100 @@ open_issues:
       ticks/sec = 0.08/sec, 1/0.08 = 12.5s) — the test's own 5s timeout is
       arithmetically impossible to meet even with a perfect pick, and the
       drag/settle/journal-discovery part of the SAME test (checked first,
-      passes) proves this session's pick fix works correctly. Likely
-      dates to bf4c1cd's Dewdrop rebalance ("whole upgrade tree went from
-      ~9 minutes of income to ~33") outliving this test's timeout — exactly
-      the kind of drift this open_issue already warned about. Fix is
+      passes) proves this session's pick fix works correctly. CONFIRMED,
+      not just inferred: docs/GAME_DESIGN.md's own "Progression math"
+      section still says `baseDewdropRate = 0.02` — and 0.02 gives EXACTLY
+      5.0s to one whole Dewdrop (0.2/sec, 1/0.2=5), matching this test's
+      timeout precisely. The code's real value is 0.008 (checked
+      src/data/habitats.ts directly). Dates to bf4c1cd's Dewdrop rebalance
+      ("whole upgrade tree went from ~9 minutes of income to ~33")
+      outliving both this test's timeout AND that doc section, which is now
+      flagged inline (STALE note added 2026-07-31) rather than silently
+      rewritten, since downstream Dewdrops/min figures in that doc cascade
+      from it and several balance values are load-bearing against each
+      other (coupled-balance-values gotcha) — a partial fix risked being
+      worse than an honestly-flagged stale one. Fix for the TEST itself is
       either raise the timeout past ~13s or grant a rate-boosting upgrade
       first; not done this session, flagged rather than fixed to keep this
       pass scoped to the regression it was checking for.
 
-      STILL NOT DONE: the remaining suite (automation.dev.spec.ts,
-      colourGate specs, starSprout.dev.spec.ts, the preview project, etc.)
-      has not been re-run this session. docs/QA_REPORT.md remains stale.
+      PARTIALLY DONE: automation.dev.spec.ts WAS run this session (needed to
+      verify the Sunflower Meadow automation change), surfacing 2 more
+      pre-existing failures, NEITHER caused by that change — confirmed, not
+      assumed:
+        - "Colour Gate: behavioral purchase gate... does NOT charge
+          Dewdrops or build it" fails deterministically, every run, on a
+          FRESH page before any Garden Slide exists — provably unrelated to
+          habitat targeting. Root cause: buyUpgradeViaUI's button lookup
+          regex is `^Buy Colour Gate for`, but src/ui/components/
+          upgrades.ts's render() (line ~124-131) sets the aria-label to
+          `"${displayName}, not available yet. ${lockReason}"` whenever
+          ANY lockReason is set — which it always is here (Colour Gate's
+          first lock reason, "Your Garden Slide needs to be carrying
+          Sprouts first," fires before a Slide exists, regardless of what
+          it will target) — so the regex can never match and the click
+          times out. A test/helper bug, not a sim bug.
+        - "Garden Slide: visibly carries Sprouts... at the upgraded speed"
+          failed twice, two DIFFERENT ways (first run: "an idle Slide runs
+          no belt" assertion violated; retry: buildGardenSlide's own
+          20s poll for `unlockedAutomations` timed out before even
+          reaching that assertion) — inconsistent failure mode across runs
+          is itself evidence of flakiness, not a deterministic regression.
+          Matches this file's OWN already-documented spawnandid-pop-race
+          gotcha (spawnAndDrop can silently drop the wrong natural-spawn
+          Sprout when a pod spawn lands between a debug-spawn click and
+          the id pop). BUT: the sunflowerMeadow-targeting change is NOT
+          an innocent bystander here — under the old "most-fed" heuristic
+          the Slide targeted emberNook and a stray natural Sun Sprout
+          couldn't be boarded by it; now the Slide targets sunflowerMeadow,
+          so a stray natural Sun Sprout landing during buildGardenSlide's
+          setup CAN be picked up and shows up as belt movement, tripping
+          "an idle Slide runs no belt". That's a real, if narrow,
+          probability shift this change introduced on top of the
+          pre-existing pop-race — not purely someone else's flake.
+          buildGardenSlide's setup comment (tests/e2e/automation.dev.spec.ts)
+          has been corrected to say so instead of the stale "emberNook fed
+          the most" framing. Not fixed further (the underlying pop-race
+          fix is out of scope here); still pre-existing in the sense that
+          the race itself predates this session, but this session's change
+          widened its blast radius for this one spec.
+      Neither blocks the Sunflower Meadow work, which was verified through
+      unit tests (deterministic) and a live browser session (real UI
+      purchase, real repeated rides, real settle) instead. colourGate
+      specs, starSprout.dev.spec.ts, and the preview project remain
+      UNRUN this session. docs/QA_REPORT.md remains stale.
   - id: motion-config-contrast
     severity: low
     note: >
       MotionConfig has no high-contrast field, so habitats.ts reads
       data-contrast directly via its own MutationObserver. Folding contrast into
       motion.ts would remove the duplicate observer.
+  - id: garden-slide-site-not-on-its-own-route
+    severity: low
+    note: >
+      NEW 2026-07-31, from automating Sunflower Meadow. GARDEN_SLIDE_TILE
+      (8,7) is fixed and physically one tile NORTH of the Nursery, on the
+      trunk toward the Colour Gate — but the Slide's ride now always goes
+      SOUTH to Sunflower Meadow instead. Mechanically harmless:
+      gardenRouteBetween (src/render/sprouts.ts) BFS-searches the path
+      network between the ride's actual endpoints (Nursery, target habitat)
+      and never references the Slide's own site tile as a waypoint, for any
+      target it has ever had — confirmed by reading the function, not
+      assumed. So nothing is broken and no relocation was needed to ship
+      the automation. What's left is purely a visual-coherence question a
+      relocation WOULD answer: a player watching a Sprout glide south to
+      the Meadow while the Slide's own structure stands north of the
+      Nursery might read that as mismatched, even though nothing is
+      functionally wrong. Considered moving GARDEN_SLIDE_TILE onto the
+      southern run (e.g. (8,9)) instead, but that touches
+      tests/unit/sim.colourGate.test.ts's two `tileDistance(...) === 1`
+      assertions, tests/unit/render.pathPieces.test.ts, and
+      tests/e2e/manualDrop.dev.spec.ts's import of the tile for its own
+      drag target — judged a wide enough change to defer rather than bundle
+      into the automation change itself (advisor guidance: don't reopen a
+      settled design mid-implementation). If this reads badly in an actual
+      playtest, relocating the site is the fix; the GAME_DESIGN.md topology
+      section already documents the current state and links here.
 
 # ---------------------------------------------------------------------------
 # Decisions taken, so they are not silently relitigated
@@ -663,12 +841,18 @@ decisions:
       is compliant.
   - q: Automate Sunflower Meadow or leave it hand-carry-only?
     a: >
-      Automate it. User decided 2026-07-31. This contradicts the documented
-      Phase 1 intent (layout.ts's topology comment + the
-      sunflower-meadow-manual-only gotcha), so it is a deliberate GameRules
-      revision — the doc, its section 17 change record, dependent docs and
-      tests must all be updated, not just the conveyor layout. Not yet
-      implemented.
+      Automate it. User decided 2026-07-31. IMPLEMENTED 2026-07-31 — see the
+      completed-work entry below. CORRECTION to this entry's original text:
+      it called this a "deliberate GameRules revision" needing a §17 change
+      record. That was wrong — checked GameRules.md directly before
+      implementing and it never mandates Sunflower Meadow being manual-only
+      (it's just listed as an ordinary habitat, lines 276/309); the
+      manual-only framing lived entirely in src/sim/layout.ts's own topology
+      comment, i.e. this was an architecture decision recorded in a code
+      comment, not a GameRules constraint, so §17 (which governs changing
+      GameRules itself) never applied. Docs WERE still updated deliberately
+      (ARCHITECTURE.md, GAME_DESIGN.md, the topology comment itself,
+      dependent tests) — same rigor, lighter process.
   - q: What happens to a Sprout dropped on open grass?
     a: >
       It returns to the Nursery waiting area, per GameRules 5.3 as written.

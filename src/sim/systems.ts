@@ -163,22 +163,29 @@ export function dewdropSystem(state: SimState): TickResult {
   return { state: { ...state, dewdrops, habitatDewdropFraction: fraction }, events };
 }
 
-/** Garden Slide auto-unlocks and auto-builds once the manual-placement threshold is hit (docs/GAME_DESIGN.md: "unlocks and auto-builds ... targeting whichever habitat the player has been feeding most"). Colour Gate is gated behind a purchase (see purchaseUpgrade below), not this system. */
+/**
+ * Garden Slide auto-unlocks and auto-builds once the manual-placement
+ * threshold is hit, ALWAYS targeting Sunflower Meadow (Sun Sprouts) —
+ * changed from "whichever habitat the player has been fed most" (design
+ * decision 2026-07-31: automate Sunflower Meadow, which the Colour Gate can
+ * never reach, since its two lanes physically leave from the northern fork
+ * at (8,6) and Sunflower Meadow sits on the separate southern run out of
+ * the Nursery — see src/sim/layout.ts's topology comment). This also
+ * SHARPENS the Colour Gate's own behavioral-unlock narrative rather than
+ * diluting it: colourGateBehavioralState's `unsortedPileSize` counts idle
+ * Sprouts whose type ISN'T the Slide's fed type — with the Slide now always
+ * feeding Sun, that pile is always exactly "Ember and Dew waiting to be
+ * sorted", which is precisely what the Gate's two lanes exist to solve,
+ * rather than depending on which habitat the Slide happened to pick.
+ * Colour Gate is gated behind a purchase (see purchaseUpgrade below), not
+ * this system.
+ */
 export function unlockSystem(state: SimState): TickResult {
   if (state.unlockedAutomations.includes('gardenSlide') || !isGardenSlideUnlocked(state.correctPlacementCount)) {
     return { state, events: [] };
   }
 
-  let target: HabitatId = HABITAT_ORDER[0];
-  let best = -1;
-  for (const id of HABITAT_ORDER) {
-    const count = state.habitats[id]?.count ?? 0;
-    if (count > best) {
-      best = count;
-      target = id;
-    }
-  }
-
+  const target: HabitatId = 'sunflowerMeadow';
   const instanceId = 'gardenSlide-1';
   const instance: AutomationInstance = {
     id: instanceId,

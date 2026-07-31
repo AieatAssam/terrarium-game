@@ -65,16 +65,25 @@ toward.
   fill up, firing `habitat:full` and the `firstFullHabitat` achievement. This
   is the first hint that "capacity" is a thing the player might want to grow.
 - **~4:30–5:00** — After 20 correct manual placements, Garden Slide unlocks
-  and auto-builds (`automation:unlocked` then `automation:built`), targeting
-  whichever habitat the player has been feeding most. `firstAutomation`
-  achievement unlocks. See "Progression math" below for why 20 lands here.
+  and auto-builds (`automation:unlocked` then `automation:built`), ALWAYS
+  targeting Sunflower Meadow (Sun Sprouts) — changed 2026-07-31 from
+  "whichever habitat the player has been feeding most" because the Colour
+  Gate's fork can never physically reach the Meadow (its two lanes leave from
+  the northern fork; the Meadow sits on the separate southern run out of the
+  Nursery), so the Slide is the only automation that ever will. See
+  `unlockSystem`'s own doc comment (`src/sim/systems.ts`) and
+  `docs/ARCHITECTURE.md`. `firstAutomation` achievement unlocks. See
+  "Progression math" below for why 20 lands here.
 
 ### Arc to 15–25 minutes
 
-- **~5–9 min** — Garden Slide now carries one Sprout type automatically. The
-  other two types keep spawning and need manual sorting, so a small "unsorted
-  pile" starts building near the nursery — the first felt sense that one
-  slide isn't enough. Once the slide has fed its one habitat continuously for
+- **~5–9 min** — Garden Slide now carries Sun Sprouts automatically to the
+  Meadow. Ember and Dew keep spawning and need manual sorting, so a small
+  "unsorted pile" starts building near the nursery — the first felt sense
+  that one slide isn't enough. This is a firmer setup for the Colour Gate
+  than the old "whichever two types weren't picked" framing: the pile is now
+  ALWAYS "Ember and Dew", which is exactly what the Gate's two lanes exist to
+  solve. Once the slide has fed the Meadow continuously for
   30 seconds *and* at least 3 Sprouts of another type are waiting unsorted at
   once, the Colour Gate becomes purchasable in the build menu (behavioral
   unlock — see "Automation unlocks" below). Meanwhile accumulated Dewdrops
@@ -140,6 +149,22 @@ ticks/min.
 **12 Dewdrops/min per settled Sprout**. All three habitats share these values
 — Phase 1 has no reason to make one biome objectively better, which would
 just bias which corner of the garden players rush to first.
+
+> **STALE 2026-07-31**: the code's actual `BASE_DEWDROP_RATE`
+> (`src/data/habitats.ts`) is `0.008`, not `0.02` — 0.08/sec = **4.8
+> Dewdrops/min per settled Sprout**, 2.5x slower than this section's math.
+> Discovered while root-causing a failing e2e test
+> (`placement.dev.spec.ts`'s 5s `dewdropTotal > 0` wait — 0.02 gives exactly
+> 5.0s to a whole Dewdrop with 1 settled Sprout, matching that test's
+> timeout precisely; 0.008 needs ~12.5s). Almost certainly dates to commit
+> bf4c1cd ("Dewdrop income rebalanced against upgrade costs... whole upgrade
+> tree went from ~9 minutes of income to ~33") outliving this doc. Every
+> Dewdrops/min figure and downstream timing projection below this point is
+> now suspect and NOT reconciled against the current rate — flagged rather
+> than silently rewritten, since several of these values are load-bearing
+> against each other (see the coupled-balance-values gotcha in
+> `work_progress.yaml`) and a partial fix could be worse than an honestly
+> stale one. See `work_progress.yaml`'s `e2e-not-rerun` entry.
 
 **Pod spawn** (`src/data/spawning.ts`): `BASE_POD_SPAWN_INTERVAL_MS = 12000`
 (12s), reduced 25% multiplicatively per `podRhythm` level (9000ms → 6750ms →
@@ -243,14 +268,29 @@ Why this shape:
   west, Dew Pond is east, and a Sprout leaving the Gate visibly turns left or
   right. That turn *is* the Gate's decision, made legible without a single word
   of UI.
-- **The Slide sits on the trunk, before the fork.** It is the earlier, simpler
-  helper — one destination, no choice — and it is physically upstream of the
-  thing that adds choice. The order on the ground matches the order in which the
-  player meets them (§9.6's complexity curve, stages 1 → 3).
-- **The southern run is untouched.** Sunflower Meadow leaves the Nursery
-  directly and never passes the Gate, so it stays the hand-carried route and the
-  fallback the Colour Gate's non-matches fall back onto — plus the Nursery's own
-  waiting area.
+- **The Slide's structure stands beside the Nursery, one tile north on the
+  trunk (8,7).** Its ride never actually travels through that tile for ANY
+  target — `gardenRouteBetween` BFS-searches the path network between the
+  ride's real endpoints (Nursery and the target habitat) and never
+  references the Slide's own site tile as a waypoint, for any target it has
+  ever had. That coincidentally overlapped the northern trunk when the Slide
+  used to target Ember Nook or Dew Pond; as of 2026-07-31 it always targets
+  Sunflower Meadow instead (see the beat sheet above), so its cargo now
+  visibly travels the SEPARATE southern run while the structure itself keeps
+  standing one tile north of the Nursery. Mechanically fine — §9.2 only
+  requires the site to sit on the path network, which (8,7) still does, now
+  serving the Ember/Dew trunk it stands on rather than the route its own
+  cargo rides — but it is an open visual-coherence question, not a design
+  claim: see `work_progress.yaml`'s `garden-slide-site-not-on-its-own-route`
+  entry.
+- **The southern run to Sunflower Meadow** leaves the Nursery directly and
+  never passes the Gate. As of 2026-07-31 it is the Garden Slide's route
+  (previous paragraph); a player can still drag a Sprout down it by hand
+  exactly as before. It was never the Colour Gate's actual fallback — a
+  non-matching or off-lane Sprout simply stays idle in the Nursery's own
+  waiting area (see `planRide`'s doc comment in `src/sim/systems.ts`); the
+  Meadow path was only ever narrated that way, not functionally load-bearing
+  for it.
 - **Travelling through the Gate is free.** `tileDistance(Nursery, Gate) +
   tileDistance(Gate, home)` equals `tileDistance(Nursery, home)` (2 + 6 = 8) for
   both northern homes, so a Gate delivery takes the same time as the old direct

@@ -23,7 +23,7 @@ import { UPGRADES } from '../../src/data/upgrades';
 // sim via the bus fast path, not mocks.
 
 test.describe('Garden Slide: unlock + auto-build at 20 correct placements', () => {
-  test('unlocks and auto-builds once correctPlacementCount reaches 20, targeting the most-fed habitat', async ({ page }) => {
+  test('unlocks and auto-builds once correctPlacementCount reaches 20, always targeting Sunflower Meadow', async ({ page }) => {
     test.slow(); // 20 spawn+drop round-trips plus a real Upgrades-panel purchase
     const console_ = collectConsoleErrors(page);
     await page.goto('/');
@@ -44,8 +44,11 @@ test.describe('Garden Slide: unlock + auto-build at 20 correct placements', () =
       .toBe(1);
 
     // Distribute 20 correct placements across the 3 habitats, respecting the
-    // new 9-per-habitat capacity, with emberNook fed the most (8) so
-    // unlockSystem's "most-fed habitat" target selection is unambiguous.
+    // new 9-per-habitat capacity. The exact split no longer matters to WHICH
+    // habitat the Slide targets (as of 2026-07-31 it always targets
+    // Sunflower Meadow — the Colour Gate's fork can never physically reach
+    // it, see unlockSystem's own doc comment in src/sim/systems.ts) — kept
+    // uneven anyway so this test still exercises multiple habitats filling.
     for (let i = 0; i < 8; i += 1) await spawnAndDrop(page, 'ember', 'emberNook');
     for (let i = 0; i < 6; i += 1) await spawnAndDrop(page, 'dew', 'dewPond');
     for (let i = 0; i < 6; i += 1) await spawnAndDrop(page, 'sun', 'sunflowerMeadow');
@@ -65,6 +68,9 @@ test.describe('Garden Slide: unlock + auto-build at 20 correct placements', () =
     // "unlocks and auto-builds" (docs/GAME_DESIGN.md) — both fire back-to-back
     // in the same batch, so unlocked must not come after built.
     expect(unlockedIndex).toBeLessThanOrEqual(builtIndex);
+    // Deterministic since 2026-07-31 (previously "most-fed habitat", which
+    // this test could only make unambiguous by rigging the distribution).
+    expect((events[builtIndex] as { targetHabitatId?: string }).targetHabitatId).toBe('sunflowerMeadow');
 
     console_.assertNone();
   });
@@ -220,14 +226,18 @@ async function grantUntilAffordable(page: Page, target: number): Promise<void> {
   throw new Error(`could not reach ${target} Dewdrops via the debug grant button`);
 }
 
-/** Drives the real unlock path to a built Garden Slide targeting the Ember Nook. */
+/** Drives the real unlock path to a built Garden Slide, which always targets Sunflower Meadow. */
 async function buildGardenSlide(page: Page): Promise<void> {
   await grantUntilAffordable(page, UPGRADES.habitatCapacity.costForLevel(1));
   await buyUpgradeViaUI(page, 'Habitat Capacity'); // +3 slots per habitat
   await expect.poll(async () => (await getUiState(page)).upgradeLevels.habitatCapacity).toBe(1);
-  // emberNook fed the most (so unlockSystem targets it) and left exactly one
-  // slot short of full, so the Slide has one delivery to make before its
-  // destination fills and the blocked state below becomes reachable.
+  // unlockSystem always targets sunflowerMeadow (2026-07-31). baseCapacity is
+  // uniform across habitats, so the 6 sun drops below leave the Slide's real
+  // destination exactly one slot short of full, same as the old emberNook-
+  // targeting setup did — the ember/dew drops now only serve the "idle Slide"
+  // assertion below (a stray natural Sprout of the Slide's own cargo type
+  // could, in principle, race the idle-mesh check; ember/dew can't, since
+  // the Slide never touches those habitats).
   for (let i = 0; i < 8; i += 1) await spawnAndDrop(page, 'ember', 'emberNook');
   for (let i = 0; i < 6; i += 1) await spawnAndDrop(page, 'dew', 'dewPond');
   for (let i = 0; i < 6; i += 1) await spawnAndDrop(page, 'sun', 'sunflowerMeadow');

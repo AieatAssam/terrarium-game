@@ -42,9 +42,18 @@
 //   * the trunk ends in a genuine FORK at (8,6), where the Colour Gate stands:
 //     the WEST lane leads to Ember Nook, the EAST lane to Dew Pond. Two homes at
 //     the same z make this a natural, readable two-way decision;
-//   * the southern run to Sunflower Meadow is untouched — it leaves the Nursery
-//     directly and is the fallback/manual route (GameRules §9.4's "fallback and
-//     waiting paths"), along with the Nursery's own waiting area.
+//   * the southern run to Sunflower Meadow leaves the Nursery directly, and the
+//     Garden Slide's single instance ALWAYS rides it (design decision
+//     2026-07-31: automate Sunflower Meadow, since it's the one habitat the
+//     Colour Gate's fork can structurally never reach — see unlockSystem's own
+//     doc comment in src/sim/systems.ts). This was Phase 1's deliberate
+//     hand-carry-only fallback route before that decision; a player can still
+//     drag a Sprout down it by hand exactly as before, same as any other tile.
+//     GameRules §9.4's "fallback and waiting paths" is still served by the
+//     Nursery's own waiting area, which is the Colour Gate's REAL fallback for
+//     a non-matching or off-lane Sprout (see planRide's own doc comment) — the
+//     Meadow path was never functionally load-bearing for that, only narrated
+//     that way.
 //
 // Arithmetic that must keep holding (pinned in tests/unit/sim.layout.test.ts):
 // `tileDistance(NURSERY, GATE) + tileDistance(GATE, habitat)` equals

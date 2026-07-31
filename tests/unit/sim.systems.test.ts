@@ -173,7 +173,12 @@ describe('unlockSystem (Garden Slide auto-build)', () => {
     expect(result.events).toEqual([]);
   });
 
-  it('unlocks and auto-builds exactly at the threshold, targeting the most-fed habitat', () => {
+  it('unlocks and auto-builds exactly at the threshold, always targeting Sunflower Meadow', () => {
+    // Fed counts on the OTHER two habitats deliberately vary (and outweigh
+    // Sunflower Meadow's own 0) to prove the target is fixed, not picked by
+    // whichever habitat has been fed most (design decision 2026-07-31: the
+    // Colour Gate's fork structurally can't reach Sunflower Meadow, so the
+    // Slide always covers it — see unlockSystem's own doc comment).
     const state = {
       ...createInitialSimState(1),
       correctPlacementCount: UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements,
@@ -188,9 +193,9 @@ describe('unlockSystem (Garden Slide auto-build)', () => {
       // targetHabitatId rides along so the renderer can show this Slide as
       // blocked the moment its destination is full — including before it has
       // ever run a delivery (see src/events/types.ts).
-      { type: 'automation:built', automationId: 'gardenSlide', instanceId: 'gardenSlide-1', targetHabitatId: 'emberNook' },
+      { type: 'automation:built', automationId: 'gardenSlide', instanceId: 'gardenSlide-1', targetHabitatId: 'sunflowerMeadow' },
     ]);
-    expect(result.state.automations[0].targetHabitatId).toBe('emberNook');
+    expect(result.state.automations[0].targetHabitatId).toBe('sunflowerMeadow');
   });
 
   it('never fires twice', () => {
