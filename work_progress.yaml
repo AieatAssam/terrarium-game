@@ -1,0 +1,234 @@
+# Work progress log for Tiny Terrarium Works.
+#
+# PURPOSE: this session has repeatedly been interrupted mid-task by API spend
+# limits, connection drops and agent stalls. This file is the handoff record so
+# work can resume without re-deriving context — for a future session, a
+# different agent, or a subagent picking up someone else's half-finished change.
+#
+# MAINTENANCE CONTRACT — read this if you are an agent working in this repo:
+#   * Update this file as part of the work, not afterwards as a chore.
+#   * Record what you are ABOUT to do before a long task, so an interruption
+#     leaves a trail rather than a mystery.
+#   * Record findings that cost effort to discover, especially negative ones
+#     ("X is not the cause") — those are the expensive ones to rediscover.
+#   * Never record a task as done unless its checks actually passed. A
+#     truthful "blocked" entry is worth more than an optimistic "done".
+
+meta:
+  updated: 2026-07-31
+  head: 20d4d87
+  repo: https://github.com/AieatAssam/terrarium-game
+  live: https://aieatassam.github.io/terrarium-game/
+  tests_passing: 258
+  check_command: npm run typecheck && npm run lint && npm test && npm run build
+
+# ---------------------------------------------------------------------------
+# Authority: what wins when documents disagree
+# ---------------------------------------------------------------------------
+canonical_docs:
+  - path: docs/_scratch/GameRules.md
+    role: >
+      THE canonical design spec. Its section 17 states it wins over any
+      implementation, and that revising it requires a deliberate, recorded
+      change plus updates to dependent docs and tests. Do not quietly
+      contradict it to make an implementation easier. If a feature request
+      conflicts with it, say so and ask, rather than implementing either side
+      silently.
+  - path: docs/CONTRACTS.md
+    role: Integration contract — event union, ids, grid model, save format.
+  - path: docs/ARCHITECTURE.md
+    role: As-built architecture. Kept in sync deliberately; it has gone stale before.
+  - path: docs/HATCHERY_PICKING_PROPOSAL.md
+    role: Design investigation, not yet implemented. See open_questions below.
+
+# ---------------------------------------------------------------------------
+# Hard-won gotchas. Each of these cost real time to discover.
+# ---------------------------------------------------------------------------
+gotchas:
+  - id: agent-interruptions
+    note: >
+      Subagents die mid-task on spend limits, connection drops and stalls.
+      Their on-disk edits PERSIST. Resume them with SendMessage using the
+      agent id rather than starting a fresh agent — the transcript carries the
+      context. Always tell a resumed agent to check current file state before
+      redoing work, or it duplicates edits.
+  - id: browser-session-sharing
+    note: >
+      Every tab on localhost:5173 shares one IndexedDB origin. Concurrent
+      agents each opening a tab will fight over the same save, and clicking
+      "Reset save" destroys another agent's test state. Use tabs_create for an
+      isolated tab, close it when done, and check whether anyone else is
+      mid-verification before resetting the save.
+  - id: stale-hmr
+    note: >
+      Babylon does not reliably recover a scene after an HMR module error, and
+      read_console_messages returns session-cumulative history. Both have
+      produced confident-but-wrong conclusions. Judge a rendering change only
+      after preview_stop + preview_start AND a fresh tab.
+  - id: coupled-balance-values
+    note: >
+      Several data values are load-bearing against each other and have silently
+      broken the game when changed alone. Habitat capacity vs the Garden Slide
+      unlock threshold (the Slide was once literally unreachable). Dewdrop
+      income vs upgrade cost curves. Tests derive these from the data tables;
+      keep it that way — a hardcoded literal once degraded an assertion into
+      "expected 0 to be greater than 0" instead of reporting the regression.
+  - id: sim-boundary
+    note: >
+      Nothing under src/sim may import src/render, src/ui, src/audio or
+      src/input. A test enforces it. Player intent that has no GameEvent member
+      is exposed as plain functions on SimRuntime (purchaseUpgrade,
+      setColourGateLane, getUpgradeLockReason).
+  - id: sprite-positioning
+    note: >
+      Meshes are positioned by CENTRE. Heights chosen as if they were the
+      bottom edge buried sprites inside drums repeatedly, in three separate
+      places. src/render/propDims.ts is now the single source of truth for prop
+      dimensions; derive heights from it rather than writing literals.
+
+# ---------------------------------------------------------------------------
+# Completed and committed
+# ---------------------------------------------------------------------------
+completed:
+  - commit: 20d4d87
+    summary: Habitat drop hitbox uses real footprint + Euclidean distance.
+    detail: >
+      Was rounding the drop point to a tile then comparing Manhattan distance,
+      which overcounts diagonals and ignored that the larger habitats have a
+      ~1.37 footprint. Not verified by a live drag — the shared browser session
+      made isolated UI testing unreliable — so it rests on the maths plus green
+      checks.
+  - commit: 1a8c462
+    summary: Design proposal for picking Sprouts from the hatchery.
+    detail: Recommends building nothing yet; see open_questions.
+  - commit: cc59804
+    summary: GitHub Pages deploy workflow.
+    detail: >
+      Also fixed the manifest asset resolver, which returned root-absolute
+      URLs that would have 404'd every texture under a Pages subpath.
+  - commit: 9d55a30
+    summary: Reset Save actually resets; baseColor synced on texture swap.
+  - commit: 7e1355e
+    summary: Habitat shows a population count past six residents.
+    detail: >
+      Six is not a taste call — the settle-slot layout took row index modulo
+      row count, so the 7th Sprout landed exactly on the 1st.
+  - commit: 9ca19d9
+    summary: Colour Gate given a real trunk-and-fork to govern; Nursery rests when crowded.
+  - commit: bf4c1cd
+    summary: Dewdrop income rebalanced against upgrade costs.
+    detail: Whole upgrade tree went from ~9 minutes of income to ~33.
+  - commit: 30371b4
+    summary: Garden Slide visibly carries Sprouts along the path.
+    detail: >
+      Sim owns ride duration (carried on the event) so the speed upgrade is
+      visible; interpolation runs off the render clock, not the 100ms sim tick,
+      which was the cause of stepped motion.
+  - commit: d30f77c
+    summary: Procedural garden generation; flat scenery cards replaced by volumes.
+    detail: >
+      Positional-hash seeding rather than a stream PRNG, so adding or rejecting
+      one instance cannot reshuffle the whole garden.
+  - commit: 4fd7e19
+    summary: Automation chain made reachable; its gates explained in the UI.
+
+# ---------------------------------------------------------------------------
+# In flight — uncommitted work in the tree RIGHT NOW
+# ---------------------------------------------------------------------------
+in_flight:
+  - owner: subagent (transport + crowd performance)
+    status: running at time of writing
+    files:
+      - src/render/sprouts.ts
+      - src/render/index.ts
+      - src/render/automation.ts
+      - src/sim/systems.ts
+      - src/sim/runtime.ts
+      - src/events/types.ts
+      - src/input/index.ts
+      - docs/CONTRACTS.md
+      - tests/unit/sim.systems.test.ts
+      - tests/unit/render.nurserySlots.test.ts
+    scope: >
+      Three user reports plus a performance target: (1) reported transport
+      regression, (2) gap between a carried Sprout and the conveyor reading as
+      "floating nearby" rather than "riding", (3) no way to manually drop a
+      Sprout onto the Slide — adjudicateAutomationDrop and a
+      NURSERY_VISIBLE_SLOTS crowd cap have appeared in the tree, so both are
+      partly built. Performance target: ~850 Sprout meshes measured 16.5 FPS
+      against a 60 FPS goal.
+    caution: >
+      Do not commit these files as your own work without checking whether that
+      agent is still running. Do not "fix" errors in files you do not own.
+
+# ---------------------------------------------------------------------------
+# Known open issues
+# ---------------------------------------------------------------------------
+open_issues:
+  - id: sprout-crowd-fps
+    severity: high
+    note: >
+      ~850 live Sprout meshes measured 16.5 FPS. The Nursery rest caps new
+      accumulation but nothing culls an existing crowd. Being worked; see
+      in_flight.
+  - id: ground-dropped-sprouts
+    severity: medium
+    note: >
+      adjudicatePlacement returns a no-op when overHabitat is null
+      (src/sim/systems.ts), so a Sprout dropped on open grass stays there
+      permanently. GameRules section 5.3 already prescribes the fix: it should
+      return to a waiting area. User floated "wilt and disappear" instead —
+      declined, because that breaks sections 7.4, 3.2, 14 and 2.5 (despawn from
+      inaction, distress state, creature death, loss). Awaiting a decision.
+  - id: habitat-full-art-unused
+    severity: low
+    note: >
+      habitat.<id>.full exists in the asset manifest and is never used, though
+      it is the strongest "visibly has no room" cue. Needs a crop-aware texture
+      swap first, because attachStandee applies a UV content-crop per manifest
+      key and a naive swap would render the art uncropped.
+  - id: e2e-not-rerun
+    severity: medium
+    note: >
+      The Playwright suite has not been run end to end against the recent
+      rendering, economy and topology changes. It is deliberately excluded from
+      CI (needs browser binaries, slow). docs/QA_REPORT.md is correspondingly
+      behind.
+  - id: motion-config-contrast
+    severity: low
+    note: >
+      MotionConfig has no high-contrast field, so habitats.ts reads
+      data-contrast directly via its own MutationObserver. Folding contrast into
+      motion.ts would remove the duplicate observer.
+
+# ---------------------------------------------------------------------------
+# Decisions taken, so they are not silently relitigated
+# ---------------------------------------------------------------------------
+decisions:
+  - q: Pivot to high-poly 3D / AAA models?
+    a: >
+      No. User chose "richer 2.5D, same pipeline". Fidelity comes from
+      materials, lighting, bevelled geometry and layering — not from a
+      modelling scope change.
+  - q: Should Sprouts left on the ground wilt and vanish?
+    a: >
+      Recommended against — violates four GameRules sections. The
+      spec-mandated alternative is returning to a waiting area. Not yet
+      actioned; user has not replied.
+  - q: New upgrade for picking a colour out of the hatchery?
+    a: >
+      Proposal recommends building nothing now. The Colour Gate already covers
+      routing at the game's current complexity stage; a priority-picking device
+      ("Priority Petal") belongs later, once a fourth habitat makes two lanes
+      insufficient. Full sketch in docs/HATCHERY_PICKING_PROPOSAL.md.
+  - q: WebGPU image-based lighting?
+    a: >
+      Gated to WebGL only. Any non-uniform environment cube content
+      black-screens this project's WebGPU backend, reproduced across several
+      construction paths. GameRules section 12 requires WebGL baseline and
+      treats WebGPU as opportunistic, so shipping without IBL on that backend
+      is compliant.
+
+open_questions:
+  - Should ground-dropped Sprouts walk back to the Nursery waiting area (GameRules 5.3)?
+  - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?

@@ -260,6 +260,19 @@ Do not stop at functional. Iterate until the visual QA passes every required cat
 PROJECT-SPECIFIC CONSTRAINTS (Tiny Terrarium Works)
 ==================================================
 
+- Read `CLAUDE.md` and `work_progress.yaml` in the repo root BEFORE starting.
+  `work_progress.yaml` records what is already done, which files are
+  uncommitted and owned by another agent, which approaches were already tried
+  and rejected, and the gotchas that have cost real time — reading it is far
+  cheaper than rediscovering any of it.
+- You MUST keep `work_progress.yaml` current as part of your work, not as an
+  afterthought: record what you are about to attempt before a long task (so an
+  interruption leaves a trail), record expensive findings including negative
+  ones ("X is not the cause, proved by Y"), note which uncommitted files are
+  yours, and never mark something done unless its checks actually passed. This
+  project loses agents mid-task to spend limits and stalls regularly; that file
+  is how the work survives.
+
 - Stay inside the existing 2.5D stylised pipeline (Babylon.js, TypeScript, Vite). This is NOT a mandate to pivot to full 3D/AAA-poly-count models — richness must be achieved via materials, lighting, geometry bevels, and layered art within the current diorama-with-standees look, not a scope change to high-poly 3D character/prop modelling.
 - Respect `docs/CONTRACTS.md` and the sim/render boundary in `docs/ARCHITECTURE.md` — never modify anything under `src/sim/`, `src/data/`, `src/events/`, or `src/persistence/`; this agent's changes are scoped to `src/render/` (and `src/ui/` only for visual/CSS polish, never state logic), plus the docs listed above.
 - Original assets only — no third-party textures/models/HDRIs/audio. Author or synthesize everything; document provenance in `docs/ASSET_CREDITS.md`.
