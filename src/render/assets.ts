@@ -70,7 +70,13 @@ function resolveManifestUrl(key: ManifestKey): string | undefined {
   const path = manifest?.[key];
   if (!path) return undefined;
   if (/^https?:\/\//.test(path) || path.startsWith('/')) return path;
-  return `/${path}`;
+  // Must honour the deployment base, exactly as loadManifest already does for
+  // manifest.json itself. A root-absolute "/assets/..." resolves against the
+  // domain root, which is correct in dev but 404s everywhere on GitHub Pages,
+  // where the game is served from a /<repo>/ subpath — every texture in the
+  // build would have silently fallen back to a flat placeholder colour.
+  const base = import.meta.env.BASE_URL ?? '/';
+  return `${base}${base.endsWith('/') ? '' : '/'}${path}`;
 }
 
 const textureCache = new Map<string, Texture>();
