@@ -239,9 +239,19 @@ export const NURSERY_VISIBLE_SLOTS = NURSERY_SLOTS_PER_ROW * NURSERY_WAIT_ROWS;
 const NURSERY_SLOT_LATERAL = 0.5;
 const NURSERY_SLOT_ROW_SPACING = 0.42;
 /** How far toward the viewer the front row stands from the Nursery's centre —
- * clear of the mound itself and of the trunk path leaving north toward the
- * Garden Slide. */
-const NURSERY_FRONT_DISTANCE = 0.85;
+ * clear of the mound itself, of the pod standee card billboarded on top of it
+ * (world.ts's `terrarium.nursery.cap`, ~1 unit tall, Y-billboarded to always
+ * face the fixed garden camera — see GARDEN_CAMERA_ALPHA), and of the trunk
+ * path leaving north toward the Garden Slide. 0.85 cleared the mound's own
+ * body (halfWidth 0.8) but not the taller standee sitting on top of it: at
+ * the production camera angle (same alpha/beta as GARDEN_CAMERA_ALPHA/
+ * ISO_BETA, just zoomed in), the standee was the nearest hit on a ray through
+ * the front-centre waiting Sprout's own crown — genuine 3D occlusion, not a
+ * draw-order bug (confirmed with src/render/index.ts's dev-only pickRay
+ * hook). Screenshot-verified before/after at 12 waiting Sprouts (the
+ * standing-room cap): the front row's crown tips visibly touched the mound's
+ * silhouette at 0.85 and fully cleared it at 1.2. */
+const NURSERY_FRONT_DISTANCE = 1.2;
 const NURSERY_ROW_STAGGER = 0.5;
 
 /**

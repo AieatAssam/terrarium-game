@@ -124,6 +124,40 @@ gotchas:
       way: 13.6 FPS median at 8x CPU throttle on the pre-fix code, in the
       exact scenario that was 60 FPS unthrottled — the bug only shows under
       representative hardware constraints.
+  - id: drag-height-plane-vs-ground-plane
+    note: >
+      A HELD Sprout's mesh sits on the pointer's DRAG_HEIGHT plane
+      (y = SPROUT_FLOAT_HEIGHT = 1.13), but endDrag resolves the drop on the
+      GROUND plane (y = 0). At the default camera (elevation ~28 deg) the
+      two projections of the SAME pixel are ~2.1 world units apart, the
+      drag-height one closer to the camera. Verified numerically from
+      src/input/index.ts's own console.debug ray logs: pixel (687,360) ->
+      ground (8.00, 7.00) exactly, drag-height (6.43, 5.56). So: projecting
+      a tile at y=0 gives the correct DROP pixel, but the mesh will not be
+      standing on that tile while held, and a declined/left Sprout remains
+      at the drag-height position, not at the drop tile. Any test or code
+      comparing a held/just-dropped mesh position against tile coordinates
+      must account for this — it cost three diagnostic e2e runs.
+  - id: crowded-nursery-pick-radius
+    note: >
+      Nursery waiting slots fan out 0.5 world units apart
+      (NURSERY_SLOT_LATERAL) but pickSproutId accepts anything within 0.55
+      of the pointer's ground point (SPROUT_PICK_RADIUS) — picking a
+      SPECIFIC Sprout out of a crowded waiting area is genuinely ambiguous,
+      for players and tests alike. e2e drags should pick by live mesh
+      projection and be prepared to have grabbed a neighbour.
+  - id: spawnandid-pop-race
+    note: >
+      tests/e2e/helpers.ts's debugSpawnAndGetId pops the LAST id pushed to
+      __ttSpawnedIds — but natural pod spawns push to the same array, so any
+      pod spawn landing between the debug click and the pop makes
+      spawnAndDrop drop the wrong (natural) Sprout. In build-heavy specs
+      this silently leaves correctPlacementCount short of the Garden Slide
+      unlock and fails 20-60s later at the unlock poll, looking like a
+      progression bug. manualDrop.dev.spec.ts works around it with
+      debugSpawnViaDom (filters ids by the debug-sprout- prefix);
+      automation.dev.spec.ts and starSprout.dev.spec.ts still use the racy
+      helper and can flake the same way.
 
 # ---------------------------------------------------------------------------
 # Completed and committed
@@ -257,39 +291,292 @@ completed:
 # ---------------------------------------------------------------------------
 # In flight — uncommitted work in the tree RIGHT NOW
 # ---------------------------------------------------------------------------
-in_flight: []
-# (empty — the crowd-performance/transport/conveyor/manual-drop work above
-# landed and is committed as a98b552. Nothing else was left uncommitted by
-# this agent at handoff time; check `git status` to confirm before assuming.)
+in_flight:
+  - owner: claude session 2026-07-31 (resuming kimi-code's queued items)
+    files: [docs/_scratch/*.mjs (several new probes), src/render/index.ts, src/render/sprouts.ts]
+    task: >
+      BUG #1 (Nursery Sprouts clip behind the soil mound) — DIAGNOSED AND
+      FIXED, screenshot-verified. Root cause: NURSERY_FRONT_DISTANCE (0.85)
+      was tuned against the mound's own body footprint (NURSERY_BODY
+      halfWidth 0.8) but never against `terrarium.nursery.cap`, the pod
+      illustration standee billboarded on TOP of the mound (world.ts,
+      ~1 world unit tall, Y-billboarded to always face the camera). At the
+      production camera angle (confirmed identical alpha/beta to
+      GARDEN_CAMERA_ALPHA/ISO_BETA in src/render/camera.ts — the probe
+      camera was not a distorted stand-in), a pickRay through the
+      front-centre waiting Sprout's own crown hit the standee CLOSER to
+      the camera than the crown itself — genuine 3D occlusion, not a
+      draw-order/depth-sort bug (used src/render/index.ts's dev-only
+      pickRay/meshPosition hooks, added this session, to confirm rather
+      than eyeballing screenshots — a raw bounding-box-corner probe first
+      gave a misleading result because the Sprout's plane has large
+      transparent margin around the painted character; corrected by
+      reading real crowd screenshots at production zoom instead). Fix:
+      NURSERY_FRONT_DISTANCE 0.85 -> 1.2 (src/render/sprouts.ts), the
+      smallest value that visibly cleared the standee at 12 waiting
+      Sprouts (the visible-slot cap) in a before/after screenshot
+      comparison; stays inside the 1.25 scenery-exclusion radius already
+      reserved around the Nursery tile (src/render/layout.ts:520), so nothing
+      else needed to move. tests/unit/render.nurserySlots.test.ts and
+      render.settleSlots.test.ts pass unchanged (20/20) — they assert
+      structural properties (nulls past the visible-slot count,
+      determinism), not the literal offset value. Full verification stack
+      (typecheck/lint/258 tests/build) re-run afterward and all four pass.
+      SCOPE OF THE VISUAL VERIFICATION: only checked at ISO_BETA
+      (Math.PI/2.9, ~62deg from vertical) — the camera's default pitch and
+      the only one screenshotted, at both radius 8 (close) and the default
+      radius 19 (wide). Beta is player-adjustable down to MIN_BETA
+      (Math.PI/6, much more overhead/top-down) and up to MAX_BETA
+      (Math.PI/2.1, much shallower/eye-level) — NOT swept. A shallower or
+      steeper pitch than ISO_BETA could plausibly reopen or worsen the
+      occlusion; not checked.
+
+      BUG #2 (emptied Nursery, spawning stays blocked) — ROOT CAUSE FOR
+      THE PLAYER-VISIBLE SYMPTOM CONFIRMED (mechanism (a) below);
+      countWaitingSprouts/the spawn gate itself is NOT broken. Of the
+      three candidate mechanisms an earlier pass in this session
+      identified:
+        (a) CONFIRMED, screenshot-proven. NURSERY_VISIBLE_SLOTS (12) ==
+            NURSERY_REST_THRESHOLD (12), and releaseNurserySlot
+            immediately backfills a freed visible slot from
+            nurseryOverflow (src/render/sprouts.ts). Decisive test
+            (docs/_scratch/nursery-overflow-mask-probe.mjs): spawned 30
+            idle Sprouts, settled exactly the 12 currently-VISIBLE ones
+            via real sprout:dropped events (an achievement even fired,
+            proving the settles were real) — waitingSproutCount correctly
+            dropped 30->18 and the banner text updated to "18 little ones
+            are waiting", but the crowd around the Nursery mound is VISUALLY
+            IDENTICAL before and after (still exactly 12 standing there —
+            /tmp/overflow-before.png vs /tmp/overflow-after.png), because
+            12 overflow Sprouts were promoted into the freed slots. Still
+            resting (18 >= 12). A player who watches the crowd rather than
+            reading the note's fine print sees themselves "empty the
+            nursery" repeatedly with the pod visually never thinning out —
+            exactly the reported "count of ones removed does not update"
+            experience, even though the real count and the gate are both
+            behaving correctly underneath. THIS IS A DESIGN/UX TRADE-OFF,
+            NOT A CODE BUG: NURSERY_VISIBLE_SLOTS exists for a proven perf
+            reason (commit a98b552, crowd FPS fix), so shrinking it back
+            down isn't free, and the banner already carries the real
+            number. Needs a product decision, not a silent code change —
+            see open_issues:nursery-crowd-masks-real-progress.
+        (b) countWaitingSprouts counts ANY idle Sprout including ones
+            parked at the Colour Gate signpost (by its own docstring) —
+            NOT reproduced at runtime this session (would need a built
+            Colour Gate plus a lane's habitat actually full; judged too
+            expensive to script for this pass). Source-confirmed, though:
+            exactly one Colour Gate automation instance can ever exist
+            ('colourGate-1', a fixed id in systems.ts's unlockSystem-
+            equivalent build step — not a loop), and an instance carries
+            at most one Sprout at a time (the 'busy' decline reason's own
+            invariant), so at most ~1 Sprout can be idle-at-the-Gate at
+            once. Genuinely small next to the threshold of 12, but this is
+            still a code-read conclusion, not a measured one — left open,
+            not fixed, not disproven at runtime.
+        (c) A drop onto an already-full habitat returns
+            sprout:placed:incorrect and the Sprout stays idle — NOT
+            reproduced this session either (same reason as (b): needs a
+            filled habitat to test against). Left open.
+      Also checked, NOT a bug: spawnSystem's resting->easing recovery.
+      The doc comment's "exactly one Sprout arrives promptly" undersells
+      the real wait — accumulated is clamped to livelyInterval (12000ms)
+      while resting, but on crossing into easing at waitingCount=11 the
+      new interval is livelyInterval * ~5.17 (getNurseryPaceMultiplier)
+      = ~62000ms, so the first post-rest spawn is really ~50s away, not
+      immediate. Not severe enough to act on unprompted; noted here so a
+      future confused "why didn't it spawn right away" report isn't
+      re-investigated from scratch.
+
+      Scratch probes added this session (all under docs/_scratch/, all
+      re-runnable against a live `npm run dev` at localhost:5173):
+      nursery-refill-probe.mjs, nursery-cap-offset-probe.mjs,
+      nursery-front-distance-probe.mjs, nursery-content-top-probe.mjs,
+      zoom-check.mjs / zoom-check12.mjs / zoom-check12-capoffset.mjs,
+      default-view-check.mjs, nursery-overflow-mask-probe.mjs. Two new
+      dev-only debug hooks added to src/render/index.ts: `meshPosition`
+      (read/nudge a mesh's position live, for binary-searching clearance
+      fixes without a reload) and the pre-existing pickRay/setMeshEnabled/
+      alphaOrder from the prior session (were present but had never
+      actually been RUN before this session — screenshots alone had been
+      judged inconclusive and the instrumentation sat unused).
+    status: bug #1 fixed and screenshot-verified, NOT yet run through full
+      verification (typecheck/lint/test/build). bug #2 diagnosed with a
+      confirmed, demonstrated root cause for the reported symptom, but no
+      code change made pending a product decision (see open_issues) — two
+      of three candidate mechanisms remain genuinely unconfirmed, not
+      ruled out.
+  - owner: kimi-code session 2026-07-31
+    files: [work_progress.yaml, tests/e2e/manualDrop.dev.spec.ts]
+    task: >
+      DONE 2026-07-31: pointer-tested a real mouse drag-and-drop onto the
+      Garden Slide (closes open issue manual-drag-onto-slide-not-pointer-
+      tested). New spec tests/e2e/manualDrop.dev.spec.ts, serial mode, two
+      tests, BOTH PASS against the dev server. Decline test: real CDP mouse
+      drag of a wrong-kind Sprout onto the Slide round-trips
+      pointer->bus->sim->event and asserts sprout:automationDeclined reason
+      wrongKind plus the mesh staying enabled at the drop point (drop point
+      is the pointer's y=1.13 drag-height plane, NOT the y=0 ground — see
+      the drag-height-plane-vs-ground-plane gotcha; the earlier "mesh at
+      (6.43,5.56)" mismatch was exactly that, not a bug). Boarding test: the
+      tick dispatcher wins any race with real CDP input (~100ms per CDP
+      round trip = a full tick), so the whole drag runs inside ONE
+      page.evaluate — DOM-click spawn, await Promise.resolve() to flush the
+      spawn microtask, then synthetic PointerEvents
+      (pointerdown/move/up, setPointerCapture/hasPointerCapture stubbed).
+      Asserts transportStarted fromTile nursery (8,8) toTile emberNook, no
+      decline, settled within 10s. UNCOMMITTED.
+    status: done — awaiting commit decision
+  - owner: kimi-code session 2026-07-31
+    files: []
+    task: >
+      SUPERSEDED — see the claude session 2026-07-31 in_flight entry near
+      the top of this file for the actual diagnosis/fix of both bugs listed
+      here (mound clip: fixed; spawn-block: root cause demonstrated,
+      product decision pending). Left as-is for history rather than
+      deleted; do not re-investigate from this stub.
+    status: superseded, see above
+  - owner: kimi-code session 2026-07-31
+    files: []
+    task: >
+      SUPERSEDED for item (1) — see the "ground-dropped-sprouts" open_issue:
+      turned out already implemented for the common case, one narrow edge
+      case fixed 2026-07-31 (claude session). Item (2), automating
+      Sunflower Meadow, is STILL QUEUED and NOT started — it is the largest
+      remaining item, a deliberate GameRules §17 revision needing the doc
+      change plus dependent docs/tests, not just a layout edit.
+    status: item 1 superseded (see above); item 2 still queued
 
 # ---------------------------------------------------------------------------
 # Known open issues
 # ---------------------------------------------------------------------------
 open_issues:
+  - id: nursery-crowd-masks-real-progress
+    severity: medium
+    note: >
+      NEW 2026-07-31, screenshot-confirmed (see the in_flight bug #2 entry
+      for the full test). NURSERY_VISIBLE_SLOTS == NURSERY_REST_THRESHOLD
+      (both 12), and a freed visible slot is backfilled from the overflow
+      queue instantly — so with a backlog bigger than 12, the waiting crowd
+      NEVER visibly shrinks no matter how many the player settles, even
+      though the real count (and the nursery note's own printed number) is
+      dropping correctly underneath. Reads exactly like the reported "I
+      emptied the nursery and it's still full" bug, but the spawn gate and
+      the count are both actually correct — this is the crowd VISUAL lying
+      about progress, not a logic bug. Needs a product decision before
+      touching the code, e.g.: (a) some "+N more waiting, out of sight"
+      indicator near the crowd; (b) let the visible crowd shrink below the
+      slot cap when resting so progress reads visually, only re-filling to
+      12 once lively; (c) decide the masking is acceptable since the note's
+      number is accurate and leave it. NURSERY_VISIBLE_SLOTS exists for a
+      proven perf reason (commit a98b552's crowd-FPS fix) so simply
+      shrinking it is not free. Awaiting a decision.
+
+      USER PUSHBACK 2026-07-31: this is NOT what they experienced. Their
+      report is stronger — they drag Sprouts away by hand until the Nursery
+      looks COMPLETELY EMPTY (not "still looks full"), yet the warning
+      still cites a nonzero count ("10 or some such") blocking new spawns.
+      That is a different symptom from this entry's masking (which produces
+      "still looks full while draining underneath", never "looks empty
+      while blocked") — mechanism (a) above does not explain it. Follow-up
+      investigation this session (confirmed manual dragging is their
+      method; save state to reproduce against not available):
+        - docs/_scratch/nursery-fully-drained-probe.mjs: settled 20/20 idle
+          Sprouts via bus events (clean, no mis-picks) -> waitingSproutCount
+          correctly reached exactly 0, rhythm 'lively', 0 visible nursery
+          sprites, spawning resumed. No desync in the clean case.
+        - docs/_scratch/nursery-real-drag-drain-probe.mjs: 20 REAL mouse
+          drags (page.mouse down/move/up), each precisely targeted at a
+          live mesh's own current position (nearest-to-Nursery selection,
+          correct habitat per type) -> 20/20 landed as
+          sprout:placed:correct, ZERO sprout:placed:incorrect (i.e. no
+          mis-picks even though NURSERY_SLOT_LATERAL=0.5 <
+          SPROUT_PICK_RADIUS=0.55, the crowded-nursery-pick-radius gotcha's
+          overlap). Final state after the 20 drags was NOT empty
+          (waitingSproutCount 6, 1 still visible) but that is fully
+          explained by natural pod spawns continuing to arrive throughout
+          the ~5s the drags took — not a counting bug, an artifact of not
+          pausing spawning during the test.
+        - Re-read planRide (src/sim/systems.ts): the Colour Gate's own
+          leg-1 dispatch explicitly refuses to send a Sprout from the
+          Nursery toward the Gate unless ITS destination habitat has room
+          AT THAT MOMENT ("clearing the crossroads always comes before
+          adding to it, so Sprouts never stack up at the signpost" — the
+          code's own comment), and leg-2 (Gate -> habitat) is always
+          attempted before a new leg-1 on every tick. Worked through
+          whether a same-lane pileup at the Gate is possible if that lane's
+          habitat is chronically full: it is NOT — a second same-lane
+          Sprout at the Nursery has the same "destination full" check and
+          is never invited to the Gate either, so it piles up VISIBLY at
+          the Nursery, not invisibly at the Gate. Only one Colour Gate
+          instance can ever exist ('colourGate-1', not a loop). So mechanism
+          (b) (idle-at-Gate sprouts inflating the count) cannot plausibly
+          reach anywhere near "10" — bounded to roughly 1 at a time by the
+          system's own design, confirmed by code reading (still not
+          runtime-tested).
+      NOT YET FOUND: a reproduction of "Nursery visibly empty, internal
+      count still elevated." Every mechanism checked either doesn't fit the
+      symptom (a) or is structurally too small to produce "~10" (b, c).
+      Still open. Best next step is a live repro with the user (watch it
+      happen) or their actual save data — guessing further without either
+      has hit diminishing returns this session.
+
+      USER DECISION 2026-07-31: drop it for now rather than chase further
+      without a live repro or save data. Do not re-investigate from a cold
+      start — wait for a concrete repro (their save, or watching it happen)
+      before spending more session time on this specific "visibly empty
+      yet blocked" symptom. The nursery-crowd-masks-real-progress design
+      question above is a SEPARATE, confirmed, still-open issue.
   - id: manual-drag-onto-slide-not-pointer-tested
     severity: low
     note: >
-      adjudicateAutomationDrop + the sprout:dropped.overAutomation wiring is
-      unit-tested (10 cases, exact) and browser-verified at the bus level
-      (a real decline round-tripped through input->bus->sim->event with the
-      Sprout confirmed still enabled/pickable). NOT independently verified
-      via an actual mouse drag (computer tool pointer events) onto the
-      Slide specifically, because the shared Browser-pane session's save
-      had grown too large/messy for reliable coordinate math in the time
-      available. If picking this up: reset the save first, build ONE
-      Garden Slide, and drag an eligible Sprout onto it — see the
-      playwright-vs-browser-pane gotcha for a cleaner alternative (seed a
-      seeded, small save via a headed Playwright script rather than the
-      live shared tab).
+      CLOSED 2026-07-31: tests/e2e/manualDrop.dev.spec.ts passes both cases
+      with real pointer events (decline via real CDP mouse drag; boarding
+      via synthetic PointerEvents inside one page.evaluate to beat the tick
+      dispatcher). See the in_flight entry for the details.
   - id: ground-dropped-sprouts
-    severity: medium
+    severity: low
     note: >
-      adjudicatePlacement returns a no-op when overHabitat is null
-      (src/sim/systems.ts), so a Sprout dropped on open grass stays there
-      permanently. GameRules section 5.3 already prescribes the fix: it should
-      return to a waiting area. User floated "wilt and disappear" instead —
-      declined, because that breaks sections 7.4, 3.2, 14 and 2.5 (despawn from
-      inaction, distress state, creature death, loss). Awaiting a decision.
+      CORRECTED 2026-07-31 — this entry's premise was WRONG for the common
+      case, per its own project's "verify in the browser" standard: this
+      session drove a REAL mouse drag (docs/_scratch/ground-drop-real-drag-
+      probe.mjs — actual page.mouse down/move/up, not a bus-level fake) of
+      a Nursery-idle Sprout onto open grass and it snapped straight back to
+      its Nursery waiting slot, same tick, no code change needed. Root
+      cause of the false premise: adjudicatePlacement's no-op (sim, quoted
+      below) IS real, but src/render/sprouts.ts's own `sprout:dropped`
+      handler already treats "no habitat, no automation" as "back to
+      idle-at-Nursery" via claimNurserySlot, entirely independent of the
+      sim no-op — nobody had checked the render side before writing this
+      entry. adjudicatePlacement returns `{ state, events: [] }` when
+      overHabitat is null (src/sim/systems.ts) — harmless, since an idle
+      Sprout's sim `tile` is never mutated by pickup or a null-habitat drop
+      either, so sim and render stay in agreement with no event needed.
+      ONE real, narrower gap FOUND BUT DELIBERATELY NOT FIXED this session:
+      a Sprout idle at the Colour Gate's signpost (tile = COLOUR_GATE_TILE,
+      after a first-leg arrival — see bug #2 mechanism (b) above) would
+      stay wherever a ground-drop released it, because claimNurserySlot
+      only recognises the Nursery's own tile — nothing else repositions it.
+      A first attempt at a fix (snap to `tileToWorld(visual.tile)` in the
+      same handler) was written, then REVERTED per advisor review: it could
+      not be runtime-verified (no scripted way to reach a Gate-parked idle
+      Sprout this session) and had at least one concrete flaw found by
+      inspection alone — it preserved `mesh.position.y` from the drag
+      (SPROUT_FLOAT_HEIGHT, 1.13) rather than restoring SPROUT_RIDE_HEIGHT
+      (~0.88, what a Gate arrival actually uses), and used the tile
+      *centre* rather than wherever the ride visually parked it. Shipping
+      an unverified fix with a known height mismatch for a case nobody
+      could reproduce was judged worse than leaving the gap open and
+      documented. STILL OPEN: this one edge case, low severity (per the
+      instance-cap reasoning in bug #2 mechanism (b), at most ~1 Sprout can
+      ever be in this state at once). A real fix needs either a scripted
+      path to a Gate-parked idle Sprout (build the Colour Gate + fill a
+      lane's habitat via the actual UI/upgrade flow) to verify against, or
+      at minimum reusing SPROUT_RIDE_HEIGHT instead of the drag height.
+      Original text, for the record: "GameRules section 5.3 already
+      prescribes the fix: it should return to a waiting area. User floated
+      'wilt and disappear' instead — declined, because that breaks sections
+      7.4, 3.2, 14 and 2.5." That decision stands; it just turned out to
+      already be the shipped behaviour for the common case.
   - id: habitat-full-art-unused
     severity: low
     note: >
@@ -338,7 +625,26 @@ decisions:
       construction paths. GameRules section 12 requires WebGL baseline and
       treats WebGPU as opportunistic, so shipping without IBL on that backend
       is compliant.
+  - q: Automate Sunflower Meadow or leave it hand-carry-only?
+    a: >
+      Automate it. User decided 2026-07-31. This contradicts the documented
+      Phase 1 intent (layout.ts's topology comment + the
+      sunflower-meadow-manual-only gotcha), so it is a deliberate GameRules
+      revision — the doc, its section 17 change record, dependent docs and
+      tests must all be updated, not just the conveyor layout. Not yet
+      implemented.
+  - q: What happens to a Sprout dropped on open grass?
+    a: >
+      It returns to the Nursery waiting area, per GameRules 5.3 as written.
+      User confirmed 2026-07-31. TURNED OUT ALREADY IMPLEMENTED for the
+      common case (verified 2026-07-31 with a real pointer drag, see the
+      corrected ground-dropped-sprouts open_issue) — adjudicatePlacement's
+      sim-side no-op was real but harmless; src/render/sprouts.ts's
+      sprout:dropped handler already snaps a Nursery-idle Sprout back to
+      its waiting slot. NO CODE CHANGED for this one: a narrow edge case
+      (Colour-Gate-parked idle Sprout) is still open — an attempted fix was
+      written and then reverted, unverified and with a known flaw; see the
+      ground-dropped-sprouts open_issue for what's left to do there.
 
 open_questions:
-  - Should ground-dropped Sprouts walk back to the Nursery waiting area (GameRules 5.3)?
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?

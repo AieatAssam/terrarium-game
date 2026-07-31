@@ -166,13 +166,76 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
           layerMask: (m as unknown as { layerMask?: number }).layerMask,
           cameraLayerMask: camera.camera.layerMask,
           isInFrustum: m.isInFrustum(Frustum.GetPlanes(scene.getTransformMatrix())),
+          matForceDepthWrite: (mat as { forceDepthWrite?: boolean } | null)?.forceDepthWrite,
+          distanceToCamera: Number(m.getDistanceToCamera().toFixed(3)),
         };
+      },
+      // Draw-order inspector for the alpha-blend queue: the sorted
+      // transparent-submesh list for rendering group 0 as the renderer will
+      // draw it (index 0 first). "A overpaints B even though B is closer"
+      // bugs are sort-order or depth-write bugs, and you cannot see either
+      // from a screenshot.
+      alphaOrder: (filter?: string) => {
+        const anyScene = scene as unknown as Record<string, unknown>;
+        const rm = (anyScene._renderingManager ?? anyScene.renderingManager) as Record<string, unknown> | undefined;
+        if (!rm) {
+          return [{ order: -1, name: 'NO_RM keys=' + Object.keys(anyScene).filter((k) => k.toLowerCase().includes('render')).join('|'), dist: 0 }];
+        }
+        const groups = (rm._renderingGroups ?? rm.renderingGroups) as {
+          _transparentSubMeshes: { _data: { getMesh: () => { name: string; getDistanceToCamera: () => number } }[]; length: number };
+        }[];
+        if (!groups || groups.length === 0) {
+          return [{ order: -1, name: 'NO_GROUPS rmKeys=' + Object.keys(rm).join('|'), dist: 0 }];
+        }
+        const out: { order: number; name: string; dist: number }[] = [];
+        for (const group of groups) {
+          const arr = group._transparentSubMeshes as unknown as Record<string, unknown>;
+          if (!arr) return [{ order: -1, name: 'NO_TSM groupKeys=' + Object.keys(group).join('|'), dist: 0 }];
+          const data = (arr.data ?? arr._data) as { getMesh: () => { name: string; getDistanceToCamera: () => number } }[];
+          const len = (arr.length ?? data.length) as number;
+          for (let i = 0; i < len; i += 1) {
+            const mesh = data[i].getMesh();
+            out.push({ order: out.length, name: mesh.name, dist: Number(mesh.getDistanceToCamera().toFixed(3)) });
+          }
+        }
+        return filter ? out.filter((e) => e.name.includes(filter)) : out;
       },
       // Content-crop inspector for the standee texture-cropping fix in
       // flatArt.ts (attachStandee) — reports the opaque-content bounding box
       // computed for a manifest key's rasterized texture, in 0..1 UV
       // fractions. Undefined until that key's texture has finished loading.
       contentBBox: (key: string) => getManifestContentBBox(key),
+      // Visibility toggle for occlusion bisection: "does X still render wrong
+      // when Y is hidden?" is the decisive test for overpainting bugs.
+      setMeshEnabled: (name: string, enabled: boolean) => {
+        const m = scene.getMeshByName(name);
+        if (m) m.setEnabled(enabled);
+        return Boolean(m);
+      },
+      // Position probe/nudge for occlusion-fix candidates: reads back the
+      // (possibly parent-relative) position, and optionally sets a new one
+      // first — lets a probe script binary-search a clearance offset live
+      // instead of guessing then reloading.
+      meshPosition: (name: string, xyz?: [number, number, number]) => {
+        const m = scene.getMeshByName(name);
+        if (!m) return null;
+        if (xyz) m.position.set(xyz[0], xyz[1], xyz[2]);
+        return m.position.asArray().map((v) => Number(v.toFixed(3)));
+      },
+      // All geometry hits along the ray through a screen pixel, nearest
+      // first — the ground truth for "which surface is really in front here",
+      // independent of draw order and depth-buffer state.
+      pickRay: (screenX: number, screenY: number) => {
+        const ray = scene.createPickingRay(screenX, screenY, Matrix.Identity(), camera.camera);
+        const hits = scene.multiPickWithRay(ray, (m) => m.isEnabled());
+        return (hits ?? [])
+          .filter((h) => h.hit && h.pickedMesh)
+          .map((h) => ({
+            name: h.pickedMesh!.name,
+            dist: Number(h.distance.toFixed(3)),
+            point: h.pickedPoint ? h.pickedPoint.asArray().map((v) => Number(v.toFixed(3))) : null,
+          }));
+      },
       sceneInfo: () => ({
         clearColor: scene.clearColor.asArray(),
         ambientColor: scene.ambientColor.asArray(),
