@@ -587,10 +587,46 @@ open_issues:
   - id: e2e-not-rerun
     severity: medium
     note: >
-      The Playwright suite has not been run end to end against the recent
-      rendering, economy and topology changes. It is deliberately excluded from
-      CI (needs browser binaries, slow). docs/QA_REPORT.md is correspondingly
-      behind.
+      PARTIALLY ACTIONED 2026-07-31. Ran load.dev/reducedMotion.dev/
+      placement.dev against the NURSERY_FRONT_DISTANCE change (advisor
+      flagged the regression risk directly: nurseryPickupScreenPoint
+      projected the raw Nursery TILE CENTRE, not a real waiting-slot
+      position). CONFIRMED REGRESSION, FIXED: 4 of 5 tests failed
+      immediately (sprout:pickedUp never fired — the tile-centre click no
+      longer landed within SPROUT_PICK_RADIUS of any real waiting Sprout
+      once the front distance grew). Fixed tests/e2e/helpers.ts's
+      nurseryPickupScreenPoint to read the nearest waiting Sprout's LIVE
+      mesh position instead (same technique manualDrop.dev.spec.ts's own
+      sproutScreenPoint already used) — committed. Hit a SECOND, subtler
+      bug while fixing the first: a freshly spawned Sprout's mesh sits at
+      the raw tile centre for its first ~420ms (reveal pop-in), then
+      claimNurserySlot JUMPS it to its real waiting-slot offset in one
+      frame (src/render/sprouts.ts's spawn()) — reading position once and
+      clicking moments later can straddle that jump (measured: tile-centre-
+      exact to 1.56 world units away, well outside the 0.55 pick radius).
+      Fixed by polling until two position reads 80ms apart agree before
+      clicking, rather than hardcoding the 420ms reveal duration in the
+      test helper. 4 of 5 originally-failing tests now pass.
+
+      ONE test still fails, root-caused as UNRELATED to this session's
+      changes, NOT fixed: placement.dev.spec.ts's "settles it and earns
+      Dewdrops" waits `dewdropTotal > 0` with a 5s timeout, but
+      dewdropSystem's own math (src/sim/systems.ts) needs ~12.5s for one
+      settled base-rate Sprout to cross a whole Dewdrop (0.008/tick x 10
+      ticks/sec = 0.08/sec, 1/0.08 = 12.5s) — the test's own 5s timeout is
+      arithmetically impossible to meet even with a perfect pick, and the
+      drag/settle/journal-discovery part of the SAME test (checked first,
+      passes) proves this session's pick fix works correctly. Likely
+      dates to bf4c1cd's Dewdrop rebalance ("whole upgrade tree went from
+      ~9 minutes of income to ~33") outliving this test's timeout — exactly
+      the kind of drift this open_issue already warned about. Fix is
+      either raise the timeout past ~13s or grant a rate-boosting upgrade
+      first; not done this session, flagged rather than fixed to keep this
+      pass scoped to the regression it was checking for.
+
+      STILL NOT DONE: the remaining suite (automation.dev.spec.ts,
+      colourGate specs, starSprout.dev.spec.ts, the preview project, etc.)
+      has not been re-run this session. docs/QA_REPORT.md remains stale.
   - id: motion-config-contrast
     severity: low
     note: >

@@ -47,20 +47,6 @@ export const HABITAT_TILES = {
 export type HabitatKey = keyof typeof HABITAT_TILES;
 export type SproutTypeKey = 'ember' | 'dew' | 'sun' | 'star';
 
-// Mirrors the exported SPROUT_FLOAT_HEIGHT in src/render/sprouts.ts, which is
-// itself derived: Nursery mound top (0.70) + idle-bob amplitude (0.05) +
-// surface clearance (0.03) + the sprite's own half-height (0.35). Used to
-// project the on-screen point where a freshly spawned Sprout can be grabbed.
-//
-// Deliberately a literal rather than an import, and NOT the same mistake
-// src/input/index.ts had: importing it was tried and Playwright's loader cannot
-// resolve Babylon's extensionless deep specifiers (`Cannot find module
-// '@babylonjs/core/Maths/math.color' ... Did you mean ...math.color.js?`), which
-// src/render/sprouts.ts pulls in transitively. So drift is guarded from the
-// other side instead: tests/unit/render.sproutHeights.test.ts asserts the real
-// exported constant still equals this value, and `npm test` fails if it doesn't.
-const SPROUT_FLOAT_HEIGHT = 1.13;
-
 /** Collects console errors + page errors from page load onward. Call `.assertNone()` at the end of a test. */
 export function collectConsoleErrors(page: Page): { errors: string[]; assertNone: () => void } {
   const errors: string[] = [];
@@ -104,8 +90,59 @@ export async function projectToScreen(page: Page, world: { x: number; y: number;
   }, [world]);
 }
 
+/**
+ * Finds whichever waiting Sprout's mesh currently sits nearest the Nursery
+ * tile centre and returns its live world position, or null if none exists.
+ * NOT the tile centre itself: the waiting-slot fan (src/render/sprouts.ts's
+ * nurseryWaitOffset) has always put a Sprout's real mesh some distance from
+ * the tile centre, and NURSERY_FRONT_DISTANCE grew from 0.85 to 1.2
+ * (mound-standee clipping fix) specifically to clear a mound decoration that
+ * has nothing to do with where the app's own pick radius looks — a click at
+ * the literal tile centre can miss every waiting Sprout's SPROUT_PICK_RADIUS
+ * entirely depending on that constant, which is exactly what broke every
+ * caller of this helper when the constant moved.
+ */
+async function nearestNurserySproutPosition(page: Page): Promise<[number, number, number] | null> {
+  return page.evaluate((tile) => {
+    const debug = window.__debug as unknown as {
+      meshNames: (prefix: string) => string[];
+      meshInfo: (n: string) => { pos: number[]; enabled: boolean } | null | undefined;
+    };
+    let best: { pos: number[]; dd: number } | null = null;
+    for (const name of debug.meshNames('terrarium.sprout.')) {
+      const info = debug.meshInfo(name);
+      if (!info || !info.enabled) continue;
+      const dx = info.pos[0] - tile.x;
+      const dz = info.pos[2] - tile.z;
+      const dd = dx * dx + dz * dz;
+      if (!best || dd < best.dd) best = { pos: info.pos, dd };
+    }
+    return best ? (best.pos as [number, number, number]) : null;
+  }, NURSERY_TILE);
+}
+
+/**
+ * Screen point of whichever waiting Sprout's mesh currently sits nearest the
+ * Nursery tile centre (see nearestNurserySproutPosition above for why not
+ * the tile centre itself). A freshly spawned Sprout's mesh spends its first
+ * ~420ms at the raw tile centre before the reveal pop-in finishes and
+ * claimNurserySlot JUMPS it to its real waiting-slot offset in one frame
+ * (src/render/sprouts.ts's spawn()) — reading position once and clicking a
+ * moment later can straddle that jump and miss by a wide margin (measured:
+ * a jump from tile-centre-exact to 1.56 world units away, well outside
+ * SPROUT_PICK_RADIUS 0.55). Polling until two reads 80ms apart agree avoids
+ * clicking mid-jump without hardcoding the animation's own duration here.
+ */
 export async function nurseryPickupScreenPoint(page: Page): Promise<{ x: number; y: number }> {
-  return projectToScreen(page, { x: NURSERY_TILE.x, y: SPROUT_FLOAT_HEIGHT, z: NURSERY_TILE.z });
+  let pos = await nearestNurserySproutPosition(page);
+  for (let i = 0; i < 20 && pos; i += 1) {
+    await page.waitForTimeout(80);
+    const again = await nearestNurserySproutPosition(page);
+    if (again && again[0] === pos[0] && again[2] === pos[2]) break;
+    pos = again;
+  }
+  if (!pos) throw new Error('nurseryPickupScreenPoint: no enabled Sprout mesh found near the Nursery tile');
+  return projectToScreen(page, { x: pos[0], y: pos[1], z: pos[2] });
 }
 
 export async function habitatDropScreenPoint(page: Page, habitat: HabitatKey): Promise<{ x: number; y: number }> {
