@@ -57,10 +57,16 @@ import {
 } from './layout';
 import { prefersReducedMotion, watchReducedMotion } from './motion';
 import { createPaintedMetalMaterial } from './pbrMaterials';
-import { bodyRings, halfHeight, AUTOMATION_BODIES, AUTOMATION_PREVIEW_BODY, type PropBody } from './propDims';
+import { bodyRings, footprintRadius, halfHeight, AUTOMATION_BODIES, AUTOMATION_PREVIEW_BODY, type PropBody } from './propDims';
+import { HABITATS } from '../data/habitats';
 import { SPROUT_TYPES } from '../data/sproutTypes';
 import type { EventBus } from '../events/bus';
 import type { AutomationId, HabitatId, SproutTypeId } from '../core/ids';
+// Render is allowed to import from sim (only sim may never import render/ui/
+// audio/input) — reused here so the hover-validity preview for a manual drop
+// asks the exact same question `adjudicateAutomationDrop` will ask on the
+// real drop, rather than a second, potentially-diverging guess.
+import { colourGateDestination } from '../sim/systems';
 
 const SITE_FALLBACK_COLOR: Record<AutomationId, Color3> = {
   gardenSlide: new Color3(0.55, 0.45, 0.7),
@@ -187,6 +193,28 @@ interface SiteMarker {
 export interface AutomationManager {
   previewAt: (automationId: AutomationId, tile: TileCoord, valid: boolean) => void;
   clearPreview: () => void;
+  /**
+   * The nearest BUILT automation site within `marginTiles` of `world`, or
+   * null. Mirrors `habitats.ts`'s `nearestWithin` exactly (continuous
+   * Euclidean distance against the structure's real footprint, not a
+   * round-to-tile Manhattan check) so a Sprout drop resolves against
+   * automation sites the same forgiving way it already resolves against
+   * habitats (GameRules §10: "generous snapping ... no pixel-perfect
+   * placement"). A site that hasn't been built yet is never a candidate —
+   * its translucent "not yet built" marker is not a valid drop target.
+   */
+  nearestBuiltWithin: (world: { x: number; z: number }, marginTiles: number) => AutomationId | null;
+  /**
+   * Whether `automationId` would currently accept `sproutType` — an
+   * approximation for the drag-hover tint only (mirrors habitats.ts's own
+   * `matchSproutType` hover check, which likewise ignores capacity). The
+   * real, authoritative answer is `adjudicateAutomationDrop` on the actual
+   * drop; this exists purely so a held Sprout dims/brightens while hovering
+   * an automation site the same way it already does while hovering a
+   * habitat, not to gate anything. Null if the site isn't built (no site to
+   * ask), true/false once it is.
+   */
+  matchesSprout: (automationId: AutomationId, sproutType: SproutTypeId) => boolean | null;
   dispose: () => void;
 }
 
@@ -671,6 +699,34 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     previewCap = undefined;
   };
 
+  const nearestBuiltWithin = (world: { x: number; z: number }, marginTiles: number): AutomationId | null => {
+    let best: AutomationId | null = null;
+    let bestDist = Infinity;
+    for (const id of Object.keys(sites) as AutomationId[]) {
+      const site = sites[id];
+      if (!site.built) continue;
+      const centre = tileToWorld(AUTOMATION_SITE_TILES[id]);
+      const dx = world.x - centre.x;
+      const dz = world.z - centre.z;
+      const d = Math.hypot(dx, dz);
+      const limit = footprintRadius(AUTOMATION_BODIES[id]) + marginTiles;
+      if (d <= limit && d < bestDist) {
+        bestDist = d;
+        best = id;
+      }
+    }
+    return best;
+  };
+
+  const matchesSprout = (automationId: AutomationId, sproutType: SproutTypeId): boolean | null => {
+    const site = sites[automationId];
+    if (!site || !site.built) return null;
+    if (automationId === 'gardenSlide') {
+      return site.targetHabitatId ? HABITATS[site.targetHabitatId].matchSproutType === sproutType : false;
+    }
+    return colourGateDestination(gateLanes, sproutType) !== null;
+  };
+
   const dispose = (): void => {
     for (const unsubscribe of unsubscribers) unsubscribe();
     scene.onBeforeRenderObservable.remove(activityObserver);
@@ -686,7 +742,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     }
   };
 
-  return { previewAt, clearPreview, dispose };
+  return { previewAt, clearPreview, nearestBuiltWithin, matchesSprout, dispose };
 }
 
 /** Whether a tile is free for an automation build (inside grid, not on the reserved nursery/habitat/path/other-site layout). Exposed for input's ghost-preview validity check. */

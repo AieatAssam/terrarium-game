@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialSimState, type SimState } from '../../src/sim/state';
 import {
+  adjudicateAutomationDrop,
   adjudicatePlacement,
   automationSystem,
   checkAchievements,
@@ -20,7 +21,7 @@ import {
 } from '../../src/sim/systems';
 import { TICK_MS } from '../../src/sim/loop';
 import { runTick } from '../../src/sim/tick';
-import { HABITAT_TILES, NURSERY_TILE, tileDistance } from '../../src/sim/layout';
+import { COLOUR_GATE_TILE, HABITAT_TILES, NURSERY_TILE, tileDistance } from '../../src/sim/layout';
 import { BASE_POD_SPAWN_INTERVAL_MS } from '../../src/data/spawning';
 import { colourGateLockReason, isColourGateUnlocked, UNLOCK_THRESHOLDS } from '../../src/data/unlocks';
 import { UPGRADES } from '../../src/data/upgrades';
@@ -312,6 +313,174 @@ describe('automationSystem', () => {
     const result = automationSystem(state);
     expect(result.events).toEqual([]);
     expect(result.state.automations[0].carryingSproutId).toBeNull();
+  });
+});
+
+// Player report: automation only ever pulled from the Nursery on its own —
+// there was no way to hand a Sprout to a built Garden Slide/Colour Gate
+// directly. adjudicateAutomationDrop is the immediate (non-tick) reaction to
+// a manual drop onto one, called from src/sim/runtime.ts exactly like
+// adjudicatePlacement is for a habitat drop.
+describe('adjudicateAutomationDrop', () => {
+  const slideState = (targetHabitatId: SimState['automations'][number]['targetHabitatId'] = 'emberNook'): SimState => ({
+    ...createInitialSimState(1),
+    automations: [
+      {
+        id: 'gardenSlide-1',
+        automationId: 'gardenSlide',
+        fromTile: NURSERY_TILE,
+        toTile: NURSERY_TILE,
+        builtAtTick: 0,
+        targetHabitatId,
+        carryingSproutId: null,
+        completesAtTick: null,
+      },
+    ],
+  });
+
+  it('boards a matching Sprout immediately, exactly like the automation would on its own next tick', () => {
+    const state = withSprout(slideState(), 'ember');
+    const result = adjudicateAutomationDrop(state, 'test-sprout', 'gardenSlide');
+    expect(result.events).toEqual([
+      expect.objectContaining({ type: 'sprout:transportStarted', sproutId: 'test-sprout', automationId: 'gardenSlide' }),
+    ]);
+    expect(result.state.automations[0].carryingSproutId).toBe('test-sprout');
+    expect(result.state.sprouts[0].state).toBe('transporting');
+  });
+
+  it('declines a wrong-kind Sprout without moving it, never punitive', () => {
+    const state = withSprout(slideState(), 'dew');
+    const result = adjudicateAutomationDrop(state, 'test-sprout', 'gardenSlide');
+    expect(result.events).toEqual([
+      { type: 'sprout:automationDeclined', sproutId: 'test-sprout', automationId: 'gardenSlide', reason: 'wrongKind' },
+    ]);
+    expect(result.state.sprouts[0].state).toBe('idle'); // untouched — still exactly where it was, still pickable
+    expect(result.state.automations[0].carryingSproutId).toBeNull();
+  });
+
+  it('declines when the destination habitat is already full', () => {
+    let state = withSprout(slideState(), 'ember');
+    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: CAP, capacity: CAP } } };
+    const result = adjudicateAutomationDrop(state, 'test-sprout', 'gardenSlide');
+    expect(result.events).toEqual([
+      { type: 'sprout:automationDeclined', sproutId: 'test-sprout', automationId: 'gardenSlide', reason: 'destinationFull' },
+    ]);
+  });
+
+  it('declines when the automation is already carrying someone', () => {
+    let state = withSprout(slideState(), 'ember', { id: 'other-sprout' });
+    state = withSprout(state, 'ember');
+    state = { ...state, automations: [{ ...state.automations[0], carryingSproutId: 'other-sprout' }] };
+    const result = adjudicateAutomationDrop(state, 'test-sprout', 'gardenSlide');
+    expect(result.events).toEqual([
+      { type: 'sprout:automationDeclined', sproutId: 'test-sprout', automationId: 'gardenSlide', reason: 'busy' },
+    ]);
+  });
+
+  it('declines onto a Garden Slide with no route yet (targetHabitatId unset)', () => {
+    let state = withSprout(slideState(), 'ember');
+    state = { ...state, automations: [{ ...state.automations[0], targetHabitatId: undefined }] };
+    const result = adjudicateAutomationDrop(state, 'test-sprout', 'gardenSlide');
+    expect(result.events).toEqual([
+      { type: 'sprout:automationDeclined', sproutId: 'test-sprout', automationId: 'gardenSlide', reason: 'noRoute' },
+    ]);
+  });
+
+  it('no-ops (no event) for a Sprout that is not idle — a stray/late drop cannot double-board it', () => {
+    const state = withSprout(slideState(), 'ember', { state: 'transporting' });
+    const result = adjudicateAutomationDrop(state, 'test-sprout', 'gardenSlide');
+    expect(result.events).toEqual([]);
+    expect(result.state).toBe(state); // untouched
+  });
+
+  it('declines a drop onto an automation that was never built', () => {
+    const state = withSprout(createInitialSimState(1), 'ember');
+    const result = adjudicateAutomationDrop(state, 'test-sprout', 'gardenSlide');
+    expect(result.events).toEqual([
+      { type: 'sprout:automationDeclined', sproutId: 'test-sprout', automationId: 'gardenSlide', reason: 'notBuilt' },
+    ]);
+  });
+
+  it('boards a Colour Gate drop onto leg 1 (Nursery -> Gate) for a Sprout waiting anywhere but the Gate', () => {
+    let state = createInitialSimState(1);
+    state = {
+      ...state,
+      colourGateLanes: { west: 'ember', east: null },
+      automations: [
+        {
+          id: 'colourGate-1',
+          automationId: 'colourGate',
+          fromTile: NURSERY_TILE,
+          toTile: COLOUR_GATE_TILE,
+          builtAtTick: 0,
+          carryingSproutId: null,
+          completesAtTick: null,
+        },
+      ],
+    };
+    state = withSprout(state, 'ember');
+    const result = adjudicateAutomationDrop(state, 'test-sprout', 'colourGate');
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        type: 'sprout:transportStarted',
+        sproutId: 'test-sprout',
+        automationId: 'colourGate',
+        toTile: COLOUR_GATE_TILE,
+      }),
+    ]);
+  });
+
+  it('boards a Colour Gate drop onto leg 2 (Gate -> home) for a Sprout already standing at the signpost', () => {
+    let state = createInitialSimState(1);
+    state = {
+      ...state,
+      colourGateLanes: { west: 'ember', east: null },
+      automations: [
+        {
+          id: 'colourGate-1',
+          automationId: 'colourGate',
+          fromTile: NURSERY_TILE,
+          toTile: COLOUR_GATE_TILE,
+          builtAtTick: 0,
+          carryingSproutId: null,
+          completesAtTick: null,
+        },
+      ],
+    };
+    state = withSprout(state, 'ember', { tile: COLOUR_GATE_TILE });
+    const result = adjudicateAutomationDrop(state, 'test-sprout', 'colourGate');
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        type: 'sprout:transportStarted',
+        sproutId: 'test-sprout',
+        automationId: 'colourGate',
+        toTile: HABITAT_TILES.emberNook,
+      }),
+    ]);
+  });
+
+  it('declines a Colour Gate drop for a kind no lane invites', () => {
+    let state = createInitialSimState(1);
+    state = {
+      ...state,
+      colourGateLanes: { west: null, east: null },
+      automations: [
+        {
+          id: 'colourGate-1',
+          automationId: 'colourGate',
+          fromTile: NURSERY_TILE,
+          toTile: COLOUR_GATE_TILE,
+          builtAtTick: 0,
+          carryingSproutId: null,
+          completesAtTick: null,
+        },
+      ],
+    };
+    state = withSprout(state, 'sun');
+    const result = adjudicateAutomationDrop(state, 'test-sprout', 'colourGate');
+    expect(result.events).toEqual([
+      { type: 'sprout:automationDeclined', sproutId: 'test-sprout', automationId: 'colourGate', reason: 'wrongKind' },
+    ]);
   });
 });
 

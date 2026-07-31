@@ -19,6 +19,7 @@ import { advanceClock, createSimClock } from './loop';
 import { createInitialSimState, type SimState } from './state';
 import { colourGateLockReason } from '../data/unlocks';
 import {
+  adjudicateAutomationDrop,
   adjudicatePlacement,
   checkAchievements,
   colourGateBehavioralState,
@@ -213,7 +214,13 @@ export async function startSimRuntime(
   };
 
   const unsubDropped = bus.subscribe('sprout:dropped', (event) => {
-    const result = adjudicatePlacement(state, event.sproutId, event.overHabitat);
+    // A drop lands on at most one of the two — `overAutomation` (a player
+    // handing a Sprout straight to a built helper, GameRules §9.1) takes the
+    // automation-drop path; everything else (including a habitat, or open
+    // ground) keeps going through the existing placement adjudication.
+    const result = event.overAutomation
+      ? adjudicateAutomationDrop(state, event.sproutId, event.overAutomation)
+      : adjudicatePlacement(state, event.sproutId, event.overHabitat);
     state = commit(emit, result.state, result.events);
   });
 

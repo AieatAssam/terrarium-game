@@ -343,6 +343,45 @@ function planRide(
   return atNursery ? { sprout: atNursery, fromTile: NURSERY_TILE, toTile: COLOUR_GATE_TILE } : null;
 }
 
+/**
+ * Marks `sproutId` as boarded on `instance` and bound for `toTile`, computing
+ * the ride's duration the one authoritative way (`transportDuration`).
+ * Factored out of `automationSystem`'s own dispatch loop so a manual drop
+ * onto a built automation site (`adjudicateAutomationDrop` below) starts a
+ * ride through the EXACT same mechanics the automation uses on its own next
+ * tick, rather than a second, potentially-diverging implementation.
+ */
+function beginRide(
+  sprouts: SproutInstance[],
+  upgradeLevels: SimState['upgradeLevels'],
+  tickCount: number,
+  instance: AutomationInstance,
+  sproutId: string,
+  fromTile: TileCoord,
+  toTile: TileCoord,
+): { sprouts: SproutInstance[]; instance: AutomationInstance; event: GameEvent } {
+  const distance = tileDistance(fromTile, toTile);
+  const { durationTicks, durationMs } = transportDuration(instance, upgradeLevels, distance);
+  const nextSprouts = sprouts.map((s) => (s.id === sproutId ? { ...s, state: 'transporting' as const, tile: toTile } : s));
+  const event: GameEvent = {
+    type: 'sprout:transportStarted',
+    sproutId,
+    automationId: instance.automationId,
+    instanceId: instance.id,
+    fromTile,
+    toTile,
+    durationMs,
+  };
+  const nextInstance: AutomationInstance = {
+    ...instance,
+    fromTile,
+    toTile,
+    carryingSproutId: sproutId,
+    completesAtTick: tickCount + durationTicks,
+  };
+  return { sprouts: nextSprouts, instance: nextInstance, event };
+}
+
 export function transportMsPerTile(instance: AutomationInstance, upgradeLevels: SimState['upgradeLevels']): number {
   if (instance.automationId !== 'gardenSlide') return BASE_TRANSPORT_MS_PER_TILE;
   const level = upgradeLevels.gardenSlideSpeed ?? 0;
@@ -490,32 +529,13 @@ export function automationSystem(state: SimState): TickResult {
       continue;
     }
 
-    const distance = tileDistance(plan.fromTile, plan.toTile);
-    const { durationTicks, durationMs } = transportDuration(instance, working.upgradeLevels, distance);
-
-    sprouts = sprouts.map((s) => (s.id === plan.sprout.id ? { ...s, state: 'transporting' as const, tile: plan.toTile } : s));
-    events.push({
-      type: 'sprout:transportStarted',
-      sproutId: plan.sprout.id,
-      automationId: instance.automationId,
-      instanceId: instance.id,
-      fromTile: plan.fromTile,
-      toTile: plan.toTile,
-      // Sim is the single authority on ride time — the renderer animates over
-      // exactly this interval instead of deriving its own (see the field's doc
-      // comment in src/events/types.ts).
-      durationMs,
-    });
+    const result = beginRide(sprouts, working.upgradeLevels, working.tickCount, instance, plan.sprout.id, plan.fromTile, plan.toTile);
+    sprouts = result.sprouts;
+    events.push(result.event);
     // `fromTile`/`toTile` are updated per ride, not just at build time: the
     // Colour Gate's two legs have different endpoints, and Phase 1 completion
     // reads `toTile` to decide whether the Sprout has reached a home.
-    nextAutomations.push({
-      ...instance,
-      fromTile: plan.fromTile,
-      toTile: plan.toTile,
-      carryingSproutId: plan.sprout.id,
-      completesAtTick: working.tickCount + durationTicks,
-    });
+    nextAutomations.push(result.instance);
   }
 
   return { state: { ...working, automations: nextAutomations, sprouts }, events };
@@ -561,6 +581,71 @@ export function adjudicatePlacement(state: SimState, sproutId: string, overHabit
   }
 
   return settleSprout(state, sproutId, overHabitat);
+}
+
+/**
+ * Reason a manual drop onto a built automation site did not board the
+ * Sprout — mirrors `colourGateLaneNote`'s spirit (a short, specific, never-
+ * punitive explanation, GameRules §11) but as a plain code rather than prose:
+ * sim stays decoupled from copywriting (docs/CONTRACTS.md: data/copy live in
+ * src/data and src/ui, not src/sim), so a caller that wants player-facing
+ * text composes it from this the same way UI composes copy from
+ * `nursery:rhythmChanged`'s rhythm field.
+ */
+export type AutomationDropDeclineReason = 'notBuilt' | 'busy' | 'noRoute' | 'wrongKind' | 'destinationFull';
+
+/**
+ * Adjudicates a player dropping a Sprout directly onto a BUILT automation
+ * structure (the Garden Slide or the Colour Gate) instead of a habitat —
+ * "put this little one on the helper myself" rather than waiting for the
+ * helper to notice it. GameRules §9.1 wants automation to feel like garden
+ * care infrastructure the player can also work WITH, not just observe.
+ *
+ * Deliberately held to the exact same eligibility `planRide` (this module's
+ * own tick-based dispatcher) would apply to this automation on its very next
+ * tick — routed through the same `beginRide` — so a manual drop can never
+ * start a ride the automation itself would have refused, and never needs a
+ * second, potentially-diverging notion of "can this instance carry this kind
+ * right now". An ineligible drop declines with a specific reason and changes
+ * nothing: the Sprout stays exactly where it was, still idle, still pickable,
+ * per the same "never punitive" rule `adjudicatePlacement` already follows
+ * for a wrong-habitat drop.
+ */
+export function adjudicateAutomationDrop(state: SimState, sproutId: string, automationId: AutomationId): TickResult {
+  const decline = (reason: AutomationDropDeclineReason): TickResult => ({
+    state,
+    events: [{ type: 'sprout:automationDeclined', sproutId, automationId, reason }],
+  });
+
+  const sprout = state.sprouts.find((s) => s.id === sproutId);
+  if (!sprout || sprout.state !== 'idle') return { state, events: [] }; // stray/late drop — silently no-op, same guard as adjudicatePlacement
+
+  const instance = state.automations.find((a) => a.automationId === automationId);
+  if (!instance) return decline('notBuilt'); // renderer should never offer an unbuilt site as a drop target, but never trust the client
+  if (instance.carryingSproutId) return decline('busy'); // one ride at a time per instance, same as automationSystem
+
+  let toTile: TileCoord;
+  if (automationId === 'gardenSlide') {
+    const dest = instance.targetHabitatId;
+    if (!dest) return decline('noRoute');
+    if (sprout.sproutType !== HABITATS[dest].matchSproutType) return decline('wrongKind');
+    if (habitatIsFull(state, dest)) return decline('destinationFull');
+    toTile = HABITAT_TILES[dest];
+  } else {
+    const dest = colourGateDestination(state.colourGateLanes, sprout.sproutType);
+    if (!dest) return decline('wrongKind');
+    if (habitatIsFull(state, dest)) return decline('destinationFull');
+    // Whichever leg this Sprout is actually due for: leg 2 (Gate -> home) if
+    // it happens to already be standing at the signpost, leg 1 (Nursery/
+    // wherever it was picked up -> Gate) otherwise — the same split
+    // `planRide` makes, keyed here to THIS Sprout's own current tile rather
+    // than a search over every idle Sprout.
+    toTile = sameTile(sprout.tile, COLOUR_GATE_TILE) ? HABITAT_TILES[dest] : COLOUR_GATE_TILE;
+  }
+
+  const result = beginRide(state.sprouts, state.upgradeLevels, state.tickCount, instance, sproutId, sprout.tile, toTile);
+  const automations = state.automations.map((a) => (a.id === instance.id ? result.instance : a));
+  return { state: { ...state, sprouts: result.sprouts, automations }, events: [result.event] };
 }
 
 /** Behavioral gate for purchasing colourGateUnlock — same rule as docs/data/unlocks.ts's ColourGateUnlockState, evaluated against live state. Exported so the UI can explain the gate instead of offering a button that silently no-ops (see colourGateLockReason). */

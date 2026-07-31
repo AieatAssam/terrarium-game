@@ -152,7 +152,15 @@ export function initInput(renderer: RendererHandle, bus: EventBus): InputHandle 
     if (!dragSproutId) return;
     const ground = groundPointAt(x, y, GROUND_PLANE);
     const overHabitat = ground ? habitats.nearestWithin(ground, HOVER_MARGIN_TILES) : null;
-    bus.emit({ type: 'sprout:dropped', sproutId: dragSproutId, overHabitat });
+    // A drop lands on at most one of the two: a habitat is checked first
+    // (unchanged behaviour), and only when it isn't one is a built
+    // automation site considered — handing a Sprout straight to the Garden
+    // Slide or Colour Gate rather than waiting for the helper to notice one
+    // on its own (GameRules §9.1). The site tiles and habitat tiles sit far
+    // enough apart in the garden's layout that the two regions never
+    // actually overlap; the ordering is just belt-and-braces.
+    const overAutomation = !overHabitat && ground ? automation.nearestBuiltWithin(ground, HOVER_MARGIN_TILES) : null;
+    bus.emit({ type: 'sprout:dropped', sproutId: dragSproutId, overHabitat, overAutomation });
     habitats.setHover(null, null);
     sprouts.setDragValidity(dragSproutId, null);
     dragSproutId = null;
@@ -212,9 +220,20 @@ export function initInput(renderer: RendererHandle, bus: EventBus): InputHandle 
       if (!ground) return;
       sprouts.setDragPosition(dragSproutId, ground.x, ground.z);
       const habitatId = habitats.nearestWithin(ground, HOVER_MARGIN_TILES);
-      const valid = habitatMatch(habitatId, dragSproutId);
-      habitats.setHover(habitatId, valid);
-      sprouts.setDragValidity(dragSproutId, habitatId ? valid : null);
+      if (habitatId) {
+        const valid = habitatMatch(habitatId, dragSproutId);
+        habitats.setHover(habitatId, valid);
+        sprouts.setDragValidity(dragSproutId, valid);
+        return;
+      }
+      habitats.setHover(null, null);
+      // Not over a habitat — check a built automation site the same way, so
+      // the held Sprout tints valid/invalid while hovering the Garden Slide
+      // or Colour Gate too, not only while hovering a home.
+      const automationId = automation.nearestBuiltWithin(ground, HOVER_MARGIN_TILES);
+      const visual = sprouts.get(dragSproutId);
+      const automationValid = automationId && visual ? automation.matchesSprout(automationId, visual.sproutType) : null;
+      sprouts.setDragValidity(dragSproutId, automationId ? automationValid : null);
       return;
     }
 

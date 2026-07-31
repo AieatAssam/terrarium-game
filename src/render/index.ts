@@ -104,6 +104,21 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
           }),
       sceneTriangles: () => scene.meshes.reduce((sum, m) => sum + m.getTotalIndices() / 3, 0),
       fps: () => Number(engine.getFps().toFixed(1)),
+      // Renderer cost inspector. FPS alone is hardware-dependent and noisy;
+      // these counts are the hardware-independent evidence behind it, and are
+      // what a crowd-rendering change has to move (see docs/QA_REPORT.md's
+      // Sprout-crowd entry).
+      perf: () => ({
+        fps: Number(engine.getFps().toFixed(1)),
+        meshes: scene.meshes.length,
+        sproutMeshes: scene.meshes.filter((m) => m.name.startsWith('terrarium.sprout.')).length,
+        enabledSproutMeshes: scene.meshes.filter((m) => m.name.startsWith('terrarium.sprout.') && m.isEnabled()).length,
+        materials: scene.materials.length,
+        textures: scene.textures.length,
+        activeMeshes: scene.getActiveMeshes().length,
+        drawCalls: engine._drawCalls?.current ?? -1,
+        triangles: scene.meshes.reduce((sum, m) => sum + m.getTotalIndices() / 3, 0),
+      }),
       // Scene-graph inspector for diagnosing "mesh present but not visibly
       // rendering" bugs (missing vs. mispositioned vs. invisible vs. unlit)
       // without guessing from a screenshot alone.

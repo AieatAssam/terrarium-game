@@ -73,10 +73,11 @@ type AchievementId =
 type GameEvent =
   | { type: 'sprout:spawned'; sproutId: string; sproutType: SproutTypeId; podId: string }
   | { type: 'sprout:pickedUp'; sproutId: string }
-  | { type: 'sprout:dropped'; sproutId: string; overHabitat: HabitatId | null }
+  | { type: 'sprout:dropped'; sproutId: string; overHabitat: HabitatId | null; overAutomation?: AutomationId | null }
   | { type: 'sprout:placed:correct'; sproutId: string; habitatId: HabitatId }
   | { type: 'sprout:placed:incorrect'; sproutId: string; habitatId: HabitatId }
   | { type: 'sprout:settled'; sproutId: string; habitatId: HabitatId }
+  | { type: 'sprout:automationDeclined'; sproutId: string; automationId: AutomationId; reason: 'notBuilt' | 'busy' | 'noRoute' | 'wrongKind' | 'destinationFull' }
   | { type: 'habitat:dewdropTick'; habitatId: HabitatId; amount: number }
   | { type: 'habitat:full'; habitatId: HabitatId }
   | { type: 'currency:dewdropsChanged'; total: number; delta: number }
@@ -182,6 +183,34 @@ downstream could not do its job without them. See the doc comments in
   is worse than no number; caught in browser QA against a real 814-Sprout
   garden). While lively the note is hidden, so ordinary spawns do not
   re-announce.
+
+### Members added so a player can hand a Sprout to a helper directly
+
+Player report: automation only ever picked from the Nursery on its own —
+`src/input/index.ts`'s only drop-target lookup was `habitats.nearestWithin`,
+so a Sprout dropped directly on a built Garden Slide or Colour Gate landed
+nowhere and simply returned to idle. GameRules §9.1 wants automation to feel
+like garden infrastructure the player can also work *with*, not only observe.
+
+- **`sprout:dropped.overAutomation`** — the built automation site (if any) a
+  drop landed on, alongside the existing `overHabitat`. A drop lands on at
+  most one of the two. `src/render/automation.ts` gained a
+  `nearestBuiltWithin` query (mirroring `habitats.ts`'s `nearestWithin`) so
+  `src/input/index.ts` can offer automation sites as drop targets the same way
+  it already offers habitats.
+- **`sprout:automationDeclined`** — a drop onto a built site did not board the
+  Sprout: the site is already carrying someone, has no route yet, the Sprout's
+  kind does not match what it carries, or its destination is full. Mirrors
+  `sprout:placed:incorrect`'s "never punitive" rule (GameRules §5.3, §11) for
+  this new drop target: the Sprout is left exactly where it was, still idle,
+  still pickable. `reason` is a short code rather than prose — sim stays
+  decoupled from copywriting, matching `nursery:rhythmChanged`'s `rhythm`
+  field. `src/sim/systems.ts`'s `adjudicateAutomationDrop` is the immediate
+  (non-tick) reaction, called from `src/sim/runtime.ts` alongside
+  `adjudicatePlacement` — and is deliberately routed through the exact same
+  `beginRide` helper the tick-based `automationSystem` dispatcher itself now
+  uses, so a manual drop can never start a ride the automation would have
+  refused on its own next tick.
 
 ## Simulation boundary
 

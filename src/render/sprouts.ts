@@ -16,14 +16,14 @@ import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import type { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
 import type { Scene } from '@babylonjs/core/scene';
 
-import { createManifestMaterial, swapManifestMaterialTexture } from './assets';
+import { createManifestMaterial } from './assets';
 import { GARDEN_CAMERA_ALPHA } from './camera';
 import { tileToWorld, type TileCoord } from './coords';
 import { createHabitatOccupancySigns, occupancySignState } from './habitats';
 import { GARDEN_PATH_TILES, HABITAT_TILES, NURSERY_TILE } from './layout';
 import { easingFn, getMotionConfig, prefersReducedMotion, type MotionConfig } from './motion';
 import { createSparkleBurst } from './particles';
-import { habitatTopY, nurseryTopY } from './propDims';
+import { automationSiteTopY, habitatTopY, nurseryTopY } from './propDims';
 import type { EventBus } from '../events/bus';
 import type { HabitatId, SproutTypeId } from '../core/ids';
 import { getEffectiveHabitatCapacity } from '../data/habitats';
@@ -64,13 +64,30 @@ const SPROUT_SURFACE_CLEARANCE = 0.03;
 const SPROUT_BOB_AMPLITUDE = 0.05;
 
 /**
- * Resting/drag/transport height for a Sprout that is NOT settled — clears the
- * Nursery mound (the tallest thing a Sprout hovers over) by its own
- * half-height plus the bob amplitude plus the clearance. Exported because
- * src/input/index.ts's pointer-to-world drag plane has to sit at exactly this
- * height, and tests/e2e/helpers.ts projects it to find the pickup point.
+ * Resting/drag height for a Sprout that is NOT settled and NOT mid-ride —
+ * clears the Nursery mound (the tallest thing an idle or dragged Sprout
+ * hovers over) by its own half-height plus the bob amplitude plus the
+ * clearance. Exported because src/input/index.ts's pointer-to-world drag
+ * plane has to sit at exactly this height, and tests/e2e/helpers.ts projects
+ * it to find the pickup point.
  */
 export const SPROUT_FLOAT_HEIGHT = nurseryTopY() + SPROUT_BOB_AMPLITUDE + SPROUT_SURFACE_CLEARANCE + SPROUT_HALF_HEIGHT;
+
+/**
+ * Ride height for a Sprout mid-transport — NOT the same figure as
+ * SPROUT_FLOAT_HEIGHT. That constant clears the Nursery mound (0.70), which
+ * made every ride cruise at ~1.13 for its whole journey: fine for clearing
+ * the mound at the start, but the Garden Slide/Colour Gate's own belt sits at
+ * a plinth top of 0.5 (see automationSiteTopY), so a carried Sprout floated
+ * roughly twice the structure's own height above it while passing beside a
+ * built one — measured/reported as "floating unrelated nearby" rather than
+ * "riding the conveyor" (GameRules §9.3: "carries Sprouts with a fun movement
+ * animation"). Derived from the plinth's own top face the same way every
+ * other "resting ON a surface" height in this file is (see
+ * sproutSettleHeight below), so it reads as riding the structure rather than
+ * hovering an arbitrary distance above it.
+ */
+export const SPROUT_RIDE_HEIGHT = automationSiteTopY() + SPROUT_SURFACE_CLEARANCE + SPROUT_HALF_HEIGHT;
 
 /** Resting height for a Sprout settled on a given habitat's top face. Settled
  * Sprouts don't bob (see `update`), so no bob budget is needed. */
@@ -188,6 +205,62 @@ export function sproutSettleOffset(index: number, count: number, capacity: numbe
   const stagger = (row * SETTLE_ROW_STAGGER - ((SETTLE_ROWS - 1) * SETTLE_ROW_STAGGER) / 2) * spacing.lateral;
   const lateral = (column - (SETTLE_SLOTS_PER_ROW - 1) / 2) * spacing.lateral + stagger;
   const forward = SETTLE_FRONT_DISTANCE - row * spacing.row;
+  return {
+    x: VIEWER_X * forward + LATERAL_X * lateral,
+    z: VIEWER_Z * forward + LATERAL_Z * lateral,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Nursery waiting-area slots
+// ---------------------------------------------------------------------------
+// Every idle Sprout used to sit at the EXACT SAME world position — the
+// Nursery tile's centre, set once at spawn and never touched again unless the
+// Sprout was dragged. A quiet garden never noticed; a garden that had
+// accumulated hundreds of unclaimed Sprouts (the Nursery "rests" rather than
+// deletes any of them, GameRules §7.4) rendered them as one coincident stack
+// of billboards fighting each other for the same pixels — visually
+// indistinguishable from nothing being there at all, and a real cost driver
+// at hundreds of live, enabled, individually-drawn meshes.
+//
+// Fix mirrors the settled-Sprout crowd above: a small, fixed set of standing
+// spots fanned out on the viewer-facing side of the Nursery, claimed and
+// released as Sprouts arrive at / leave the waiting pool. Past the visible
+// slots, an idle Sprout is simply not drawn (mesh disabled, still fully alive
+// in SimState, still counted by the existing HUD note in
+// src/ui/components/nurseryNote.ts) until a slot frees up and it is promoted
+// into it. Nothing here ever deletes a Sprout or makes one permanently
+// unreachable — only which ones currently have a sprite on screen.
+const NURSERY_SLOTS_PER_ROW = 4;
+const NURSERY_WAIT_ROWS = 3;
+/** How many waiting Sprouts stand individually before the rest go uncounted
+ * by sprite (still tracked in full by the sim and by the Nursery's HUD note). */
+export const NURSERY_VISIBLE_SLOTS = NURSERY_SLOTS_PER_ROW * NURSERY_WAIT_ROWS;
+const NURSERY_SLOT_LATERAL = 0.5;
+const NURSERY_SLOT_ROW_SPACING = 0.42;
+/** How far toward the viewer the front row stands from the Nursery's centre —
+ * clear of the mound itself and of the trunk path leaving north toward the
+ * Garden Slide. */
+const NURSERY_FRONT_DISTANCE = 0.85;
+const NURSERY_ROW_STAGGER = 0.5;
+
+/**
+ * Deterministic XZ offset from the Nursery's centre for the Nth waiting-slot
+ * Sprout, or null past the visible slot count. Pure and index-based for the
+ * same reason `sproutSettleOffset` is: a restored save must rebuild the exact
+ * arrangement it left behind, and a Sprout must not visibly hop between spots
+ * while it is simply standing there waiting.
+ */
+export function nurseryWaitOffset(index: number): { x: number; z: number } | null {
+  if (index < 0 || index >= NURSERY_VISIBLE_SLOTS) return null;
+  const row = Math.floor(index / NURSERY_SLOTS_PER_ROW);
+  const column = index % NURSERY_SLOTS_PER_ROW;
+  const stagger = (row * NURSERY_ROW_STAGGER - ((NURSERY_WAIT_ROWS - 1) * NURSERY_ROW_STAGGER) / 2) * NURSERY_SLOT_LATERAL;
+  const lateral = (column - (NURSERY_SLOTS_PER_ROW - 1) / 2) * NURSERY_SLOT_LATERAL + stagger;
+  // Rows recede AWAY from the viewer (the queue extends outward from the
+  // pod), the opposite sense from the settled crowd's rows, which come
+  // forward from the habitat card.
+  const forward = NURSERY_FRONT_DISTANCE + row * NURSERY_SLOT_ROW_SPACING;
   return {
     x: VIEWER_X * forward + LATERAL_X * lateral,
     z: VIEWER_Z * forward + LATERAL_Z * lateral,
@@ -386,6 +459,10 @@ export interface SproutVisual {
    * `settleCrowdSpacing`), and a Sprout must not hop between slots when that
    * happens. Indexes at or above SETTLE_VISIBLE_SLOTS have no sprite. */
   settleIndex: number | null;
+  /** Which Nursery waiting-slot this Sprout currently occupies, or null while
+   * it is not idle-at-the-Nursery at all, or idle there but past the visible
+   * slot count (an "overflow" Sprout — see NURSERY_VISIBLE_SLOTS). */
+  waitSlot: number | null;
   wanderSeed: number;
 }
 
@@ -438,12 +515,140 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
   const textureKey = (type: SproutTypeId, state: 'idle' | 'walk' | 'happy' | 'reveal'): string =>
     `sprout.${type}.${state}`;
 
+  // -------------------------------------------------------------------------
+  // Nursery waiting-slot bookkeeping (see nurseryWaitOffset above)
+  // -------------------------------------------------------------------------
+  /** `nurserySlotOwner[i]` is the Sprout id currently standing in slot i, or
+   * null. Tiny fixed-size array (NURSERY_VISIBLE_SLOTS), scanned rather than
+   * indexed by a separate map because it's small and only touched on discrete
+   * arrival/departure events, never per frame. */
+  const nurserySlotOwner: Array<string | null> = new Array(NURSERY_VISIBLE_SLOTS).fill(null);
+  /** Sprout ids that are idle-at-the-Nursery but currently have no slot —
+   * their mesh is disabled. Iteration order (insertion order, for a Set) is
+   * used only to pick SOME candidate to promote when a slot frees up; there
+   * is no fairness requirement, every idle Sprout is interchangeable until a
+   * player or automation picks it. */
+  const nurseryOverflow = new Set<string>();
+
+  const isWaitingAtNursery = (visual: SproutVisual): boolean =>
+    visual.state === 'idle' && !visual.held && visual.tile.x === NURSERY_TILE.x && visual.tile.z === NURSERY_TILE.z;
+
+  /** Gives `visual` a standing slot near the Nursery if one is free, or marks
+   * it as overflow (mesh disabled, still fully alive in SimState) otherwise.
+   * No-ops if `visual` already holds a slot, or is not actually idle at the
+   * Nursery right now — safe to call speculatively after any state change. */
+  const claimNurserySlot = (visual: SproutVisual): void => {
+    if (visual.waitSlot !== null || !isWaitingAtNursery(visual)) return;
+    const free = nurserySlotOwner.indexOf(null);
+    if (free === -1) {
+      nurseryOverflow.add(visual.id);
+      visual.mesh.setEnabled(false);
+      return;
+    }
+    nurserySlotOwner[free] = visual.id;
+    visual.waitSlot = free;
+    nurseryOverflow.delete(visual.id);
+    const offset = nurseryWaitOffset(free);
+    const world = tileToWorld(NURSERY_TILE);
+    if (offset) visual.mesh.position.set(world.x + offset.x, visual.mesh.position.y, world.z + offset.z);
+    visual.mesh.setEnabled(true);
+  };
+
+  /** Releases whatever Nursery slot (or overflow membership) `visual` holds —
+   * called on every transition AWAY from idle-at-the-Nursery, whether that's
+   * a player picking it up, an automation boarding it, or it settling. If a
+   * real slot frees up, promotes one waiting overflow Sprout into it, so the
+   * visible waiting area never sits short while a queue remains. Harmless
+   * no-op if `visual` held no slot and was not in the overflow set. */
+  const releaseNurserySlot = (visual: SproutVisual): void => {
+    nurseryOverflow.delete(visual.id);
+    if (visual.waitSlot === null) return;
+    nurserySlotOwner[visual.waitSlot] = null;
+    visual.waitSlot = null;
+    const promotedId = nurseryOverflow.values().next().value;
+    if (promotedId === undefined) return;
+    const promoted = visuals.get(promotedId);
+    if (promoted) claimNurserySlot(promoted); // finds the slot just freed above
+  };
+
+  // -------------------------------------------------------------------------
+  // Shared per-(type, visual-state) materials
+  // -------------------------------------------------------------------------
+  // Every live Sprout used to own its own PBRMetallicRoughnessMaterial,
+  // created via createManifestMaterial in `spawn` and then privately mutated
+  // in place by `setState` (swapManifestMaterialTexture) and `setDragValidity`
+  // (emissiveColor). That is fine at a few dozen Sprouts but not at the ~850 a
+  // long session can accumulate (GameRules §7.4 forbids ever deleting one for
+  // player inaction) — Babylon has to track hundreds of otherwise-identical
+  // materials, each with its own texture binding, purely because they happen
+  // to belong to different Sprout instances of the SAME species in the SAME
+  // animation pose. Sprouts of the same species and the same visual state are
+  // pixel-identical, so one material is shared by every Sprout currently in
+  // that (type, state) combination; a state change swaps `mesh.material` to a
+  // different cached entry rather than mutating the material any Sprout is
+  // currently pointed at (which would repaint every OTHER Sprout sharing it).
+  // A session with 850 Sprouts across 4 types x 4 texture states now needs at
+  // most 16 "normal" materials, plus up to 4 more for the drag-tint variants
+  // below — not 850.
+  const sharedSproutMaterials = new Map<string, PBRMetallicRoughnessMaterial>();
+
+  /** Builds (or returns the cached) material for one (type, cacheKey)
+   * combination — `cacheKey` is either a texture state or one of the
+   * drag-tint variants (see `dragMaterialFor`). Never mutated after creation;
+   * a Sprout that needs to look different gets pointed at a DIFFERENT cached
+   * material instead. */
+  const sharedMaterialFor = (
+    sproutType: SproutTypeId,
+    cacheKey: string,
+    manifestState: 'idle' | 'walk' | 'happy' | 'reveal',
+    emissiveColor: Color3,
+  ): PBRMetallicRoughnessMaterial => {
+    const mapKey = `${sproutType}:${cacheKey}`;
+    const existing = sharedSproutMaterials.get(mapKey);
+    if (existing) return existing;
+    const fallback = parseHexColor(SPROUT_TYPES[sproutType]?.primaryColor, TYPE_FALLBACK_COLOR[sproutType]);
+    const material = createManifestMaterial(scene, `terrarium.sprout.shared.${mapKey}`, textureKey(sproutType, manifestState), fallback);
+    material.roughness = 0.55;
+    material.metallic = 0;
+    material.emissiveColor = emissiveColor;
+    sharedSproutMaterials.set(mapKey, material);
+    return material;
+  };
+
+  /** The normal (non-drag) shared material for a Sprout's current visual
+   * state — every Sprout of this type in this state points at the same one. */
+  const normalMaterialFor = (sproutType: SproutTypeId, state: 'idle' | 'walk' | 'happy' | 'reveal'): PBRMetallicRoughnessMaterial => {
+    const fallback = parseHexColor(SPROUT_TYPES[sproutType]?.primaryColor, TYPE_FALLBACK_COLOR[sproutType]);
+    return sharedMaterialFor(sproutType, state, state, fallback.scale(0.35));
+  };
+
+  /** The three drag-tint variants (valid / invalid / neutral-while-held), one
+   * set per Sprout type, always painted with the 'walk' texture since a held
+   * Sprout is always in the 'walk' visual state (see `sprout:pickedUp`
+   * below). Only ever one Sprout is dragged at a time (src/input/index.ts
+   * tracks a single `dragSproutId`), so these are shared across the whole
+   * session rather than allocated per Sprout. */
+  const dragMaterialFor = (sproutType: SproutTypeId, valid: boolean | null): PBRMetallicRoughnessMaterial => {
+    const fallback = parseHexColor(SPROUT_TYPES[sproutType]?.primaryColor, TYPE_FALLBACK_COLOR[sproutType]);
+    if (valid === false) return sharedMaterialFor(sproutType, 'drag-invalid', 'walk', new Color3(0.35, 0.08, 0.08));
+    if (valid === true) return sharedMaterialFor(sproutType, 'drag-valid', 'walk', fallback.scale(1.1));
+    return sharedMaterialFor(sproutType, 'drag-neutral', 'walk', fallback.scale(0.9));
+  };
+
+  /** Points `visual.mesh.material` at the correct shared, non-drag material
+   * for whatever visual state it is CURRENTLY in — factored out so
+   * `setDragValidity`'s "clear the tint" case can restore the right material
+   * without having to know or guess what state the drop just resolved to. */
+  const applyNormalMaterial = (visual: SproutVisual): void => {
+    const key = visual.state === 'settled' ? 'happy' : visual.state;
+    if (key !== 'idle' && key !== 'walk' && key !== 'happy' && key !== 'reveal') return;
+    visual.material = normalMaterialFor(visual.sproutType, key);
+    visual.mesh.material = visual.material;
+  };
+
   const setState = (visual: SproutVisual, state: SproutVisualState): void => {
     visual.state = state;
-    const key = state === 'settled' ? 'happy' : state;
-    if (key === 'idle' || key === 'walk' || key === 'happy' || key === 'reveal') {
-      swapManifestMaterialTexture(scene, visual.material, textureKey(visual.sproutType, key));
-    }
+    applyNormalMaterial(visual);
   };
 
   const spawn = (id: string, sproutType: SproutTypeId, podId: string): void => {
@@ -456,8 +661,6 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     mesh.scaling.set(0.01, 0.01, 0.01); // pop-in from nothing during reveal
     mesh.isPickable = true;
 
-    const fallback = parseHexColor(SPROUT_TYPES[sproutType]?.primaryColor, TYPE_FALLBACK_COLOR[sproutType]);
-    const material = createManifestMaterial(scene, `terrarium.sprout.${id}.mat`, textureKey(sproutType, 'reveal'), fallback);
     // Lit, not unlit-disableLighting — the brief explicitly calls out Sprouts
     // as an "interactive focal asset" that must not be a flat unlit sticker.
     // This is safe from the inconsistent-billboard-lighting risk that would
@@ -469,9 +672,10 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     // per-frame-varying. Roughness/metallic stay at PBRMetallicRoughnessMaterial
     // defaults (waxy/matte, non-metal); a modest emissive keeps the design
     // readable even in the fill light's cooler shadow side.
-    material.roughness = 0.55;
-    material.metallic = 0;
-    material.emissiveColor = fallback.scale(0.35);
+    //
+    // The material is one of the small shared cache below (per species x
+    // visual state), NOT created fresh per Sprout — see `sharedMaterialFor`.
+    const material = normalMaterialFor(sproutType, 'reveal');
     mesh.material = material;
 
     const visual: SproutVisual = {
@@ -484,6 +688,7 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
       held: false,
       settledHabitat: null,
       settleIndex: null,
+      waitSlot: null,
       wanderSeed: Math.random() * 1000,
     };
     mesh.metadata = { kind: 'sprout', sproutId: id };
@@ -505,6 +710,7 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
         scene.onBeforeRenderObservable.remove(observer);
         mesh.scaling.set(1, 1, 1);
         if (visual.state === 'reveal') setState(visual, 'idle');
+        claimNurserySlot(visual);
       }
     });
   };
@@ -611,8 +817,12 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     const visual = visuals.get(id);
     if (!visual) return;
     endRide(id);
+    releaseNurserySlot(visual);
     visual.mesh.dispose();
-    visual.material.dispose();
+    // NOT visual.material.dispose(): the material is one of the small shared
+    // per-(type, state) cache (see sharedMaterialFor), still in use by every
+    // OTHER live Sprout of the same species and pose. It is disposed exactly
+    // once, in this manager's own `dispose()`, when the whole cache goes away.
     visuals.delete(id);
   };
 
@@ -621,6 +831,7 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     bus.subscribe('sprout:pickedUp', (e) => {
       const visual = visuals.get(e.sproutId);
       if (!visual) return;
+      releaseNurserySlot(visual); // leaving the waiting pool to be dragged
       visual.held = true;
       setState(visual, 'walk');
     }),
@@ -628,7 +839,29 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
       const visual = visuals.get(e.sproutId);
       if (!visual) return;
       visual.held = false;
-      if (!e.overHabitat) setState(visual, 'idle');
+      // A drop over a habitat is handled by placed:correct/incorrect below,
+      // and a drop over a built automation site by transportStarted (boarded)
+      // or automationDeclined (refused) — both fire synchronously out of the
+      // SAME `sprout:dropped` emit, but subscriber registration order between
+      // this module and src/sim/runtime.ts is not guaranteed (sim registers
+      // its own listener after an `await loadGame()`). Excluding
+      // `overAutomation` here too, not just `overHabitat`, keeps this handler
+      // a no-op for that case regardless of which side's listener runs first
+      // — it never fights transportStarted's ride setup or
+      // automationDeclined's reset for the same Sprout.
+      if (!e.overHabitat && !e.overAutomation) {
+        setState(visual, 'idle');
+        claimNurserySlot(visual); // no-ops unless this is where it was picked up from
+      }
+    }),
+    bus.subscribe('sprout:automationDeclined', (e) => {
+      const visual = visuals.get(e.sproutId);
+      if (!visual) return;
+      // Friendly, non-punitive: the Sprout simply stays available, exactly
+      // where it was — same spirit as sprout:placed:incorrect, but without a
+      // walk-back, since there is no "wrong home" to walk back from here.
+      setState(visual, 'idle');
+      claimNurserySlot(visual);
     }),
     bus.subscribe('sprout:placed:correct', (e) => {
       const visual = visuals.get(e.sproutId);
@@ -655,12 +888,14 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
           scene.onBeforeRenderObservable.remove(observer);
           visual.tile = NURSERY_TILE;
           if (visual.state === 'walk') setState(visual, 'idle');
+          claimNurserySlot(visual);
         }
       });
     }),
     bus.subscribe('sprout:settled', (e) => {
       const visual = visuals.get(e.sproutId);
       if (!visual) return;
+      releaseNurserySlot(visual); // defensive: automation dispatch releases at transportStarted already
       endRide(e.sproutId); // whatever the ride animation still had planned, the sim says it's home
       // Deterministic slot on the habitat's viewer-facing side so multiple
       // settled Sprouts neither overlap each other nor hide behind the
@@ -707,9 +942,19 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
           visual.mesh.isPickable = false;
           setState(visual, 'settled');
         } else {
+          // `visual.tile` defaults to NURSERY_TILE at spawn — must be
+          // corrected to the sim's real tile (e.g. a Sprout the sim restored
+          // mid-ride, standing at the Colour Gate) BEFORE claimNurserySlot's
+          // tile check below, or a Gate-parked Sprout would wrongly compete
+          // for a Nursery waiting slot.
+          visual.tile = restored.tile;
           setState(visual, 'idle');
-          const world = tileToWorld(restored.tile);
-          visual.mesh.position.set(world.x, SPROUT_FLOAT_HEIGHT, world.z);
+          if (restored.tile.x === NURSERY_TILE.x && restored.tile.z === NURSERY_TILE.z) {
+            claimNurserySlot(visual);
+          } else {
+            const world = tileToWorld(restored.tile);
+            visual.mesh.position.set(world.x, SPROUT_FLOAT_HEIGHT, world.z);
+          }
         }
       }
       // Positions and signs are resolved ONCE, after the whole batch: doing it
@@ -730,6 +975,12 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     bus.subscribe('sprout:transportStarted', (e) => {
       const visual = visuals.get(e.sproutId);
       if (!visual) return;
+      releaseNurserySlot(visual); // boarding — leaving the waiting pool
+      // The sim picks whoever is idle & eligible regardless of whether the
+      // renderer happened to have this one drawn — an "overflow" Sprout
+      // (disabled mesh, past NURSERY_VISIBLE_SLOTS) can absolutely be the one
+      // an automation boards next, and must become visible for its ride.
+      visual.mesh.setEnabled(true);
       endRide(e.sproutId); // never stack two ride observers on one Sprout
       setState(visual, 'walk');
 
@@ -783,7 +1034,10 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
         // is the part reduced motion drops: ambientIntensity 0 rides flat, and
         // the Sprout still visibly moves along the path.
         const hop = TRANSPORT_HOP_HEIGHT * (lastMotion?.ambientIntensity ?? 1);
-        visual.mesh.position.y = SPROUT_FLOAT_HEIGHT + Math.sin(t * Math.PI) * hop;
+        // SPROUT_RIDE_HEIGHT, not SPROUT_FLOAT_HEIGHT: a carried Sprout rides
+        // low, close to the Slide/Gate's own belt, not at the taller height
+        // reserved for standing/dragging near the Nursery mound.
+        visual.mesh.position.y = SPROUT_RIDE_HEIGHT + Math.sin(t * Math.PI) * hop;
         if (t >= 1) endRide(e.sproutId);
       });
       rides.set(e.sproutId, { observer, toTile: e.toTile });
@@ -793,6 +1047,12 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
       if (!visual) return;
       endRide(e.sproutId);
       setState(visual, 'idle');
+      // No-ops for a habitat arrival (tile is already the habitat's, and
+      // `sprout:settled` follows immediately in the same event batch) — only
+      // takes effect for the Colour Gate's first leg, where the Sprout is
+      // genuinely idle at a non-habitat tile. Never true for the Nursery
+      // tile itself, since nothing rides FROM the Nursery TO the Nursery.
+      claimNurserySlot(visual);
     }),
   ];
 
@@ -812,22 +1072,35 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
   const setDragValidity = (id: string, valid: boolean | null): void => {
     const visual = visuals.get(id);
     if (!visual) return;
-    const base = parseHexColor(SPROUT_TYPES[visual.sproutType]?.primaryColor, TYPE_FALLBACK_COLOR[visual.sproutType]);
-    if (valid === false) {
-      visual.material.emissiveColor = new Color3(0.35, 0.08, 0.08);
-      visual.mesh.visibility = 0.6;
-    } else if (valid === true) {
-      visual.material.emissiveColor = base.scale(1.1);
+    if (valid === null) {
+      // Restore whatever the NORMAL shared material for the current state is,
+      // rather than assuming 'walk': by the time a drop clears the tint, the
+      // sim's synchronous response to `sprout:dropped` (settled/happy/idle)
+      // has already run, and `visual.state` reflects it.
+      applyNormalMaterial(visual);
       visual.mesh.visibility = 1;
-    } else {
-      visual.material.emissiveColor = base.scale(0.9);
-      visual.mesh.visibility = 1;
+      return;
     }
+    // A shared, per-type drag-tint material — never a mutation of whatever
+    // material this Sprout happens to be pointed at, which used to be the
+    // very material every other same-type same-state Sprout shared too. Only
+    // one Sprout is ever mid-drag at a time (src/input/index.ts), so this
+    // never fights another Sprout for the same cached entry.
+    visual.material = dragMaterialFor(visual.sproutType, valid);
+    visual.mesh.material = visual.material;
+    visual.mesh.visibility = valid === false ? 0.6 : 1;
   };
 
   const update = (motion: MotionConfig, nowMs: number): void => {
     lastMotion = motion;
     for (const visual of visuals.values()) {
+      // Overflow Sprouts (past NURSERY_VISIBLE_SLOTS, mesh disabled) and
+      // tucked-away habitat overflow arrivals are not on screen at all —
+      // skip the bob math for them too, not just the draw. Cheap on its own,
+      // but at a few hundred idle Sprouts in a crowded garden it is the
+      // difference between this loop doing real work for the visible dozen
+      // and doing it for the whole population every frame.
+      if (!visual.mesh.isEnabled()) continue;
       // A Sprout mid-ride owns its own y (arc + travel); the idle bob must not
       // fight it for the same field.
       if (visual.held || visual.state === 'reveal' || visual.state === 'settled' || rides.has(visual.id)) continue;
@@ -843,6 +1116,8 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
   const dispose = (): void => {
     for (const unsub of unsubscribers) unsub();
     for (const id of Array.from(visuals.keys())) remove(id);
+    for (const material of sharedSproutMaterials.values()) material.dispose();
+    sharedSproutMaterials.clear();
     signs.dispose();
   };
 

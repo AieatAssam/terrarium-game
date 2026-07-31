@@ -8,10 +8,41 @@ import type { TileCoord } from '../sim/grid';
 export type GameEvent =
   | { type: 'sprout:spawned'; sproutId: string; sproutType: SproutTypeId; podId: string }
   | { type: 'sprout:pickedUp'; sproutId: string }
-  | { type: 'sprout:dropped'; sproutId: string; overHabitat: HabitatId | null }
+  | {
+      type: 'sprout:dropped';
+      sproutId: string;
+      overHabitat: HabitatId | null;
+      /**
+       * The built automation site (Garden Slide/Colour Gate) the drop landed
+       * on, if any — a player putting a Sprout directly onto a helper rather
+       * than waiting for it to notice one on its own (GameRules §9.1). A drop
+       * is over AT MOST one of `overHabitat`/`overAutomation`, never both,
+       * since the two are disjoint drop-target regions. Optional so
+       * existing emitters/tests written before it still typecheck (absent ==
+       * same as `null`, "over open ground or a habitat").
+       */
+      overAutomation?: AutomationId | null;
+    }
   | { type: 'sprout:placed:correct'; sproutId: string; habitatId: HabitatId }
   | { type: 'sprout:placed:incorrect'; sproutId: string; habitatId: HabitatId }
   | { type: 'sprout:settled'; sproutId: string; habitatId: HabitatId }
+  | {
+      /**
+       * A drop onto a built automation site did NOT board the Sprout — the
+       * same "never punitive, always a specific reason" rule
+       * `sprout:placed:incorrect` follows for a wrong-habitat drop
+       * (GameRules §5.3, §11), for the Garden Slide/Colour Gate case. The
+       * Sprout is untouched: still idle, still exactly where it was, still
+       * pickable. `reason` is a short code, not prose — src/sim stays
+       * decoupled from copywriting (docs/CONTRACTS.md); a listener composes
+       * player-facing text from it the way src/ui composes copy from
+       * `nursery:rhythmChanged`'s rhythm field.
+       */
+      type: 'sprout:automationDeclined';
+      sproutId: string;
+      automationId: AutomationId;
+      reason: 'notBuilt' | 'busy' | 'noRoute' | 'wrongKind' | 'destinationFull';
+    }
   | { type: 'habitat:dewdropTick'; habitatId: HabitatId; amount: number }
   | { type: 'habitat:full'; habitatId: HabitatId }
   | { type: 'currency:dewdropsChanged'; total: number; delta: number }
