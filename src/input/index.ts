@@ -35,7 +35,15 @@ const GROUND_PLANE = new Plane(0, 1, 0, 0); // y = 0
 // was previously hard-coded as -0.8, which silently became wrong the moment
 // SPROUT_FLOAT_HEIGHT was corrected to clear the Nursery mound).
 const DRAG_HEIGHT_PLANE = new Plane(0, 1, 0, -SPROUT_FLOAT_HEIGHT);
-const HOVER_RADIUS_TILES = 1;
+// Forgiveness ADDED beyond a habitat's own visual footprint (see
+// habitats.ts's nearestWithin) — GameRules §10 asks for "generous snapping
+// ... no pixel-perfect placement". This used to be the WHOLE hit radius,
+// checked by rounding the drop point to a tile and comparing Manhattan
+// distance to the habitat's tile; that made the two larger habitats (visual
+// radius ~1.37-1.39) miss drops well inside their own drawn edge, and
+// overcounted diagonal offsets on top of that. Small now because the
+// footprint itself already accounts for the drum's real size.
+const HOVER_MARGIN_TILES = 0.35;
 const PAN_SPEED = 0.0026;
 const WHEEL_ZOOM_SENSITIVITY = 0.01;
 const PINCH_ZOOM_SENSITIVITY = 1;
@@ -118,7 +126,12 @@ export function initInput(renderer: RendererHandle, bus: EventBus): InputHandle 
     }));
     console.debug('[terrarium/debug pick] ' + JSON.stringify({ x, y, ground, all }));
     for (const visual of sprouts.all()) {
-      if (visual.held || visual.state === 'settled') continue;
+      // A crowded Nursery only draws a bounded number of waiting Sprouts at
+      // once (src/render/sprouts.ts's NURSERY_VISIBLE_SLOTS) — the rest have
+      // a disabled mesh sitting wherever it last was, invisible to the
+      // player, and must not be pickable either or a drag could grab a
+      // Sprout nobody can see.
+      if (visual.held || visual.state === 'settled' || !visual.mesh.isEnabled()) continue;
       const dist = Math.hypot(visual.mesh.position.x - ground.x, visual.mesh.position.z - ground.z);
       if (dist < closestDist) {
         closestDist = dist;
@@ -138,7 +151,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus): InputHandle 
   const endDrag = (x: number, y: number): void => {
     if (!dragSproutId) return;
     const ground = groundPointAt(x, y, GROUND_PLANE);
-    const overHabitat = ground ? habitats.nearestWithin(ground, HOVER_RADIUS_TILES) : null;
+    const overHabitat = ground ? habitats.nearestWithin(ground, HOVER_MARGIN_TILES) : null;
     bus.emit({ type: 'sprout:dropped', sproutId: dragSproutId, overHabitat });
     habitats.setHover(null, null);
     sprouts.setDragValidity(dragSproutId, null);
@@ -198,7 +211,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus): InputHandle 
       const ground = groundPointAt(x, y, DRAG_HEIGHT_PLANE);
       if (!ground) return;
       sprouts.setDragPosition(dragSproutId, ground.x, ground.z);
-      const habitatId = habitats.nearestWithin(ground, HOVER_RADIUS_TILES);
+      const habitatId = habitats.nearestWithin(ground, HOVER_MARGIN_TILES);
       const valid = habitatMatch(habitatId, dragSproutId);
       habitats.setHover(habitatId, valid);
       sprouts.setDragValidity(dragSproutId, habitatId ? valid : null);

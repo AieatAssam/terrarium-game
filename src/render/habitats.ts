@@ -21,14 +21,14 @@ import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGener
 
 import { swapManifestMaterialTexture } from './assets';
 import { GARDEN_CAMERA_ALPHA } from './camera';
-import { tileToWorld, tileDistance, type TileCoord } from './coords';
+import { tileToWorld, type TileCoord } from './coords';
 import { attachStandee } from './flatArt';
 import { createRoundedPrism } from './geometry';
 import { HABITAT_TILES } from './layout';
 import type { MotionConfig } from './motion';
 import { createRippleRing, createSparkleBurst } from './particles';
 import { createStoneBodyMaterial } from './pbrMaterials';
-import { bodyRings, halfHeight, HABITAT_BODIES, habitatTopY } from './propDims';
+import { bodyRings, footprintRadius, halfHeight, HABITAT_BODIES, habitatTopY } from './propDims';
 import type { HabitatId } from '../core/ids';
 
 const HABITAT_FALLBACK_COLOR: Record<HabitatId, Color3> = {
@@ -68,8 +68,8 @@ interface HabitatVisual {
 export interface HabitatManager {
   get: (id: HabitatId) => HabitatVisual;
   all: () => HabitatVisual[];
-  /** Nearest habitat to a world point within `radiusTiles`, or null. Used by input for drop-target + hover detection. */
-  nearestWithin: (world: { x: number; z: number }, radiusTiles: number) => HabitatId | null;
+  /** Nearest habitat whose footprint (plus `marginTiles` of extra forgiveness) contains `world`, or null. Used by input for drop-target + hover detection. */
+  nearestWithin: (world: { x: number; z: number }, marginTiles: number) => HabitatId | null;
   setHover: (id: HabitatId | null, valid: boolean | null) => void;
   reactCorrect: (id: HabitatId, motion: MotionConfig) => void;
   reactIncorrect: (id: HabitatId, motion: MotionConfig) => void;
@@ -163,13 +163,24 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
     };
   }
 
-  const nearestWithin = (world: { x: number; z: number }, radiusTiles: number): HabitatId | null => {
-    const tile = { x: Math.round(world.x), z: Math.round(world.z) };
+  const nearestWithin = (world: { x: number; z: number }, marginTiles: number): HabitatId | null => {
+    // Continuous Euclidean distance against each habitat's real footprint,
+    // not round-to-nearest-tile Manhattan distance against its centre tile.
+    // The old approach rounded the drop point to a tile FIRST, so a drop near
+    // a drum's visible edge — anywhere the rounded tile didn't exactly match
+    // the habitat's own tile — could read as 2 tiles away on the diagonal even
+    // while sitting well inside the rendered drum, since Manhattan distance
+    // overcounts diagonal offsets. `marginTiles` is forgiveness ADDED beyond
+    // the drum's visual edge (GameRules §10: "generous snapping ... no
+    // pixel-perfect placement"), not the whole tolerance.
     let best: HabitatId | null = null;
     let bestDist = Infinity;
     for (const visual of Object.values(visuals)) {
-      const d = tileDistance(tile, visual.tile);
-      if (d <= radiusTiles && d < bestDist) {
+      const dx = world.x - visual.worldCenter.x;
+      const dz = world.z - visual.worldCenter.z;
+      const d = Math.hypot(dx, dz);
+      const limit = footprintRadius(HABITAT_BODIES[visual.id]) + marginTiles;
+      if (d <= limit && d < bestDist) {
         bestDist = d;
         best = visual.id;
       }

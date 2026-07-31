@@ -55,6 +55,16 @@ export function halfHeight(body: PropBody): number {
   return body.profile.height / 2;
 }
 
+/**
+ * Outer visual radius at ground level: `halfWidth` plus how far the foot
+ * (see geometry.ts's `foot.outset`) flares beyond the main wall. This is what
+ * a drop/hover hitbox needs to match — `halfWidth` alone is the wall radius,
+ * which sits visibly inside the drum's actual footprint.
+ */
+export function footprintRadius(body: PropBody): number {
+  return body.halfWidth + (body.profile.foot?.outset ?? 0);
+}
+
 export function bodyRings(body: PropBody): PrismRing[] {
   return drumProfile(body.profile);
 }
@@ -171,6 +181,18 @@ export function habitatTopY(id: HabitatId): number {
 
 export function nurseryTopY(): number {
   return topSurfaceY(NURSERY_BODY);
+}
+
+/** Top face of a Garden Slide / Colour Gate plinth — both automation sites
+ * share AUTOMATION_BODY, so one derivation covers both. What a carried
+ * Sprout's ride height (src/render/sprouts.ts's SPROUT_RIDE_HEIGHT) measures
+ * from: a ride used to float at the Nursery MOUND's clearance height
+ * (~1.13) for its entire journey, which cleared the mound fine but put the
+ * Sprout roughly twice the structure's own height above the belt while
+ * passing beside a built Slide or Gate — reading as "floating unrelated
+ * nearby" rather than "riding the conveyor" (player report). */
+export function automationSiteTopY(): number {
+  return topSurfaceY(AUTOMATION_BODY);
 }
 
 export const AUTOMATION_BODIES: Record<AutomationId, PropBody> = {
