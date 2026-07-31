@@ -25,7 +25,7 @@ describe('upgrade cost curves', () => {
     // Sprouts producing baseDewdropRate should already afford the cheapest
     // upgrades. This mirrors the doc's back-of-envelope estimate, not a full
     // sim run.
-    const settledSproutsAtUnlock = 6; // conservative: well under the ~18-slot habitat cap
+    const settledSproutsAtUnlock = 6; // conservative: well under the 24-slot habitat cap
     const ticksElapsed = 2700; // ~4.5 min at 100ms/tick
     const projectedDewdrops = settledSproutsAtUnlock * HABITATS.emberNook.baseDewdropRate * ticksElapsed;
 

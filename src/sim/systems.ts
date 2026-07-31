@@ -233,9 +233,12 @@ export function unlockSystem(state: SimState): TickResult {
 // standing in: the Gate simply does not call it forward. That covers three
 // cases, all of them kind and all of them legible:
 //
-//   * a kind on no lane card at all (a Sun Sprout, a Star Sprout) — it waits by
-//     the pods for the player, and the southern run to the Sunflower Meadow is
-//     the untouched hand-carried route;
+//   * a kind on no lane card at all (a Sun Sprout, a Star Sprout) — the Gate
+//     itself never touches either. A Star Sprout waits by the pods for the
+//     player, same as always. A Sun Sprout is NOT stuck waiting, though: once
+//     the Garden Slide is built (unlockSystem, above) it always feeds the
+//     southern run to Sunflower Meadow automatically, independent of the
+//     Gate's own two lanes;
 //   * a lane card naming a kind that lane's home is NOT a home for (the player
 //     put Ember on the east lane, which leads to the Dew Pond) — the Gate
 //     refuses to carry them somewhere they would only be turned away from, and

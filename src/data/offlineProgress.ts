@@ -37,7 +37,7 @@ export const OFFLINE_EFFICIENCY = 0.5;
  * is the real "conservative cap": OFFLINE_CAP_MS alone is not enough, because
  * a well-upgraded garden (more habitat capacity, higher baseDewdropRate
  * multiplier) times 2 full hours would otherwise dwarf the entire upgrade
- * tree (colourGateUnlock, the most expensive single purchase, costs 450 —
+ * tree (colourGateUnlock, the most expensive single purchase, costs 700 —
  * see src/data/upgrades.ts). 200 is roughly one mid-tier upgrade's worth: a
  * welcome-back nudge, never a replacement for playing.
  */

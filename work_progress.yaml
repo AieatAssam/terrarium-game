@@ -391,8 +391,81 @@ in_flight:
       derivation (from the now-fixed target) is live and ticking — the
       "sharpens the Gate's own unlock narrative" reasoning above is not
       just theoretical. Reset the save afterward.
-    status: implemented, unit-tested, one e2e spec updated and green,
-      browser-verified end to end; uncommitted.
+    status: DONE, committed d3523f1 2026-08-01. Also fixed a stale
+      buildGardenSlide e2e helper comment and documented a narrow flake-
+      probability shift this change introduces (see e2e-not-rerun entry
+      below). See the meadow-automation-contradicts-prior-proposal open_issue
+      for a design conflict this change surfaced but did not resolve.
+  - owner: claude session 2026-08-01 (balance/engagement analysis)
+    files:
+      [
+        docs/GAME_DESIGN.md,
+        src/data/offlineProgress.ts,
+        src/sim/systems.ts,
+        tests/unit/data.upgrades.test.ts,
+        work_progress.yaml,
+      ]
+    task: >
+      User asked to "analyse the game code, ensure it is balanced and
+      engaging, prepare for next phase." Read every src/data/ table plus
+      unlocks/systems logic against docs/_scratch/GameRules.md and
+      docs/GAME_DESIGN.md.
+
+      FINDING 1 (doc-only, fixed): docs/GAME_DESIGN.md's "Progression math"
+      section was stale in MANY places, not just the one baseDewdropRate
+      figure flagged 2026-07-31 — baseCapacity (said 6, code says 8),
+      colourGateUnlock cost (said 450, code says 700, in 5 places), the
+      whole upgrade cost-curve table (pre-dated the 1.6-1.8x -> 2x-2.1x
+      growth rebalance), and the Colour Gate fallback-table row for Sun
+      Sprouts (said "waits by the pods", stale since the Meadow automation
+      landed). Verified none of this drift reached actual game logic —
+      tests/unit/data.*.test.ts derive every assertion from live src/data/
+      constants, never hardcoded copies, so the mechanics were never wrong,
+      only the prose. Rewrote the whole section with real numbers,
+      recomputing (not just find-replacing) the capacity-pressure timing and
+      the income/affordability projection since the old flat-average
+      heuristic no longer matched a capacity-aware model. Also fixed the
+      matching stale "450" in src/data/offlineProgress.ts's comment and a
+      stale "~18-slot" in tests/unit/data.upgrades.test.ts's comment
+      (comment-only, no assertion logic changed), and a stale planRide doc
+      comment in src/sim/systems.ts that still described Sun Sprouts as
+      permanently hand-carried.
+
+      FINDING 2 (balance verdict, from real numbers, not the stale doc): the
+      game is NOT broken. Garden Slide unlock ~4.4min (unchanged by the rate
+      fix — placement pacing depends on spawn interval, not Dewdrop rate).
+      habitat:full now lands ~5.1min (a bit after Slide unlock, not
+      concurrent — capacity rose 6->8 since the original doc math), still
+      close enough to read as one connected beat. Colour Gate's behavioral
+      gate (30s single-habitat feed + 3-pile) opens ~6-8min. A capacity-
+      aware income projection (ramp 0->24 settled over ~6min, then plateau
+      at 24 x 0.008/tick) crosses colourGateUnlock's 700 cost around
+      minute 9 — EARLIER than the original 15-25min target, i.e. real
+      pacing is a bit more generous than designed-for, not tighter. No
+      action needed; documented the corrected math in GAME_DESIGN.md instead
+      of leaving the old, now-provably-wrong "comfortably clears" framing
+      unquestioned.
+
+      FINDING 3 (surfaced, not resolved — see the new open_issue
+      meadow-automation-contradicts-prior-proposal): the 2026-07-31 Meadow
+      automation change directly contradicts docs/HATCHERY_PICKING_PROPOSAL.md's
+      explicit recommendation (written the same day, committed just before
+      it) to keep Sunflower Meadow hand-carried "for the entire game" as a
+      deliberate design feature, not a gap. Nobody reconciled that
+      conflict when the change shipped. Consequence: once both automations
+      exist, only Star Sprouts (6.3% of spawns) still need manual sorting —
+      all 3 common types (93.7%) are now fully automatable. This is a real
+      question for "is the game still engaging past minute ~10", not a bug.
+      Did not revert or re-decide; presented both sides to the user in the
+      chat response instead.
+
+      Full verification stack re-run after all edits: typecheck, lint, 258
+      unit tests, build — all four pass. No browser verification needed
+      (doc/comment-only changes, nothing renders differently).
+    status: DONE, uncommitted (doc + comment fixes only, no gameplay-code
+      change). "Next phase" recommendation held pending the user's call on
+      Finding 3 per advisor guidance — see meadow-automation-contradicts-
+      prior-proposal.
   - owner: claude session 2026-07-31 (resuming kimi-code's queued items)
     files: [docs/_scratch/*.mjs (several new probes), src/render/index.ts, src/render/sprouts.ts]
     task: >
@@ -551,6 +624,39 @@ in_flight:
 # Known open issues
 # ---------------------------------------------------------------------------
 open_issues:
+  - id: meadow-automation-contradicts-prior-proposal
+    severity: high
+    note: >
+      NEW 2026-08-01, found during a balance/engagement analysis pass (user
+      request: "analyse the game code, ensure it is balanced and engaging,
+      prepare for next phase"). docs/HATCHERY_PICKING_PROPOSAL.md (committed
+      1a8c462, same day as but BEFORE the Meadow automation change) argued
+      explicitly to KEEP Sunflower Meadow permanently hand-carried, calling
+      it "arguably a feature... keeps at least one habitat inside the core
+      Notice -> Guide -> Settle loop for the ENTIRE game" and warning that
+      full automation of every common type "would hollow out the caretaking
+      fantasy §1 is built on." The very next change that session (commit
+      d3523f1, this repo's automate-the-Meadow work) did exactly the thing
+      that proposal argued against, without reconciling it — CLAUDE.md's
+      "surface the conflict, don't resolve by silence" rule applies here and
+      was missed at the time.
+      CONSEQUENCE, verified by reading src/sim/systems.ts and
+      src/data/spawning.ts: with the Garden Slide always feeding Sun ->
+      Meadow and the Colour Gate's two lanes covering Ember/Dew, all 3
+      common Sprout types (93.7% of spawns) are now fully automatable end to
+      end. Only the Star Sprout (6.3% of spawns) still requires a manual
+      drag once both automations are built. That is a real, large shift in
+      what "the core loop" is for a player who has been playing 15+ minutes.
+      NOT reverted — this is a decision for the user, not something to
+      silently re-decide either direction. Two live options: (a) leave the
+      Meadow automation as shipped (current state) and treat "the manual
+      loop mostly disappears once both automations exist" as intended
+      end-of-Phase-1 texture (arguably matches §9.6 stage 3's own framing:
+      once the complexity curve reaches "two destinations and fallback",
+      full coverage of the 3 common types is the natural conclusion, not a
+      hollowing-out); or (b) partially or fully revert the 2026-07-31 Meadow
+      change so at least one habitat stays hand-carried for the whole game,
+      per the proposal's original reasoning. Flagged, not actioned.
   - id: nursery-crowd-masks-real-progress
     severity: medium
     note: >

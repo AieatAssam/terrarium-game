@@ -60,10 +60,12 @@ toward.
 - **0:20 – ~4:30** — This loop repeats roughly every 12 seconds (a new pod)
   while the player keeps sorting by hand. Dewdrops start trickling in as soon
   as the *first* Sprout settles (`habitat:dewdropTick` fires every tick a
-  habitat holds settled Sprouts). Habitats are small on purpose (capacity 6
-  each) — by the middle of this window at least one habitat is likely to
-  fill up, firing `habitat:full` and the `firstFullHabitat` achievement. This
-  is the first hint that "capacity" is a thing the player might want to grow.
+  habitat holds settled Sprouts). Habitats are small on purpose (capacity 8
+  each) — `firstFullHabitat` typically doesn't fire until just after this
+  window (see "Capacity pressure" below, ≈5.1 minutes expected for one
+  habitat to fill), not by its middle. This is still the first hint that
+  "capacity" is a thing the player might want to grow, just a beat later
+  than a capacity-6 garden would have shown it.
 - **~4:30–5:00** — After 20 correct manual placements, Garden Slide unlocks
   and auto-builds (`automation:unlocked` then `automation:built`), ALWAYS
   targeting Sunflower Meadow (Sun Sprouts) — changed 2026-07-31 from
@@ -98,7 +100,9 @@ toward.
   types from minute one. Somewhere in this window the player should also
   meet their first Star Sprout (see "Star Sprout rarity").
 - **~15–25 min** — Enough Dewdrops accumulate to afford `colourGateUnlock`
-  (450, the most expensive single purchase in Phase 1). Building it completes
+  (700, the most expensive single purchase in Phase 1 — see "Income &
+  affordability" below; a capacity-aware projection puts this closer to
+  minute 9 in practice). Building it completes
   the "satisfying arc" the brief asks for: all three habitats active, at
   least one upgrade purchased, and the second automation either unlocked or
   within easy reach.
@@ -144,27 +148,24 @@ above.
 **Sim tick:** 100ms (`TICK_MS`, `src/sim/loop.ts`) → 10 ticks/sec, 600
 ticks/min.
 
-**Habitat rate** (`src/data/habitats.ts`): `baseCapacity = 6`,
-`baseDewdropRate = 0.02` Dewdrops per settled Sprout per tick = 0.2/sec =
-**12 Dewdrops/min per settled Sprout**. All three habitats share these values
-— Phase 1 has no reason to make one biome objectively better, which would
-just bias which corner of the garden players rush to first.
+**Habitat rate** (`src/data/habitats.ts`): `baseCapacity = 8`,
+`baseDewdropRate = 0.008` Dewdrops per settled Sprout per tick = 0.08/sec =
+**4.8 Dewdrops/min per settled Sprout**. All three habitats share these
+values — Phase 1 has no reason to make one biome objectively better, which
+would just bias which corner of the garden players rush to first.
 
-> **STALE 2026-07-31**: the code's actual `BASE_DEWDROP_RATE`
-> (`src/data/habitats.ts`) is `0.008`, not `0.02` — 0.08/sec = **4.8
-> Dewdrops/min per settled Sprout**, 2.5x slower than this section's math.
-> Discovered while root-causing a failing e2e test
-> (`placement.dev.spec.ts`'s 5s `dewdropTotal > 0` wait — 0.02 gives exactly
-> 5.0s to a whole Dewdrop with 1 settled Sprout, matching that test's
-> timeout precisely; 0.008 needs ~12.5s). Almost certainly dates to commit
-> bf4c1cd ("Dewdrop income rebalanced against upgrade costs... whole upgrade
-> tree went from ~9 minutes of income to ~33") outliving this doc. Every
-> Dewdrops/min figure and downstream timing projection below this point is
-> now suspect and NOT reconciled against the current rate — flagged rather
-> than silently rewritten, since several of these values are load-bearing
-> against each other (see the coupled-balance-values gotcha in
-> `work_progress.yaml`) and a partial fix could be worse than an honestly
-> stale one. See `work_progress.yaml`'s `e2e-not-rerun` entry.
+> **RECONCILED 2026-08-01** (was flagged STALE 2026-07-31): this section
+> previously carried `baseCapacity = 6` and `baseDewdropRate = 0.02`, both
+> outdated by commit bf4c1cd's rebalance ("whole upgrade tree went from ~9
+> minutes of income to ~33") and a later capacity change. Every number below
+> this point has now been recomputed against the live constants in
+> `src/data/` rather than patched piecemeal — see "Income & affordability"
+> below for where the corrected math actually changes a conclusion (it
+> doesn't break pacing, but the margin is different from what the old text
+> claimed). `tests/unit/data.*.test.ts` derive their assertions from these
+> same live constants, so the mechanics were never actually wrong — only
+> this narrative was. See `work_progress.yaml`'s `e2e-not-rerun` entry for
+> the original discovery.
 
 **Pod spawn** (`src/data/spawning.ts`): `BASE_POD_SPAWN_INTERVAL_MS = 12000`
 (12s), reduced 25% multiplicatively per `podRhythm` level (9000ms → 6750ms →
@@ -193,12 +194,16 @@ seconds ∈ [240, 360]).
 
 ### Capacity pressure → habitatCapacity upgrade
 
-3 habitats × capacity 6 = 18 settled slots. At ~20 correct placements spread
-close to evenly across 3 common types (Star Sprouts are rare and land
-wherever placed), at least one habitat is expected to hit capacity — firing
-`habitat:full` — right around the same time Garden Slide unlocks. That's
-intentional: it's the natural cue to buy `habitatCapacity` (+3 capacity per
-habitat per level) shortly after automation arrives, not before.
+3 habitats × capacity 8 = 24 settled slots. Each common type spawns at
+≈31.3% per pod ((1 − 0.06) / 3), so filling one habitat to 8 takes an
+expected ≈25.5 spawns of matching pods — at the base 12s interval, ≈5.1
+minutes — a little *after* the ≈4.4 minute Garden Slide unlock, not
+concurrent with it (with capacity 6 this used to land right at unlock; at
+capacity 8 the margin is real, but the two events still land close enough
+together in normal play — variance across the 3 habitats means the first
+`habitat:full` typically fires within a minute either side of Slide
+unlock). That's still the natural cue to buy `habitatCapacity` (+3 capacity
+per habitat per level) shortly after automation arrives.
 
 ### Automation unlocks: Colour Gate's behavioral condition
 
@@ -232,8 +237,10 @@ Given Garden Slide unlocking ~4.4 min in, the 30-second feed window plus a
 pile of 3 forming from ongoing pod spawns realistically completes within a
 couple more minutes — Colour Gate becomes *purchasable* (its behavioral gate
 opens) around minute 6–8, well before the 15–25 minute target; the rest of
-that window is about affording its 450-Dewdrop cost, not waiting on the
-condition.
+that window is about affording its 700-Dewdrop cost, not waiting on the
+condition (see "Income & affordability" below — affording it lands around
+minute 9, so the behavioral condition is the binding constraint, not the
+price).
 
 ### Garden topology: the trunk and the fork
 
@@ -318,7 +325,7 @@ Gate simply does not call it forward. Three cases, all kind, all legible:
 
 | Case | What happens | Why not otherwise |
 |---|---|---|
-| A kind on no lane card (Sun, Star) | Waits by the pods for the player; the southern run stays hand-carried | Star is deliberately never offered as a lane choice — automating it away would rob the player of the rare-reveal moment (§6.5, §7.2) |
+| A kind on no lane card (Sun, Star) | The Colour Gate itself never touches either — Sun is not the Gate's to route, only the Slide's; Star is deliberately never offered as a lane choice — automating it away would rob the player of the rare-reveal moment (§6.5, §7.2). Once the Garden Slide is built (which happens before the Gate ever can be), a Sun Sprout is carried automatically down the southern run; a Star Sprout always waits for the player | Splitting "the Gate declines to route it" from "so it waits forever" stopped being true for Sun as of the 2026-07-31 Sunflower Meadow automation — see `unlockSystem`'s doc comment in `src/sim/systems.ts` |
 | A lane card naming a kind that lane's home does not welcome | The Gate declines, and the card says why in garden language | Carrying them there would get them turned away and bounced back — an endless shuttle. §5.3's friendly retry is for a *player's* drop, not a machine's loop |
 | A lane whose home is currently full | They wait, exactly as the Garden Slide already waits | Forcing a rejected delivery is neither kind nor useful |
 
@@ -395,33 +402,43 @@ threshold.
 
 ### Income & affordability by minute ~20 (projection)
 
-Using a simple linear-ramp estimate — average settled Sprout count rising
-from 0 toward a modest, capacity-constrained steady state — rather than a
-full simulation:
+The old flat "average settled Sprouts" heuristic understated income once the
+garden is actually capacity-aware: an attentive player fills all 24 base
+slots (3 habitats × 8) well before minute 20, and income then plateaus at
+the maximum rate rather than continuing to ramp. A ramp-then-plateau
+estimate:
 
 ```
-optimistic:    avg 8 settled Sprouts × 0.02/tick × 12,000 ticks (20 min) ≈ 1,920 Dewdrops
-conservative:  same, ramp-halved for the slow first few minutes           ≈    960 Dewdrops
+ramp (0–6 min):     settled count rises ~0 → 24 (Slide feeding Meadow +
+                     manual Ember/Dew sorting, per "Capacity pressure" above)
+                     avg ≈ 12 settled × 0.008/tick × 3,600 ticks (6 min)
+                     ≈ 346 Dewdrops
+plateau (6–20 min):  24 settled × 0.008/tick × 8,400 ticks (14 min)
+                     ≈ 1,613 Dewdrops
+total by ~20 min    ≈ 1,959 Dewdrops
 ```
 
-Either estimate comfortably clears `colourGateUnlock` (450) plus at least one
-cheap upgrade (`decorativeExpansion1` 60, `podRhythm` L1 80, `gardenSlideSpeed`
-L1 90), satisfying "at least one upgrade purchased, Colour Gate unlocked or
-close to it" inside 15–25 minutes. `tests/unit/data.upgrades.test.ts` checks
-the cheaper end of this claim (level-1 costs reachable against a
-conservative, low settled-Sprout estimate at the 4.5-minute mark) without
-depending on the full 20-minute projection above.
+That comfortably clears `colourGateUnlock` (700) — in fact the running total
+crosses 700 around minute **9**: ~346 from the ramp plus (700 − 346) / (24 ×
+0.008 × 10 ticks/sec × 60) ≈ 3.1 more minutes of plateau income. Since the
+behavioral gate itself opens around minute 6–8 ("Automation unlocks" above),
+affording it is the binding constraint by a couple of minutes, not the
+condition — the Gate becomes purchasable sooner than the original 15–25
+minute target assumed, not later. `tests/unit/data.upgrades.test.ts` checks
+the cheap end of this claim (level-1 costs reachable against a conservative,
+low settled-Sprout estimate at the 4.5-minute mark) directly against the live
+`baseDewdropRate` constant, independent of this doc's projection.
 
 ### Six upgrades
 
 | id | effect | maxLevel | cost curve (per level) |
 |---|---|---|---|
-| `podRhythm` | pod spawn interval −25%/level (mult.) | 3 | 80, 130, 205 |
-| `habitatCapacity` | +3 capacity per habitat per level | 3 | 100, 170, 290 |
-| `gardenSlideSpeed` | Garden Slide transport time −20%/level (mult.) | 3 | 90, 145, 230 |
-| `dewdropMultiplier` | +15% Dewdrop income per level (additive to 1.0 base) | 3 | 120, 215, 390 |
-| `decorativeExpansion1` | unlocks first cosmetic scenery set | 1 | 60 |
-| `colourGateUnlock` | builds the Colour Gate automation | 1 | 450 |
+| `podRhythm` | pod spawn interval −25%/level (mult.) | 3 | 80, 160, 320 |
+| `habitatCapacity` | +3 capacity per habitat per level | 3 | 100, 200, 400 |
+| `gardenSlideSpeed` | Garden Slide transport time −20%/level (mult.) | 3 | 90, 180, 360 |
+| `dewdropMultiplier` | +15% Dewdrop income per level (additive to 1.0 base) | 3 | 130, 275, 575 |
+| `decorativeExpansion1` | unlocks first cosmetic scenery set | 1 | 120 |
+| `colourGateUnlock` | builds the Colour Gate automation | 1 | 700 |
 
 All multi-level curves are geometric (`cost = base × growth^(level-1)`,
 rounded to the nearest 5) so each level costs noticeably more than the last;
@@ -481,7 +498,7 @@ Two caps, for two different reasons:
   credited, independent of elapsed time. Time-capping alone isn't
   conservative enough: a well-upgraded garden (more habitat capacity, a
   purchased `dewdropMultiplier`) times a full 2 hours would otherwise produce
-  thousands of Dewdrops — many times the cost of `colourGateUnlock` (450),
+  thousands of Dewdrops — many times the cost of `colourGateUnlock` (700),
   the most expensive single purchase in the game. 200 is roughly one
   mid-tier upgrade's worth: a welcome-back nudge, never a way to skip the
   upgrade tree or out-earn actually playing. `OFFLINE_EFFICIENCY = 0.5`
