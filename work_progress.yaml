@@ -16,7 +16,7 @@
 
 meta:
   updated: 2026-07-31
-  head: 20d4d87
+  head: a98b552
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
   tests_passing: 258
@@ -85,11 +85,129 @@ gotchas:
       bottom edge buried sprites inside drums repeatedly, in three separate
       places. src/render/propDims.ts is now the single source of truth for prop
       dimensions; derive heights from it rather than writing literals.
+  - id: sunflower-meadow-manual-only
+    note: >
+      Sunflower Meadow has NO automated route in Phase 1 by design (src/sim/
+      layout.ts: only the trunk-and-fork feeds Ember Nook/Dew Pond; the
+      southern run to the Meadow is the deliberate hand-carried fallback).
+      Roughly a third of any large accumulated Sprout population (Sun type)
+      will therefore NEVER move on its own no matter what — this reads like a
+      transport bug in a big/old save and is not one. Confirmed by reading
+      src/sim/layout.ts's own topology comment, not rediscovered by trial.
+  - id: debug-hook-promise-timing
+    note: >
+      The dev debug panel's buttons (spawn/grant/speed/reset) all go through
+      `simRuntimePromise.then(...)` in src/main.ts, i.e. genuinely async even
+      though the promise is long since resolved — a synchronous read of
+      window.__terrariumUIF.store.getState() on the very next line after
+      .click() will see the PRE-click value and look like the button is
+      broken. Cost real time to diagnose (looked exactly like a wiring
+      regression). Always `await` a real delay (setTimeout, not just a
+      microtask) before reading state back in a debug-panel test.
+  - id: backgrounded-tab-throttling
+    note: >
+      A Browser-pane tab that is not the fronted one reports
+      document.hidden=true and throttles rAF/timers unpredictably —
+      javascript_exec calls have hung/timed out against a backgrounded tab.
+      Call tabs_select on your tab before any test that depends on the sim
+      loop or render loop actually ticking, not just before screenshots.
+  - id: playwright-vs-browser-pane
+    note: >
+      For anything timing/FPS-sensitive, prefer a standalone headed
+      Playwright script (chromium.launch({headless:false}), CDP
+      Emulation.setCPUThrottlingRate to simulate a weaker laptop) over the
+      Browser pane: it is a real OS-visible window with a real rAF, is
+      immune to the shared-tab/backgrounded-tab issues above, and a seeded
+      IndexedDB save (write directly, then reload — NOT via beforeunload,
+      which overwrites it with live empty state) gives a reproducible
+      starting population. Confirmed the reported crowd-FPS regression this
+      way: 13.6 FPS median at 8x CPU throttle on the pre-fix code, in the
+      exact scenario that was 60 FPS unthrottled — the bug only shows under
+      representative hardware constraints.
 
 # ---------------------------------------------------------------------------
 # Completed and committed
 # ---------------------------------------------------------------------------
 completed:
+  - commit: a98b552
+    summary: >
+      Sprout crowd performance fix, conveyor ride-height fix, and manual
+      drop-onto-automation feature — all four checks pass
+      (typecheck/lint/258 tests/build), verified in-browser both via the
+      Browser pane and a standalone headed Playwright harness.
+    detail: >
+      TRANSPORT REGRESSION (the task this started as): investigated first,
+      found NOT a code bug. sprout:transportStarted fires correctly, the
+      BFS route resolves, and the Colour Gate's two-leg dispatch works
+      exactly as designed — reproduced with a headed Playwright harness
+      against seeded saves, on both the pre-fix and post-fix code.
+      Automation only goes idle when its one destination habitat is
+      genuinely full (by design, already shown via amber glow/parked
+      parcel/"waiting" lane lamps). The real, previously-undocumented
+      surprise: Sunflower Meadow has no automated route at all (see the
+      sunflower-meadow-manual-only gotcha above) — accounts for a third of
+      any big backlog never moving. No sim/render logic changed for this.
+
+      CROWD PERFORMANCE (the task's actual ask): a seeded 850-Sprout save
+      measured 13.6 FPS median under 8x CPU throttle (pre-fix code, same
+      scenario that ran 60 FPS unthrottled — the bug only shows under
+      representative hardware load), driven by ~885 per-instance PBR
+      materials and ~817 individually-drawn meshes. Fixed with one shared
+      material per (species, visual state) — swapped, never mutated in
+      place, so drag-tint feedback can't bleed onto every Sprout sharing a
+      state — plus NURSERY_VISIBLE_SLOTS (12), a standing-room cap for the
+      Nursery's waiting crowd mirroring the settled-Sprout cap habitats
+      already had. Same scenario after: 60 FPS median, 44 materials, 30
+      enabled meshes. Nothing is deleted; over-cap Sprouts are disabled
+      (not drawn, not pickable — src/input/index.ts's pickSproutId now
+      skips them) and promoted back the instant a slot frees up.
+
+      CONVEYOR GAP (fresh report, folded in): a carried Sprout rode at a
+      height tuned to clear the Nursery mound for its WHOLE journey —
+      roughly twice the Slide/Gate's own height above their belt while
+      passing beside one. New SPROUT_RIDE_HEIGHT derives from the
+      automation site's own top face (src/render/propDims.ts's
+      automationSiteTopY) instead, same pattern as every other "resting on
+      a surface" height in sprouts.ts. Measured mid-ride in a fresh headed
+      run: sprout Y ~0.85-1.0 vs. the Slide's own bead Y ~0.62 (was up to
+      ~1.31 before). Screenshot at /tmp/report1-ride-midflight.png (not
+      committed — scratch artifact) if useful for a follow-up visual call.
+
+      MANUAL DROP ONTO AUTOMATION (fresh report, folded in): input/index.ts
+      only ever resolved a drop against habitats. Added
+      automation.nearestBuiltWithin (mirrors habitats.ts's own
+      footprint-based hitbox from commit 20d4d87) and sim-side
+      adjudicateAutomationDrop, both wired through sprout:dropped's new
+      optional overAutomation field. adjudicateAutomationDrop is
+      deliberately routed through the SAME beginRide helper the tick-based
+      automationSystem dispatcher itself was refactored to use, so a
+      manual drop can never board a ride the automation would have refused
+      on its own next tick. An ineligible drop emits
+      sprout:automationDeclined with a reason code (notBuilt/busy/noRoute/
+      wrongKind/destinationFull) and changes nothing — Sprout stays idle,
+      pickable, exactly where it was. docs/CONTRACTS.md updated in
+      lockstep (event union is a shared contract, not sim-only). 10 new
+      unit tests in tests/unit/sim.systems.test.ts pin every decline
+      reason plus both Colour Gate legs; browser-verified end to end
+      (a real decline fired through the full input->bus->sim->event chain
+      with the Sprout confirmed still enabled/pickable afterward — the
+      specific reason captured was 'busy' rather than 'wrongKind' due to a
+      race with the automatic dispatcher grabbing the test candidate
+      first; the unit tests cover 'wrongKind' deterministically without
+      that race).
+
+      NOT independently re-verified: a real mouse drag-and-drop of a
+      Sprout onto the Slide via actual pointer events (computer tool) —
+      attempted, but the interactive Browser-pane session accumulated a
+      large, messy save over the course of this task (many resets/reloads
+      by two concurrent agents) that made positioning reliable pixel
+      coordinates for a fresh drag difficult in the time available; the
+      bus-level equivalent (sprout:dropped with overAutomation set, which
+      is EXACTLY what src/input/index.ts's endDrag now emits on a real
+      drop) was verified instead. Straightforward mouse-drag verification
+      is the natural follow-up if anyone wants belt-and-braces confidence
+      on the pointer-handling path specifically (nearestBuiltWithin's
+      hitbox math, hover tinting) rather than the adjudication logic.
   - commit: 20d4d87
     summary: Habitat drop hitbox uses real footprint + Euclidean distance.
     detail: >
@@ -97,7 +215,11 @@ completed:
       which overcounts diagonals and ignored that the larger habitats have a
       ~1.37 footprint. Not verified by a live drag — the shared browser session
       made isolated UI testing unreliable — so it rests on the maths plus green
-      checks.
+      checks. NOTE: this commit's propDims.ts hunk (automationSiteTopY, 22
+      lines) is actually a98b552's work, not this one's — it was already sitting
+      uncommitted in the tree when 20d4d87 was made and got swept up with it.
+      Content is correct either way; flagging only so the commit message and
+      diff don't look mismatched to a future reader.
   - commit: 1a8c462
     summary: Design proposal for picking Sprouts from the hatchery.
     detail: Recommends building nothing yet; see open_questions.
@@ -135,42 +257,30 @@ completed:
 # ---------------------------------------------------------------------------
 # In flight — uncommitted work in the tree RIGHT NOW
 # ---------------------------------------------------------------------------
-in_flight:
-  - owner: subagent (transport + crowd performance)
-    status: running at time of writing
-    files:
-      - src/render/sprouts.ts
-      - src/render/index.ts
-      - src/render/automation.ts
-      - src/sim/systems.ts
-      - src/sim/runtime.ts
-      - src/events/types.ts
-      - src/input/index.ts
-      - docs/CONTRACTS.md
-      - tests/unit/sim.systems.test.ts
-      - tests/unit/render.nurserySlots.test.ts
-    scope: >
-      Three user reports plus a performance target: (1) reported transport
-      regression, (2) gap between a carried Sprout and the conveyor reading as
-      "floating nearby" rather than "riding", (3) no way to manually drop a
-      Sprout onto the Slide — adjudicateAutomationDrop and a
-      NURSERY_VISIBLE_SLOTS crowd cap have appeared in the tree, so both are
-      partly built. Performance target: ~850 Sprout meshes measured 16.5 FPS
-      against a 60 FPS goal.
-    caution: >
-      Do not commit these files as your own work without checking whether that
-      agent is still running. Do not "fix" errors in files you do not own.
+in_flight: []
+# (empty — the crowd-performance/transport/conveyor/manual-drop work above
+# landed and is committed as a98b552. Nothing else was left uncommitted by
+# this agent at handoff time; check `git status` to confirm before assuming.)
 
 # ---------------------------------------------------------------------------
 # Known open issues
 # ---------------------------------------------------------------------------
 open_issues:
-  - id: sprout-crowd-fps
-    severity: high
+  - id: manual-drag-onto-slide-not-pointer-tested
+    severity: low
     note: >
-      ~850 live Sprout meshes measured 16.5 FPS. The Nursery rest caps new
-      accumulation but nothing culls an existing crowd. Being worked; see
-      in_flight.
+      adjudicateAutomationDrop + the sprout:dropped.overAutomation wiring is
+      unit-tested (10 cases, exact) and browser-verified at the bus level
+      (a real decline round-tripped through input->bus->sim->event with the
+      Sprout confirmed still enabled/pickable). NOT independently verified
+      via an actual mouse drag (computer tool pointer events) onto the
+      Slide specifically, because the shared Browser-pane session's save
+      had grown too large/messy for reliable coordinate math in the time
+      available. If picking this up: reset the save first, build ONE
+      Garden Slide, and drag an eligible Sprout onto it — see the
+      playwright-vs-browser-pane gotcha for a cleaner alternative (seed a
+      seeded, small save via a headed Playwright script rather than the
+      live shared tab).
   - id: ground-dropped-sprouts
     severity: medium
     note: >
