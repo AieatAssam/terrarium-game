@@ -16,3 +16,10 @@ node_modules/.tmp
 
 # Vitest / coverage
 coverage
+
+# Copyrighted third-party reference screenshots — internal-only, never commit
+docs/reference-candidates/
+docs/references/**/*.jpg
+docs/references/**/*.jpeg
+docs/references/**/*.png
+docs/references/**/*.webp
