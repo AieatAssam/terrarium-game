@@ -23,7 +23,7 @@ import { tileToWorld, type TileCoord } from './coords';
 import { createHabitatOccupancySigns, occupancySignState } from './habitats';
 import { findPathRoute, HABITAT_TILES, NURSERY_TILE } from './layout';
 import { easingFn, getMotionConfig, prefersReducedMotion, type MotionConfig } from './motion';
-import { createPaintedMetalMaterial } from './pbrMaterials';
+import { createMoodBadgeMaterial } from './pbrMaterials';
 import { createSparkleBurst } from './particles';
 import { automationSiteTopY, habitatTopY, nurseryTopY } from './propDims';
 import type { EventBus } from '../events/bus';
@@ -79,8 +79,15 @@ export type SproutVisualState = 'reveal' | 'idle' | 'walk' | 'happy' | 'settled'
  * amount beats pushing either one past what its own constraints allow.
  */
 export const SPROUT_SPRITE_SIZE = 0.95;
-/** Diameter/edge of a Sprout's small mood-badge child mesh (Mood Bell feature, 2026-08-01). */
-const MOOD_BADGE_SIZE = 0.12;
+/**
+ * Edge of a Sprout's mood-badge child quad (Mood Bell feature, 2026-08-01).
+ *
+ * Larger than the 0.12 solid primitive it replaces, but the ICON is smaller:
+ * the glyph occupies roughly the middle third of an otherwise transparent
+ * quad, and the surrounding space is its soft halo. Sizing the quad to the
+ * glyph would crop the halo and put a hard edge back on the badge.
+ */
+const MOOD_BADGE_SIZE = 0.24;
 /** Offset from the sprite's centre (what `position` sets) to its bottom edge. */
 const SPROUT_HALF_HEIGHT = SPROUT_SPRITE_SIZE / 2;
 /** Air gap left between a surface and the sprite's bottom edge. */
@@ -640,8 +647,7 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     const existing = sharedMoodBadgeMaterials.get(mood);
     if (existing) return existing;
     const fallback = parseHexColor(MOODS[mood]?.primaryColor, new Color3(0.8, 0.8, 0.8));
-    const material = createPaintedMetalMaterial(scene, `terrarium.sprout.moodBadge.${mood}`, fallback);
-    material.emissiveColor = fallback.scale(0.5);
+    const material = createMoodBadgeMaterial(scene, mood, fallback);
     sharedMoodBadgeMaterials.set(mood, material);
     return material;
   };
@@ -669,10 +675,8 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
   };
 
   /** Builds (or returns the cached) material for one (type, cacheKey)
-   * combination — `cacheKey` is either a texture state or one of the
-   * drag-tint variants (see `dragMaterialFor`). Never mutated after creation;
-   * a Sprout that needs to look different gets pointed at a DIFFERENT cached
-   * material instead. */
+   * combination. Never mutated after creation; a Sprout that needs to look
+   * different gets pointed at a DIFFERENT cached material instead. */
   const sharedMaterialFor = (
     sproutType: SproutTypeId,
     cacheKey: string,
@@ -688,30 +692,26 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     material.metallic = 0;
     material.emissiveColor = emissiveColor;
 
-    // MOMENTARY SOLID-SQUARE FLASH ON PICKING UP A SPROUT — the fix.
+    // Adopt an already-resolved sibling's texture synchronously.
     //
     // createManifestMaterial starts a material at `baseColor = fallbackColor`
-    // with NO baseTexture and only fills the texture in from an ASYNC
-    // callback. Until that resolves the mesh draws as a flat,
-    // fully-opaque, fallback-coloured rectangle — i.e. the Sprout briefly
-    // becomes a coloured square. (assets.ts:320 already documents this exact
-    // failure mode for the material-swap path.)
+    // with NO baseTexture and fills the texture in from an ASYNC callback. A
+    // material with no baseTexture has nothing for `_useAlphaFromAlbedoTexture`
+    // to read, so its alpha is a solid 1 and the mesh draws as an opaque,
+    // fully saturated, fallback-coloured rectangle — the "square block" the
+    // player reported. (assets.ts:320 documents the same failure mode for the
+    // material-swap path.)
     //
-    // Normally invisible, because a Sprout's idle/walk/happy materials are
-    // created during the reveal and have long since resolved. But the three
-    // DRAG-TINT variants (see dragMaterialFor) are created lazily on the
-    // FIRST pick-up of each (type, validity) pair — mid-gesture, with the
-    // Sprout at its largest and directly under the cursor. Hence a flash
-    // that is real, brief, ugly, and "only occasional": it can only happen
-    // once per pair per session.
+    // Every variant for a given (type, manifestState) paints the SAME manifest
+    // texture and differs only in emissive tint, so if a sibling has already
+    // resolved, take its texture here and the new material is correct on its
+    // very first frame. The async load still runs underneath and re-assigns
+    // the identical texture.
     //
-    // Fix: these variants all paint the SAME manifest texture as an existing
-    // cached material for the same (type, manifestState) — the only thing
-    // that differs is the emissive tint. So if a sibling has already resolved
-    // its texture, adopt it synchronously here and the new material is
-    // correct on its very first frame. The async load still runs underneath
-    // and simply re-assigns the identical texture. If no sibling has resolved
-    // yet, behaviour is exactly as before.
+    // Defence in depth rather than the primary fix: the drag path no longer
+    // creates a material mid-gesture at all (see setDragValidity), which is
+    // what actually closed that bug. This keeps any FUTURE variant from
+    // reintroducing it.
     const resolvedSibling = sharedSproutMaterials.get(`${sproutType}:${manifestState}`);
     if (resolvedSibling?.baseTexture) {
       material.baseTexture = resolvedSibling.baseTexture;
@@ -727,19 +727,6 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
   const normalMaterialFor = (sproutType: SproutTypeId, state: 'idle' | 'walk' | 'happy' | 'reveal'): PBRMetallicRoughnessMaterial => {
     const fallback = parseHexColor(SPROUT_TYPES[sproutType]?.primaryColor, TYPE_FALLBACK_COLOR[sproutType]);
     return sharedMaterialFor(sproutType, state, state, fallback.scale(0.35));
-  };
-
-  /** The three drag-tint variants (valid / invalid / neutral-while-held), one
-   * set per Sprout type, always painted with the 'walk' texture since a held
-   * Sprout is always in the 'walk' visual state (see `sprout:pickedUp`
-   * below). Only ever one Sprout is dragged at a time (src/input/index.ts
-   * tracks a single `dragSproutId`), so these are shared across the whole
-   * session rather than allocated per Sprout. */
-  const dragMaterialFor = (sproutType: SproutTypeId, valid: boolean | null): PBRMetallicRoughnessMaterial => {
-    const fallback = parseHexColor(SPROUT_TYPES[sproutType]?.primaryColor, TYPE_FALLBACK_COLOR[sproutType]);
-    if (valid === false) return sharedMaterialFor(sproutType, 'drag-invalid', 'walk', new Color3(0.35, 0.08, 0.08));
-    if (valid === true) return sharedMaterialFor(sproutType, 'drag-valid', 'walk', fallback.scale(1.1));
-    return sharedMaterialFor(sproutType, 'drag-neutral', 'walk', fallback.scale(0.9));
   };
 
   /** Points `visual.mesh.material` at the correct shared, non-drag material
@@ -798,9 +785,6 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     normalMaterialFor(sproutType, 'idle');
     normalMaterialFor(sproutType, 'walk');
     normalMaterialFor(sproutType, 'happy');
-    dragMaterialFor(sproutType, true);
-    dragMaterialFor(sproutType, false);
-    dragMaterialFor(sproutType, null);
 
     const shadow = MeshBuilder.CreateDisc(
       `terrarium.sprout.${id}.shadow`,
@@ -831,20 +815,28 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     mesh.metadata = { kind: 'sprout', sproutId: id };
     visuals.set(id, visual);
 
-    // Mood badge: a small additive shape parented to the sprite, child of
+    // Mood badge: a small alpha-cut icon parented to the sprite, child of
     // `mesh` so it billboards and moves with it for free — disposed
     // automatically when `mesh` is (Babylon disposes children recursively).
-    // Shape (not colour alone) carries the distinction: sunny is a small
-    // sphere, sleepy a small box.
+    //
+    // A QUAD, not a solid. It used to be a literal CreateSphere for sunny and
+    // a literal CreateBox for sleepy, both untextured: at the camera distance
+    // this game is actually played at, that box read as a pale cube floating
+    // beside the creature — the player reported the Sprout "turning into a
+    // square block". Because the icon's quad is mostly transparent there is
+    // now no block to see, only the glyph (see createMoodBadgeMaterial).
+    //
+    // Shape still carries the distinction, not colour (GameRules §11): sunny
+    // is a sparkle, sleepy a crescent.
     const badgeMaterial = moodBadgeMaterialFor(mood);
-    const badge =
-      mood === 'sunny'
-        ? MeshBuilder.CreateSphere(`terrarium.sprout.${id}.moodBadge`, { diameter: MOOD_BADGE_SIZE, segments: 8 }, scene)
-        : MeshBuilder.CreateBox(`terrarium.sprout.${id}.moodBadge`, { size: MOOD_BADGE_SIZE }, scene);
+    const badge = MeshBuilder.CreatePlane(`terrarium.sprout.${id}.moodBadge`, { size: MOOD_BADGE_SIZE }, scene);
     badge.parent = mesh;
     badge.isPickable = false;
     badge.material = badgeMaterial;
-    badge.position.set(SPROUT_SPRITE_SIZE * 0.32, SPROUT_SPRITE_SIZE * 0.32, -0.01);
+    // Tucked closer to the creature than the old primitive sat, and slightly
+    // in FRONT of the sprite plane (-z in the sprite's local space) so it is
+    // never half-swallowed by the artwork it annotates.
+    badge.position.set(SPROUT_SPRITE_SIZE * 0.28, SPROUT_SPRITE_SIZE * 0.3, -0.01);
 
     // Emitted from the mound's top face, not the tile centre: the burst adds
     // its own +0.3 internally, so a tile-centre y of 0 put the whole reveal
@@ -1229,23 +1221,41 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
   const setDragValidity = (id: string, valid: boolean | null): void => {
     const visual = visuals.get(id);
     if (!visual) return;
+    // ALWAYS the normal, already-resolved material for the Sprout's current
+    // state — the drag no longer swaps in a material of its own.
+    //
+    // WHY THAT CHANGED. Validity used to point the mesh at one of three
+    // per-type "drag tint" materials built by createManifestMaterial, which
+    // starts a material at a FLAT fallback colour with no texture and fills
+    // the texture in from an async callback. A material with no baseTexture
+    // has nothing for `_useAlphaFromAlbedoTexture` to read, so its alpha is a
+    // solid 1 — and the Sprout became an opaque, fully saturated,
+    // fallback-coloured RECTANGLE covering its own artwork. Reported by the
+    // player twice: first as a "momentary square block when selecting
+    // sprouts", then, once these materials were pre-warmed at spawn, as a
+    // persistent cyan square while dragging over a habitat.
+    //
+    // Pre-warming was the wrong shape of fix — it only moved when the async
+    // window opened. Reusing the state material removes the window entirely:
+    // by the time a Sprout can be picked up it has been on screen for
+    // seconds, so its material is textured and cannot flash anything.
+    //
+    // No information is lost. Drop validity was never carried by this tint
+    // alone: habitats.ts's setHover already lights the target habitat and
+    // scales it up for a valid drop and dims/shrinks it for an invalid one,
+    // which is the larger, clearer signal and is where the player is looking.
+    // What is kept here is a light touch on the Sprout itself so the held
+    // creature still answers, via scale and opacity rather than colour — and
+    // scale/opacity cannot depend on an unloaded texture.
+    applyNormalMaterial(visual);
     if (valid === null) {
-      // Restore whatever the NORMAL shared material for the current state is,
-      // rather than assuming 'walk': by the time a drop clears the tint, the
-      // sim's synchronous response to `sprout:dropped` (settled/happy/idle)
-      // has already run, and `visual.state` reflects it.
-      applyNormalMaterial(visual);
       visual.mesh.visibility = 1;
+      visual.mesh.scaling.set(1, 1, 1);
       return;
     }
-    // A shared, per-type drag-tint material — never a mutation of whatever
-    // material this Sprout happens to be pointed at, which used to be the
-    // very material every other same-type same-state Sprout shared too. Only
-    // one Sprout is ever mid-drag at a time (src/input/index.ts), so this
-    // never fights another Sprout for the same cached entry.
-    visual.material = dragMaterialFor(visual.sproutType, valid);
-    visual.mesh.material = visual.material;
-    visual.mesh.visibility = valid === false ? 0.6 : 1;
+    visual.mesh.visibility = valid === false ? 0.72 : 1;
+    const lift = valid === true ? 1.08 : 0.94;
+    visual.mesh.scaling.set(lift, lift, 1);
   };
 
   /**

@@ -2,6 +2,77 @@
 
 ---
 
+## 2026-08-01 — The "square block" on a Sprout: it was the mood badge
+
+Player report: *"look at what happens to sprout when it is hovering over a
+habitat. it turns into a square block."*
+
+Reproduced and identified in-browser rather than reasoned about, via a new
+`tests/e2e/dragTint.dev.spec.ts` that drives a real drag and crops tight on the
+held Sprout. The culprit is **not** the drag tint: it is the mood badge, which
+was a literal `MeshBuilder.CreateBox` (sleepy) / `CreateSphere` (sunny) with an
+untextured painted-metal material. At the camera distance the game is actually
+played at, the box rendered as a pale lavender **cube** floating beside the
+creature, comparable in screen size to its head, reading as a missing-texture
+artifact. `docs/REFERENCE_BOARD.md`'s non-negotiable list fails a build for
+exactly this — "no default primitives or flat placeholder appearance".
+
+It was most obvious mid-drag simply because that is when the player is looking
+straight at the Sprout, not because of anything the drag path does.
+
+**There were two separate square artifacts, and the badge was only the
+smaller one.** The player's follow-up screenshot showed the *sprite plane
+itself* rendering as a solid cyan rectangle while held over a habitat, with
+the (correctly drawn) mood sparkle sitting in its corner. Root cause:
+`setDragValidity` pointed the mesh at one of three per-type "drag tint"
+materials built by `createManifestMaterial`, which starts at a flat fallback
+colour with **no** `baseTexture`. A material with no base texture has nothing
+for `_useAlphaFromAlbedoTexture` to read, so its alpha is a solid 1 — an
+opaque, fully saturated, fallback-coloured rectangle covering the creature's
+own artwork.
+
+This is the same defect reported earlier as a "momentary square block when
+selecting sprouts". The first attempt at it — pre-warming the drag materials
+at spawn — was the wrong shape of fix: it only moved *when* the async window
+opened, and in practice converted a brief flash into a persistent square.
+
+**Real fix:** the drag no longer swaps in a material at all. It reuses the
+Sprout's normal, already-resolved state material and expresses validity
+through scale and opacity instead of colour, neither of which can depend on an
+unloaded texture. No information is lost — validity was never carried by this
+tint alone; `habitats.ts`'s `setHover` already lights and scales the target
+habitat, which is the larger signal and where the player is looking. The three
+drag-tint materials are deleted.
+
+**Fix for the badge:** a small alpha-cut icon on a billboard quad instead of a solid, with
+procedurally drawn glyphs (`createMoodBadgeMaterial`). Because the quad is
+mostly transparent there is no block to see at all — only the glyph. Shape
+still carries the distinction rather than colour, per GameRules §11: **sunny is
+a four-point sparkle, sleepy a crescent**, each with a soft tinted halo so it
+reads as part of the world rather than a UI sticker pasted over it.
+
+Drawn procedurally on purpose: `MoodDefinition.silhouetteKey` points at
+manifest art (`mood.sunny.badge`) that **does not exist** in
+`public/assets/manifest.json`, so a manifest-backed material would fall back to
+a flat colour and reintroduce the very problem being fixed.
+
+Evidence: `docs/qa-screenshots/drag-tint/`. Before — a pale cube beside the
+creature; after — a clean crescent, with both glyphs confirmed side by side on
+neighbouring Sprouts in the settle-loop captures.
+
+### Correction to an earlier finding in this log
+
+The pointer-drag e2e path is **not** broken in the app. The same drag that
+fails through Playwright's `page.mouse` succeeds when dispatched as synthetic
+`PointerEvent`s on the canvas (with `setPointerCapture` stubbed) — `dragTint`
+picks a Sprout reliably that way. So the 18 pre-existing dev-project failures
+are a **helper** problem in `tests/e2e/helpers.ts`'s `dragBetween`, not a
+gameplay one, and the fix is to port those helpers to the dispatch approach
+`dragTint.dev.spec.ts` now demonstrates. That is a smaller and much better
+defined job than "the pointer path is broken".
+
+---
+
 ## 2026-08-01 — Garden path: chevron loop jerk + verticality
 
 Player report, verbatim: *"shevrons moving along the belt do not loop the

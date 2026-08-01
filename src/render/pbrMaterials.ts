@@ -971,9 +971,105 @@ export function createLanternGlassMaterial(scene: Scene, name: string): LanternG
 // their albedo outright rather than decorating someone else's — so the two
 // helpers had no remaining callers.
 
+// ---------------------------------------------------------------------------
+// Mood badges
+// ---------------------------------------------------------------------------
+/**
+ * The small icon a Sprout carries to show its mood (Mood Bell feature).
+ *
+ * Replaces a literal `MeshBuilder.CreateSphere` / `CreateBox` primitive. The
+ * box version was reported by the player as the Sprout "turning into a square
+ * block" while held over a habitat — an accurate description: it was an
+ * untextured pale-lavender CUBE floating beside the creature, comparable in
+ * screen size to the creature's own head, reading as a missing-texture
+ * artifact rather than as a mood cue. docs/REFERENCE_BOARD.md's non-negotiable
+ * list fails a build for exactly this ("no default primitives or flat
+ * placeholder appearance").
+ *
+ * Now a soft alpha-cut icon on a small billboard rather than a solid: most of
+ * the quad is transparent, so there is no block to see at all — only the
+ * glyph.
+ *
+ * Distinction is by SHAPE first and colour second, per GameRules §11's
+ * never-colour-alone rule: sunny is a four-point sparkle, sleepy a crescent.
+ * Both are drawn procedurally here rather than loaded, because
+ * `MoodDefinition.silhouetteKey` points at manifest art (`mood.sunny.badge`)
+ * that does not exist in public/assets/manifest.json — a manifest-backed
+ * material would fall back to a flat colour and reintroduce the very problem
+ * this fixes.
+ */
+const moodBadgeTextures = new Map<string, DynamicTexture>();
+
+function createMoodBadgeTexture(scene: Scene, mood: 'sunny' | 'sleepy', tint: Color3): DynamicTexture {
+  const cached = moodBadgeTextures.get(mood);
+  if (cached) return cached;
+  const size = 128;
+  const texture = new DynamicTexture(`terrarium.pbr.moodBadge.${mood}`, size, scene, false, Texture.TRILINEAR_SAMPLINGMODE);
+  const ctx = texture.getContext() as CanvasRenderingContext2D;
+  ctx.clearRect(0, 0, size, size);
+  const mid = size / 2;
+  const rgb = `${Math.round(tint.r * 255)},${Math.round(tint.g * 255)},${Math.round(tint.b * 255)}`;
+
+  // A soft halo under both glyphs, so the icon carries a little glow of its
+  // own instead of reading as a hard sticker pasted over the world.
+  const halo = ctx.createRadialGradient(mid, mid, 0, mid, mid, mid);
+  halo.addColorStop(0, `rgba(${rgb},0.55)`);
+  halo.addColorStop(0.55, `rgba(${rgb},0.18)`);
+  halo.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.96)';
+  if (mood === 'sunny') {
+    // Four-point sparkle: concave-sided star with its points on the axes.
+    const outer = size * 0.42;
+    const waist = size * 0.1;
+    ctx.beginPath();
+    ctx.moveTo(mid, mid - outer);
+    ctx.quadraticCurveTo(mid + waist, mid - waist, mid + outer, mid);
+    ctx.quadraticCurveTo(mid + waist, mid + waist, mid, mid + outer);
+    ctx.quadraticCurveTo(mid - waist, mid + waist, mid - outer, mid);
+    ctx.quadraticCurveTo(mid - waist, mid - waist, mid, mid - outer);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    // Crescent: a disc with a second punched out of it, offset up and right.
+    ctx.beginPath();
+    ctx.arc(mid, mid, size * 0.36, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath();
+    ctx.arc(mid + size * 0.17, mid - size * 0.09, size * 0.32, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  texture.update(false);
+  texture.hasAlpha = true;
+  texture.wrapU = Texture.CLAMP_ADDRESSMODE;
+  texture.wrapV = Texture.CLAMP_ADDRESSMODE;
+  moodBadgeTextures.set(mood, texture);
+  return texture;
+}
+
+/** Shared material for one mood's badge — one per mood for the whole session. */
+export function createMoodBadgeMaterial(scene: Scene, mood: 'sunny' | 'sleepy', tint: Color3): PBRMetallicRoughnessMaterial {
+  const material = new PBRMetallicRoughnessMaterial(`terrarium.sprout.moodBadge.${mood}.mat`, scene);
+  material.baseTexture = createMoodBadgeTexture(scene, mood, tint);
+  material.baseColor = tint.scale(1.15);
+  material.emissiveColor = tint.scale(0.55);
+  material.metallic = 0;
+  material.roughness = 0.6;
+  material.backFaceCulling = false;
+  material.transparencyMode = Material.MATERIAL_ALPHABLEND;
+  (material as unknown as { _useAlphaFromAlbedoTexture: boolean })._useAlphaFromAlbedoTexture = true;
+  return material;
+}
+
 /** Test-only: clears the module-level texture-family cache between test
  * runs (mirrors the _reset helpers in assets.ts/environment.ts). */
 export function _resetPbrMaterialsForTests(): void {
   familyCache.clear();
   pathFlowTexture = undefined;
+  moodBadgeTextures.clear();
 }

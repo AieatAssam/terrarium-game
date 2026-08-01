@@ -739,6 +739,49 @@ in_flight:
         semantics plus a captured march sequence
         (tests/e2e/pathFlow.dev.spec.ts writes docs/qa-screenshots/path/).
         Wants a human eye in play before calling it closed.
+      MOOD BADGE "SQUARE BLOCK" (third user report, same session): "look at
+      what happens to sprout when it is hovering over a habitat. it turns into
+      a square block." REPRODUCED, and it is NOT the drag tint — it is the
+      mood badge, which was a literal MeshBuilder.CreateBox (sleepy) /
+      CreateSphere (sunny) with an untextured painted-metal material. At the
+      real camera distance the box rendered as a pale lavender CUBE beside the
+      creature, about the size of its head. Most obvious mid-drag only because
+      that is when the player is staring at the Sprout. Replaced with an
+      alpha-cut icon on a billboard quad (createMoodBadgeMaterial in
+      pbrMaterials.ts): sunny = four-point sparkle, sleepy = crescent, each
+      with a soft tinted halo, shape-distinct per GameRules §11. Drawn
+      PROCEDURALLY on purpose — MoodDefinition.silhouetteKey points at
+      `mood.sunny.badge` / `mood.sleepy.badge`, and NEITHER KEY EXISTS in
+      public/assets/manifest.json, so a manifest-backed material would fall
+      back to a flat colour and put the block straight back.
+      SECOND, BIGGER SQUARE ARTIFACT (same report, follow-up screenshot): the
+      SPRITE PLANE itself rendered as a solid cyan rectangle while held over a
+      habitat, with the correctly-drawn mood sparkle in its corner. Root
+      cause: setDragValidity pointed the mesh at one of three per-type
+      "drag tint" materials from createManifestMaterial, which starts at a
+      flat fallback colour with NO baseTexture — and a material with no base
+      texture has nothing for _useAlphaFromAlbedoTexture to read, so alpha is
+      a solid 1 and you get an opaque fallback-coloured rectangle over the
+      artwork. SAME defect as the earlier "momentary square when selecting".
+      MY FIRST ATTEMPT AT IT WAS WRONG AND MADE IT WORSE: pre-warming the drag
+      materials at spawn only moved WHEN the async window opened, converting a
+      brief flash into a persistent square. Real fix: the drag no longer swaps
+      material at all — it reuses the Sprout's normal already-resolved state
+      material and expresses validity through scale + opacity, neither of
+      which can depend on an unloaded texture. The three drag-tint materials
+      are deleted. Nothing is lost: habitats.ts setHover already lights and
+      scales the target habitat, which is the bigger signal. LESSON worth
+      generalising: never create a manifest-backed material inside a gesture
+      or any other moment the player is looking at — build it when the object
+      is created, or reuse one that already resolved.
+      CORRECTION TO THIS ENTRY'S EARLIER CLAIM — the pointer-drag path is NOT
+      broken in the app. A drag dispatched as synthetic PointerEvents on the
+      canvas (with setPointerCapture stubbed) picks a Sprout reliably; only
+      Playwright's `page.mouse` fails to. So the 18 pre-existing dev-project
+      failures are a HELPER bug in tests/e2e/helpers.ts's `dragBetween`, not a
+      gameplay bug, and the fix is to port those helpers to the dispatch
+      approach that tests/e2e/dragTint.dev.spec.ts now demonstrates. Much
+      smaller and better-defined job than "the pointer path is broken".
       GOTCHA for anyone writing e2e around spawns: `debugSpawnAndGetId` pops
       the LAST spawn id, and the Nursery pod keeps spawning throughout — a
       natural dew/sun Sprout landing in the same moment silently hands back
