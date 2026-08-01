@@ -704,6 +704,15 @@ export const UI_CSS = /* css */ `
   .tt-nav-btn {
     min-width: var(--tt-touch);
   }
+  /* At this width the nav bar's icon row (padding 8 + 44px touch target +
+     2px border each side = 64px tall) and the build menu both anchor to
+     bottom:14px — the nav centred, the build menu right-aligned — and their
+     boxes collide (confirmed via getBoundingClientRect at 375px: nav right
+     edge 323.5px, build menu left edge 223.7px). Stack the build menu above
+     the nav instead of beside it rather than shrinking either further. */
+  .tt-buildmenu {
+    bottom: 86px;
+  }
 }
 
 /* ---------- Nursery note (GameRules §9.7 bottleneck, §11 recovery copy) ----- */

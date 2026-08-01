@@ -15,12 +15,17 @@
 #     truthful "blocked" entry is worth more than an optimistic "done".
 
 meta:
-  updated: 2026-07-31
-  head: a98b552
+  updated: 2026-08-01
+  head: 3146a96
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
-  tests_passing: 258
+  tests_passing: 292
   check_command: npm run typecheck && npm run lint && npm test && npm run build
+  note: >
+    This meta block had gone stale (still read a98b552/258 tests) through
+    the entire Mood Bell feature landing on top of it — nobody updated it
+    when that work merged. Re-check meta against `git log -1` and `npm
+    test` output, don't trust it blindly, when picking up this file cold.
 
 # ---------------------------------------------------------------------------
 # Authority: what wins when documents disagree
@@ -152,6 +157,58 @@ gotchas:
       SPECIFIC Sprout out of a crowded waiting area is genuinely ambiguous,
       for players and tests alike. e2e drags should pick by live mesh
       projection and be prepared to have grabbed a neighbour.
+  - id: missed-pick-falls-through-to-pan
+    note: >
+      src/input/index.ts's handlePointerDown: if pickSproutId(x,y) returns
+      null (tap missed every live Sprout's SPROUT_PICK_RADIUS), the SAME
+      pointer is handed to panPointerId and camera-pans on every subsequent
+      move — there is no dead zone or movement threshold. Reproduced live in
+      the Browser pane 2026-08-01: three consecutive slightly-off taps at a
+      375px mobile viewport each panned the camera meaningfully (confirmed
+      via console.debug ray logs' camTarget shifting 7.5,7.5 ->
+      6.36,8.11 -> 4.79,8.64), which then invalidated the screen coordinates
+      computed for the next attempt — the world had visibly moved under the
+      player's next tap. This compounds with crowded-nursery-pick-radius
+      above: a miss in a crowd doesn't just fail quietly, it yanks the
+      camera and makes the next attempt harder too. NOT FIXED — this is a
+      camera-control behavior change (a tap-vs-drag movement threshold),
+      out of scope for a CSS/measurement recheck; flagged to the user as a
+      recommendation, not shipped.
+  - id: mobile-pick-forgiveness-measured
+    note: >
+      "Feels forgiving" was checked with real numbers, not eyeballing:
+      window.__debug.project() converts a world point to on-screen client
+      pixels (already 1:1 with canvas.width/rect.width in the Browser pane —
+      no DPR buffer-scale correction needed there, canvas.width equalled
+      getBoundingClientRect().width in testing). At a 375px mobile viewport,
+      default camera zoom: SPROUT_PICK_RADIUS (0.55 world units) projects to
+      ~32px of tap forgiveness around a Sprout; HOVER_MARGIN_TILES (0.35)
+      projects to ~26px of drop forgiveness beyond a habitat's own footprint.
+      Both are BELOW the ~44px touch-target floor GameRules §7 calls for
+      ("Large touch targets" is a listed accessibility requirement) — this
+      is real, not a false alarm. NOT FIXED: raising SPROUT_PICK_RADIUS
+      would directly worsen crowded-nursery-pick-radius above (slots are
+      already only 0.5 apart against a 0.55 radius) — the two constants are
+      coupled and a world-unit change hits every viewport equally, not just
+      narrow ones. The actual lever for mobile specifically is
+      screen-pixels-per-world-unit (camera zoom/default radius on narrow
+      viewports), which nothing here touched. Reported to the user as an
+      open design question rather than resolved unilaterally.
+  - id: debug-project-is-buffer-space-mostly
+    note: >
+      window.__debug.project(x,y,z) returns coordinates in the scene's
+      render-buffer space (engine.getRenderWidth/Height), which is USUALLY
+      device-pixel-ratio-scaled relative to CSS/client pixels a pointer
+      event reports — divide by (canvas.width / boundingClientRect.width)
+      before feeding a project() result to a click/drag tool. In this
+      session's specific Browser-pane environment canvas.width already
+      equalled the bounding rect width (both 375), so this particular
+      mismatch was a red herring for THIS debugging session — the actual
+      cause of repeated failed drags was missed-pick-falls-through-to-pan
+      above (each failed attempt panned the camera, invalidating
+      previously-computed screen coordinates for the next attempt). Still
+      worth checking this ratio first in any environment before trusting
+      project() output as click coordinates, since it will not always be 1:1.
   - id: spawnandid-pop-race
     note: >
       tests/e2e/helpers.ts's debugSpawnAndGetId pops the LAST id pushed to
@@ -1174,5 +1231,38 @@ decisions:
       Care/Growth/Organisation helpers), or something else — has not been
       decided yet.
 
+  - q: >
+      2026-08-01 — user asked to "recheck sprout interactivity and mobile
+      friendliness... easy to snap sprouts to slides and other
+      interactables, same for habitats." What changed?
+    a: >
+      ONE confirmed, contained CSS bug fixed and verified live: at
+      <=480px viewport width, .tt-nav (bottom nav) and .tt-buildmenu
+      (build menu / Garden Slide button) both anchored to bottom:14px and
+      geometrically overlapped (measured via getBoundingClientRect at
+      375px: nav right edge 323.5px, buildmenu left edge 223.7px, same
+      vertical band) — a real functional collision blocking taps on
+      either. Fixed in src/ui/styles.ts's existing 480px media query by
+      stacking .tt-buildmenu above .tt-nav (bottom: 86px) instead of
+      beside it; re-verified at 375px post-fix, rects no longer overlap
+      (buildmenu bottom 726px, nav top 734px, 8px clear gap), full
+      typecheck/lint/292-tests/build all green. NOT changed:
+      SPROUT_PICK_RADIUS / HOVER_MARGIN_TILES — see
+      mobile-pick-forgiveness-measured above for the measured numbers and
+      why a naive increase would make crowded-nursery-pick-radius worse.
+      Also NOT changed: the missed-pick-falls-through-to-pan behavior
+      (see gotcha above) — both are reported to the user as open design
+      questions rather than resolved unilaterally, since both need either
+      a GameRules-aware trade-off call or a camera-behavior change bigger
+      than this recheck's scope.
+
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?
+  - Should SPROUT_PICK_RADIUS/HOVER_MARGIN_TILES scale with viewport width
+    or default camera zoom, given the measured ~32px/~26px mobile
+    forgiveness falls under GameRules §7's "large touch targets" bar but a
+    flat world-unit increase would worsen crowded-nursery-pick-radius?
+  - Should a missed Sprout pick get a small movement deadzone before
+    falling through to camera pan (see missed-pick-falls-through-to-pan),
+    so an off-target tap in a crowd fails quietly instead of dragging the
+    camera and displacing the next attempt?
