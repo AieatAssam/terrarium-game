@@ -152,3 +152,179 @@ export function habitatAtTile(tile: TileCoord): HabitatId | null {
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Garden path network (moved here from src/render/layout.ts, 2026-08-01,
+// Phase 2 manual-placement work — see plan.yaml Phase 1.2)
+// ---------------------------------------------------------------------------
+// This used to live in src/render/layout.ts as a render-only concern (path
+// tiles for mesh generation). It moved here because sim now needs the same
+// network to compute a manually-PLACED automation's destination (whichever
+// habitat is reachable from the site tile the player chose — see
+// planAutomationDestination below) and sim must never import from render
+// (tests/unit/architecture.sim-boundary.test.ts). render/layout.ts re-exports
+// GARDEN_PATH_TILES from here now, same pattern as every other tile position
+// in this file.
+
+/** Straight-line (Manhattan step) path tiles between two points, inclusive of both ends. */
+function pathBetween(from: TileCoord, to: TileCoord): TileCoord[] {
+  const tiles: TileCoord[] = [];
+  let x = from.x;
+  let z = from.z;
+  tiles.push({ x, z });
+  while (x !== to.x) {
+    x += x < to.x ? 1 : -1;
+    tiles.push({ x, z });
+  }
+  while (z !== to.z) {
+    z += z < to.z ? 1 : -1;
+    tiles.push({ x, z });
+  }
+  return tiles;
+}
+
+/**
+ * The painted garden path network, as the union of five runs — see the
+ * topology diagram near the top of this file. Because `pathBetween` walks x
+ * before z, the Gate's two lanes leave it sideways before turning north,
+ * which is what makes the fork read as a real decision from the garden
+ * camera (see the topology comment above for the full reasoning).
+ */
+export const GARDEN_PATH_TILES: TileCoord[] = (() => {
+  const runs: TileCoord[][] = [
+    pathBetween(NURSERY_TILE, COLOUR_GATE_TILE),
+    ...COLOUR_GATE_LANE_LIST.map((lane) => pathBetween(COLOUR_GATE_TILE, HABITAT_TILES[COLOUR_GATE_LANE_HABITATS[lane]])),
+    pathBetween(NURSERY_TILE, HABITAT_TILES.sunflowerMeadow),
+    pathBetween(NURSERY_TILE, MOOD_BELL_TILE),
+  ];
+  const seen = new Set<string>();
+  const tiles: TileCoord[] = [];
+  for (const run of runs) {
+    for (const tile of run) {
+      const key = tileKeyOf(tile);
+      if (!seen.has(key)) {
+        seen.add(key);
+        tiles.push(tile);
+      }
+    }
+  }
+  return tiles;
+})();
+
+function tileKeyOf(tile: TileCoord): string {
+  return `${tile.x},${tile.z}`;
+}
+
+const PATH_TILE_KEY_SET: ReadonlySet<string> = new Set(GARDEN_PATH_TILES.map(tileKeyOf));
+
+const ROUTE_NEIGHBOUR_STEPS: ReadonlyArray<TileCoord> = [
+  { x: 1, z: 0 },
+  { x: -1, z: 0 },
+  { x: 0, z: 1 },
+  { x: 0, z: -1 },
+];
+
+/**
+ * Breadth-first walk over the garden path graph, tile-by-tile (no world
+ * positions, no rendering — the pure geometry piece src/render/sprouts.ts's
+ * gardenRouteBetween used to compute standalone before this moved here; that
+ * function now calls this one and adds its own polyline/fillet rendering on
+ * top). Returns null if either end is off the path network, or if `avoid`
+ * blocks every route between them.
+ */
+export function findPathRoute(from: TileCoord, to: TileCoord, avoid?: ReadonlySet<string>): TileCoord[] | null {
+  const fromKey = tileKeyOf(from);
+  const toKey = tileKeyOf(to);
+  if (!PATH_TILE_KEY_SET.has(fromKey) || !PATH_TILE_KEY_SET.has(toKey)) return null;
+  if (fromKey === toKey) return [from];
+
+  const cameFrom = new Map<string, TileCoord | null>([[fromKey, null]]);
+  let frontier: TileCoord[] = [from];
+  while (frontier.length > 0) {
+    const next: TileCoord[] = [];
+    for (const tile of frontier) {
+      for (const step of ROUTE_NEIGHBOUR_STEPS) {
+        const neighbour: TileCoord = { x: tile.x + step.x, z: tile.z + step.z };
+        const key = tileKeyOf(neighbour);
+        if (!PATH_TILE_KEY_SET.has(key) || cameFrom.has(key)) continue;
+        if (avoid?.has(key) && key !== toKey) continue;
+        cameFrom.set(key, tile);
+        if (key === toKey) {
+          const reversed: TileCoord[] = [];
+          let cursor: TileCoord | null = neighbour;
+          while (cursor) {
+            reversed.push(cursor);
+            cursor = cameFrom.get(tileKeyOf(cursor)) ?? null;
+          }
+          return reversed.reverse();
+        }
+        next.push(neighbour);
+      }
+    }
+    frontier = next;
+  }
+  return null;
+}
+
+/**
+ * What a manually-placed automation at `siteTile` should target: the
+ * NEAREST habitat reachable from the site tile over the real path network,
+ * without routing through any OTHER automation's own site tile (so two
+ * structures on the same trunk can't both claim the same leg). This is the
+ * 2026-08-01 manual-placement design decision (plan.yaml Phase 1.2): where
+ * the player puts the structure is now what it does, replacing the old
+ * hardcoded "Garden Slide always targets Sunflower Meadow" rule that caused
+ * the reported visual incoherence (structure north of the Nursery, ride
+ * animation going south, never touching it).
+ *
+ * Tie-break for equidistant habitats: lowest HabitatId alphabetically —
+ * deterministic and pinned by a test, since a non-deterministic destination
+ * between saves/replays would be a real, confusing bug (see plan.yaml
+ * Phase 1.2's own note on this).
+ */
+export function nearestReachableHabitat(siteTile: TileCoord, occupiedSiteTiles: ReadonlyArray<TileCoord>): HabitatId | null {
+  const avoid = new Set(occupiedSiteTiles.filter((t) => !sameTile(t, siteTile)).map(tileKeyOf));
+  const candidates = (Object.keys(HABITAT_TILES) as HabitatId[])
+    .map((id) => {
+      const route = findPathRoute(siteTile, HABITAT_TILES[id], avoid);
+      return route ? { id, length: route.length } : null;
+    })
+    .filter((c): c is { id: HabitatId; length: number } => c !== null)
+    .sort((a, b) => a.length - b.length || a.id.localeCompare(b.id));
+  return candidates[0]?.id ?? null;
+}
+
+/** How many of a tile's 4 orthogonal neighbours are themselves on the path network. */
+function pathNeighbourCount(tile: TileCoord): number {
+  return ROUTE_NEIGHBOUR_STEPS.filter((step) => PATH_TILE_KEY_SET.has(tileKeyOf({ x: tile.x + step.x, z: tile.z + step.z }))).length;
+}
+
+/**
+ * Whether `tile` is a genuine FORK in the path network — 3 or more path
+ * neighbours (a straight run has exactly 2, a dead end has 1). Written as a
+ * real structural check rather than hardcoding `tile === COLOUR_GATE_TILE`
+ * so it keeps working once Phase 3 (plan.yaml) makes the path network
+ * player-buildable and forks become plural — today COLOUR_GATE_TILE is the
+ * only tile in the fixed network with 3 neighbours (Nursery, at the trunk's
+ * OTHER end, has 2: the trunk north and the Meadow run south), so this is
+ * provably equivalent to that hardcoded check right now, just future-proof.
+ */
+export function isJunctionTile(tile: TileCoord): boolean {
+  return PATH_TILE_KEY_SET.has(tileKeyOf(tile)) && pathNeighbourCount(tile) >= 3;
+}
+
+/**
+ * Whether `tile` is a legal site for placing `automationId` (2026-08-01
+ * manual-placement design, GameRules §9.8): on the path network, not already
+ * occupied by the Nursery/a habitat/another placed automation, and — for the
+ * Colour Gate specifically — a genuine junction (§9.8: "a Colour Gate cannot
+ * be placed on a plain straight route; it needs a fork to govern").
+ */
+export function isValidAutomationSite(automationId: AutomationId, tile: TileCoord, occupiedSiteTiles: ReadonlyArray<TileCoord>): boolean {
+  if (!PATH_TILE_KEY_SET.has(tileKeyOf(tile))) return false;
+  if (sameTile(tile, NURSERY_TILE)) return false;
+  if (habitatAtTile(tile)) return false;
+  if (occupiedSiteTiles.some((t) => sameTile(t, tile))) return false;
+  if (automationId === 'colourGate') return isJunctionTile(tile);
+  return true;
+}

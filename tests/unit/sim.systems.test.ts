@@ -12,6 +12,7 @@ import {
   checkAchievements,
   colourGateBehavioralState,
   dewdropSystem,
+  placeAutomation,
   purchaseUpgrade,
   spawnSystem,
   TICK_SYSTEMS,
@@ -21,7 +22,7 @@ import {
 } from '../../src/sim/systems';
 import { TICK_MS } from '../../src/sim/loop';
 import { runTick } from '../../src/sim/tick';
-import { COLOUR_GATE_TILE, HABITAT_TILES, NURSERY_TILE, tileDistance } from '../../src/sim/layout';
+import { COLOUR_GATE_TILE, GARDEN_SLIDE_TILE, HABITAT_TILES, NURSERY_TILE, tileDistance } from '../../src/sim/layout';
 import { BASE_POD_SPAWN_INTERVAL_MS } from '../../src/data/spawning';
 import { colourGateLockReason, isColourGateUnlocked, UNLOCK_THRESHOLDS } from '../../src/data/unlocks';
 import { UPGRADES } from '../../src/data/upgrades';
@@ -176,29 +177,15 @@ describe('unlockSystem (Garden Slide auto-build)', () => {
     expect(result.events).toEqual([]);
   });
 
-  it('unlocks and auto-builds exactly at the threshold, always targeting Sunflower Meadow', () => {
-    // Fed counts on the OTHER two habitats deliberately vary (and outweigh
-    // Sunflower Meadow's own 0) to prove the target is fixed, not picked by
-    // whichever habitat has been fed most (design decision 2026-07-31: the
-    // Colour Gate's fork structurally can't reach Sunflower Meadow, so the
-    // Slide always covers it — see unlockSystem's own doc comment).
+  it('unlocks (but does not build) exactly at the threshold — 2026-08-01: placement is now player-driven, see placeAutomation below', () => {
     const state = {
       ...createInitialSimState(1),
       correctPlacementCount: UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements,
-      habitats: {
-        emberNook: { id: 'emberNook' as const, count: CAP - 1, capacity: CAP },
-        dewPond: { id: 'dewPond' as const, count: 1, capacity: CAP },
-      },
     };
     const result = unlockSystem(state);
-    expect(result.events).toEqual([
-      { type: 'automation:unlocked', automationId: 'gardenSlide' },
-      // targetHabitatId rides along so the renderer can show this Slide as
-      // blocked the moment its destination is full — including before it has
-      // ever run a delivery (see src/events/types.ts).
-      { type: 'automation:built', automationId: 'gardenSlide', instanceId: 'gardenSlide-1', targetHabitatId: 'sunflowerMeadow' },
-    ]);
-    expect(result.state.automations[0].targetHabitatId).toBe('sunflowerMeadow');
+    expect(result.events).toEqual([{ type: 'automation:unlocked', automationId: 'gardenSlide' }]);
+    expect(result.state.automations).toEqual([]);
+    expect(result.state.unlockedAutomations).toContain('gardenSlide');
   });
 
   it('never fires twice', () => {
@@ -246,6 +233,7 @@ describe('purchaseUpgrade', () => {
         {
           id: 'gardenSlide-1',
           automationId: 'gardenSlide',
+          siteTile: GARDEN_SLIDE_TILE,
           fromTile: NURSERY_TILE,
           toTile: NURSERY_TILE,
           builtAtTick: 0,
@@ -259,8 +247,9 @@ describe('purchaseUpgrade', () => {
     for (let i = 0; i < pileSize; i += 1) {
       state = withSprout(state, 'dew', { id: `pile-${i}` });
     }
+    // 2026-08-01: purchaseUpgrade only unlocks now (plan.yaml Phase 1.2) — placement is a separate player action (placeAutomation).
     const result = purchaseUpgrade(state, 'colourGateUnlock');
-    expect(result.events.some((e) => e.type === 'automation:built' && e.automationId === 'colourGate')).toBe(true);
+    expect(result.events.some((e) => e.type === 'automation:unlocked' && e.automationId === 'colourGate')).toBe(true);
     expect(result.state.dewdrops).toBe(0);
   });
 });
@@ -273,6 +262,7 @@ describe('automationSystem', () => {
         {
           id: 'gardenSlide-1',
           automationId: 'gardenSlide',
+          siteTile: GARDEN_SLIDE_TILE,
           fromTile: NURSERY_TILE,
           toTile: NURSERY_TILE,
           builtAtTick: 0,
@@ -308,6 +298,7 @@ describe('automationSystem', () => {
         {
           id: 'gardenSlide-1',
           automationId: 'gardenSlide',
+          siteTile: GARDEN_SLIDE_TILE,
           fromTile: NURSERY_TILE,
           toTile: NURSERY_TILE,
           builtAtTick: 0,
@@ -336,6 +327,7 @@ describe('adjudicateAutomationDrop', () => {
       {
         id: 'gardenSlide-1',
         automationId: 'gardenSlide',
+        siteTile: GARDEN_SLIDE_TILE,
         fromTile: NURSERY_TILE,
         toTile: NURSERY_TILE,
         builtAtTick: 0,
@@ -418,6 +410,7 @@ describe('adjudicateAutomationDrop', () => {
         {
           id: 'colourGate-1',
           automationId: 'colourGate',
+          siteTile: COLOUR_GATE_TILE,
           fromTile: NURSERY_TILE,
           toTile: COLOUR_GATE_TILE,
           builtAtTick: 0,
@@ -447,6 +440,7 @@ describe('adjudicateAutomationDrop', () => {
         {
           id: 'colourGate-1',
           automationId: 'colourGate',
+          siteTile: COLOUR_GATE_TILE,
           fromTile: NURSERY_TILE,
           toTile: COLOUR_GATE_TILE,
           builtAtTick: 0,
@@ -476,6 +470,7 @@ describe('adjudicateAutomationDrop', () => {
         {
           id: 'colourGate-1',
           automationId: 'colourGate',
+          siteTile: COLOUR_GATE_TILE,
           fromTile: NURSERY_TILE,
           toTile: COLOUR_GATE_TILE,
           builtAtTick: 0,
@@ -504,6 +499,7 @@ describe('transport duration (sim is the single authority)', () => {
   const slide = (): SimState['automations'][number] => ({
     id: 'gardenSlide-1',
     automationId: 'gardenSlide',
+    siteTile: GARDEN_SLIDE_TILE,
     fromTile: NURSERY_TILE,
     toTile: HABITAT_TILES.emberNook,
     builtAtTick: 0,
@@ -620,7 +616,10 @@ describe('automation chain reachability (GameRules.md §9, §16)', () => {
   it('reaches the Garden Slide by settling Sprouts, then the Colour Gate by playing on', () => {
     let state = createInitialSimState(7);
 
-    // Manual placements unlock the Garden Slide, which then auto-builds.
+    // Manual placements unlock the Garden Slide. 2026-08-01 (plan.yaml
+    // Phase 1.2): unlocking no longer auto-builds it — the player places it
+    // by hand via placeAutomation, so this test does that explicitly rather
+    // than assuming a structure appears on its own.
     // Spread across all three homes the way a player must: one habitat alone
     // fills long before the threshold, which is the whole point of the
     // capacity-vs-threshold coupling documented in data/unlocks.ts.
@@ -637,8 +636,10 @@ describe('automation chain reachability (GameRules.md §9, §16)', () => {
     }
     expect(state.correctPlacementCount).toBe(needed); // no placement silently refused by a full home
     state = unlockSystem(state).state;
-
     expect(state.unlockedAutomations).toContain('gardenSlide');
+    expect(state.automations).toEqual([]); // unlocked, not yet placed
+
+    state = placeAutomation(state, 'gardenSlide', GARDEN_SLIDE_TILE).state;
     const slide = state.automations.find((a) => a.automationId === 'gardenSlide');
     expect(slide).toBeDefined();
     // Without a target the Colour Gate's pile check divides the world into
@@ -657,11 +658,14 @@ describe('automation chain reachability (GameRules.md §9, §16)', () => {
     expect(becameUnlockable).toBe(true);
     expect(colourGateLockReason(colourGateBehavioralState(state))).toBeNull();
 
-    // And the purchase must actually go through once it is unlockable.
+    // And the purchase must actually go through once it is unlockable, then placement builds it on the fork.
     const purchased = purchaseUpgrade(state, 'colourGateUnlock').state;
     expect(purchased.upgradeLevels.colourGateUnlock).toBe(1);
     expect(purchased.unlockedAutomations).toContain('colourGate');
-    expect(purchased.automations.some((a) => a.automationId === 'colourGate')).toBe(true);
+    expect(purchased.automations.some((a) => a.automationId === 'colourGate')).toBe(false); // unlocked, not yet placed
+
+    const placed = placeAutomation(purchased, 'colourGate', COLOUR_GATE_TILE).state;
+    expect(placed.automations.some((a) => a.automationId === 'colourGate')).toBe(true);
   });
 
   it('explains the Colour Gate lock instead of silently refusing, until it is armed', () => {

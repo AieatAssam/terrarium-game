@@ -16,6 +16,8 @@ import {
   COLOUR_GATE_LANE_HABITATS,
   COLOUR_GATE_LANE_LIST,
   COLOUR_GATE_TILE,
+  findPathRoute,
+  GARDEN_PATH_TILES,
   GARDEN_SLIDE_TILE,
   HABITAT_TILES,
   MOOD_BELL_TILE,
@@ -27,77 +29,13 @@ export {
   COLOUR_GATE_LANE_HABITATS,
   COLOUR_GATE_LANE_LIST,
   COLOUR_GATE_TILE,
+  findPathRoute,
+  GARDEN_PATH_TILES,
   GARDEN_SLIDE_TILE,
   HABITAT_TILES,
   MOOD_BELL_TILE,
   NURSERY_TILE,
 };
-
-/** Straight-line (Manhattan step) path tiles between two points, inclusive of both ends. */
-function pathBetween(from: TileCoord, to: TileCoord): TileCoord[] {
-  const tiles: TileCoord[] = [];
-  let x = from.x;
-  let z = from.z;
-  tiles.push({ x, z });
-  while (x !== to.x) {
-    x += x < to.x ? 1 : -1;
-    tiles.push({ x, z });
-  }
-  while (z !== to.z) {
-    z += z < to.z ? 1 : -1;
-    tiles.push({ x, z });
-  }
-  return tiles;
-}
-
-/**
- * The painted garden path network, as the union of four runs (see the topology
- * diagram in src/sim/layout.ts):
- *
- *   1. the shared TRUNK, Nursery -> Colour Gate, with the Garden Slide on it;
- *   2. the Gate's WEST lane, Gate -> Ember Nook;
- *   3. the Gate's EAST lane, Gate -> Dew Pond;
- *   4. the untouched southern run, Nursery -> Sunflower Meadow (the fallback /
- *      hand-carried route, which deliberately does NOT pass the Gate).
- *
- * Runs 2 and 3 start at the GATE, not at the Nursery — that is the whole point
- * of the redesign. Unioning three Nursery-rooted runs (the previous shape) gave
- * a network whose only shared tile was the Nursery, i.e. no fork anywhere for
- * the Colour Gate to govern.
- *
- * Because `pathBetween` walks x before z, run 2 leaves the Gate westward along
- * z=6 and only then turns north at x=4 (and run 3 mirrors it) — so the two lanes
- * genuinely leave the fork sideways, which is what makes the decision readable
- * from the garden camera.
- *
- * A 5th run (Mood Bell feature, 2026-08-01), Nursery -> Mood Bell (9,8), was
- * added purely for the structure's own decorative site — NO Mood Bell ride
- * ever travels this tile. A Bell delivery rides Nursery -> whichever habitat
- * the boarded Sprout's own type wants, using runs 1-4 above exactly like the
- * Garden Slide's own ride already does (see src/sim/layout.ts's topology
- * comment for why the Slide's own site tile is the same kind of decoration-
- * only stop).
- */
-export const GARDEN_PATH_TILES: TileCoord[] = (() => {
-  const runs: TileCoord[][] = [
-    pathBetween(NURSERY_TILE, COLOUR_GATE_TILE),
-    ...COLOUR_GATE_LANE_LIST.map((lane) => pathBetween(COLOUR_GATE_TILE, HABITAT_TILES[COLOUR_GATE_LANE_HABITATS[lane]])),
-    pathBetween(NURSERY_TILE, HABITAT_TILES.sunflowerMeadow),
-    pathBetween(NURSERY_TILE, MOOD_BELL_TILE),
-  ];
-  const seen = new Set<string>();
-  const tiles: TileCoord[] = [];
-  for (const run of runs) {
-    for (const tile of run) {
-      const key = `${tile.x},${tile.z}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        tiles.push(tile);
-      }
-    }
-  }
-  return tiles;
-})();
 
 function tileKey(tile: TileCoord): string {
   return `${tile.x},${tile.z}`;

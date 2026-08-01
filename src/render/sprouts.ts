@@ -20,7 +20,7 @@ import { createManifestMaterial } from './assets';
 import { GARDEN_CAMERA_ALPHA } from './camera';
 import { tileToWorld, type TileCoord } from './coords';
 import { createHabitatOccupancySigns, occupancySignState } from './habitats';
-import { GARDEN_PATH_TILES, HABITAT_TILES, NURSERY_TILE } from './layout';
+import { findPathRoute, HABITAT_TILES, NURSERY_TILE } from './layout';
 import { easingFn, getMotionConfig, prefersReducedMotion, type MotionConfig } from './motion';
 import { createPaintedMetalMaterial } from './pbrMaterials';
 import { createSparkleBurst } from './particles';
@@ -290,10 +290,12 @@ export function nurseryWaitOffset(index: number): { x: number; z: number } | nul
 // route and §9.3 requires the Slide to visibly carry Sprouts along it, so the
 // ride now follows the real tile route.
 //
-// The route is found by breadth-first search over GARDEN_PATH_TILES (built in
-// src/render/layout.ts by unioning `pathBetween(NURSERY_TILE, habitatTile)`
-// for every habitat). BFS rather than re-deriving the Manhattan run: the union
-// is the authoritative network, and searching it means this can never disagree
+// The route is found by breadth-first search over GARDEN_PATH_TILES, via
+// src/sim/layout.ts's findPathRoute (moved there 2026-08-01 so sim can use
+// the same search to compute a manually-placed automation's destination —
+// this module keeps only the render-specific polyline/fillet building
+// below). BFS rather than re-deriving the Manhattan run: the union is the
+// authoritative network, and searching it means this can never disagree
 // with the tiles actually painted on the ground. In the shipped layout that
 // network is a tree, so the shortest walk is also the only walk.
 //
@@ -317,13 +319,6 @@ export interface GardenRoute {
   totalLength: number;
 }
 
-const ROUTE_NEIGHBOUR_STEPS: ReadonlyArray<TileCoord> = [
-  { x: 1, z: 0 },
-  { x: -1, z: 0 },
-  { x: 0, z: 1 },
-  { x: 0, z: -1 },
-];
-
 /** How far from a corner the fillet starts, in world units (tiles are 1 unit). */
 const ROUTE_CORNER_RADIUS = 0.45;
 /** Bézier samples per rounded corner — enough to read as a curve, few enough to stay cheap. */
@@ -331,42 +326,6 @@ const ROUTE_CORNER_SAMPLES = 7;
 
 function routeTileKey(tile: TileCoord): string {
   return `${tile.x},${tile.z}`;
-}
-
-const PATH_TILE_KEYS: ReadonlySet<string> = new Set(GARDEN_PATH_TILES.map(routeTileKey));
-
-/** Breadth-first walk over the garden path graph; null if either end is off the path. */
-function findTileRoute(from: TileCoord, to: TileCoord): TileCoord[] | null {
-  const fromKey = routeTileKey(from);
-  const toKey = routeTileKey(to);
-  if (!PATH_TILE_KEYS.has(fromKey) || !PATH_TILE_KEYS.has(toKey)) return null;
-  if (fromKey === toKey) return [from];
-
-  const cameFrom = new Map<string, TileCoord | null>([[fromKey, null]]);
-  let frontier: TileCoord[] = [from];
-  while (frontier.length > 0) {
-    const next: TileCoord[] = [];
-    for (const tile of frontier) {
-      for (const step of ROUTE_NEIGHBOUR_STEPS) {
-        const neighbour: TileCoord = { x: tile.x + step.x, z: tile.z + step.z };
-        const key = routeTileKey(neighbour);
-        if (!PATH_TILE_KEYS.has(key) || cameFrom.has(key)) continue;
-        cameFrom.set(key, tile);
-        if (key === toKey) {
-          const reversed: TileCoord[] = [];
-          let cursor: TileCoord | null = neighbour;
-          while (cursor) {
-            reversed.push(cursor);
-            cursor = cameFrom.get(routeTileKey(cursor)) ?? null;
-          }
-          return reversed.reverse();
-        }
-        next.push(neighbour);
-      }
-    }
-    frontier = next;
-  }
-  return null;
 }
 
 /** Turns a tile walk into an arc-length-parameterised polyline with rounded corners. */
@@ -442,7 +401,7 @@ export function gardenRouteBetween(from: TileCoord, to: TileCoord): GardenRoute 
   const key = `${routeTileKey(from)}>${routeTileKey(to)}`;
   const cached = routeCache.get(key);
   if (cached !== undefined) return cached;
-  const tiles = findTileRoute(from, to);
+  const tiles = findPathRoute(from, to);
   const route = tiles && tiles.length > 1 ? buildGardenRoute(tiles) : null;
   routeCache.set(key, route);
   return route;

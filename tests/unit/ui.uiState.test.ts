@@ -49,7 +49,7 @@ describe('uiState store', () => {
   it('tracks lastBuiltAutomation on automation:built', () => {
     const bus = new EventBus();
     const store = createUiStateStore(bus);
-    bus.emit({ type: 'automation:built', automationId: 'gardenSlide', instanceId: 'gardenSlide-1' });
+    bus.emit({ type: 'automation:built', automationId: 'gardenSlide', instanceId: 'gardenSlide-1', siteTile: { x: 8, z: 7 } });
     expect(store.getState().lastBuiltAutomation).toBe('gardenSlide');
   });
 

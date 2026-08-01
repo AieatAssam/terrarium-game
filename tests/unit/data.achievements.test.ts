@@ -70,7 +70,7 @@ describe('achievement conditions', () => {
 
   it('firstPlacement, firstAutomation, and firstFullHabitat fire for any event of their trigger type', () => {
     const placed: GameEvent = { type: 'sprout:placed:correct', sproutId: 's1', habitatId: 'emberNook' };
-    const built: GameEvent = { type: 'automation:built', automationId: 'gardenSlide', instanceId: 'a1' };
+    const built: GameEvent = { type: 'automation:built', automationId: 'gardenSlide', instanceId: 'a1', siteTile: { x: 8, z: 7 } };
     const full: GameEvent = { type: 'habitat:full', habitatId: 'dewPond' };
 
     expect(ACHIEVEMENTS.firstPlacement.condition(placed)).toBe(true);

@@ -16,7 +16,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createInitialSimState, type SimState } from '../../src/sim/state';
-import { automationSystem, moodBellDestination, purchaseUpgrade, setMoodBellRule } from '../../src/sim/systems';
+import { automationSystem, moodBellDestination, placeAutomation, purchaseUpgrade, setMoodBellRule } from '../../src/sim/systems';
 import { runTick } from '../../src/sim/tick';
 import {
   COLOUR_GATE_TILE,
@@ -39,6 +39,7 @@ function withBell(rule: MoodId = 'sunny', overrides: Partial<SimState> = {}): Si
       {
         id: 'moodBell-1',
         automationId: 'moodBell',
+        siteTile: MOOD_BELL_TILE,
         fromTile: NURSERY_TILE,
         toTile: MOOD_BELL_TILE,
         builtAtTick: 0,
@@ -62,6 +63,7 @@ function withAllThree(rule: MoodId = 'sunny'): SimState {
       {
         id: 'gardenSlide-1',
         automationId: 'gardenSlide',
+        siteTile: GARDEN_SLIDE_TILE,
         fromTile: NURSERY_TILE,
         toTile: HABITAT_TILES.sunflowerMeadow,
         builtAtTick: 0,
@@ -72,6 +74,7 @@ function withAllThree(rule: MoodId = 'sunny'): SimState {
       {
         id: 'colourGate-1',
         automationId: 'colourGate',
+        siteTile: COLOUR_GATE_TILE,
         fromTile: NURSERY_TILE,
         toTile: COLOUR_GATE_TILE,
         builtAtTick: 0,
@@ -281,6 +284,7 @@ describe('purchaseUpgrade: moodBellUnlock', () => {
         {
           id: 'gardenSlide-1',
           automationId: 'gardenSlide',
+          siteTile: GARDEN_SLIDE_TILE,
           fromTile: NURSERY_TILE,
           toTile: HABITAT_TILES.sunflowerMeadow,
           builtAtTick: 0,
@@ -291,6 +295,7 @@ describe('purchaseUpgrade: moodBellUnlock', () => {
         {
           id: 'colourGate-1',
           automationId: 'colourGate',
+          siteTile: COLOUR_GATE_TILE,
           fromTile: NURSERY_TILE,
           toTile: COLOUR_GATE_TILE,
           builtAtTick: 0,
@@ -301,22 +306,35 @@ describe('purchaseUpgrade: moodBellUnlock', () => {
     };
   }
 
-  it('does NOT charge or build when only one prior automation exists', () => {
-    const state: SimState = { ...withBothPriorAutomations(), unlockedAutomations: ['gardenSlide'] };
+  it('does NOT unlock when only one prior automation is actually placed', () => {
+    // moodBellBehavioralState is keyed off state.automations (an actual
+    // placed instance), not unlockedAutomations — 2026-08-01, see its own
+    // doc comment — so the fixture must genuinely lack a placed Gate, not
+    // just omit it from unlockedAutomations.
+    const both = withBothPriorAutomations();
+    const state: SimState = {
+      ...both,
+      unlockedAutomations: ['gardenSlide'],
+      automations: both.automations.filter((a) => a.automationId !== 'colourGate'),
+    };
     const result = purchaseUpgrade(state, 'moodBellUnlock');
     expect(result.events).toEqual([]);
     expect(result.state.dewdrops).toBe(state.dewdrops);
     expect(result.state.unlockedAutomations).not.toContain('moodBell');
   });
 
-  it('builds on the fork tile with the safe default rule once both prior automations exist and it is affordable', () => {
-    const result = purchaseUpgrade(withBothPriorAutomations(), 'moodBellUnlock');
-    expect(result.events).toContainEqual({ type: 'automation:unlocked', automationId: 'moodBell' });
+  it('unlocks once both prior automations are placed and it is affordable; placeAutomation then builds it on the spur with the safe default rule', () => {
+    // 2026-08-01: purchaseUpgrade only unlocks now (plan.yaml Phase 1.2) —
+    // placeAutomation is what actually builds it and sets the default rule.
+    const unlocked = purchaseUpgrade(withBothPriorAutomations(), 'moodBellUnlock');
+    expect(unlocked.events).toContainEqual({ type: 'automation:unlocked', automationId: 'moodBell' });
+    expect(unlocked.state.dewdrops).toBe(0);
+
+    const result = placeAutomation(unlocked.state, 'moodBell', MOOD_BELL_TILE);
     expect(result.events).toContainEqual({ type: 'automation:moodBellRuleChanged', mood: 'sunny' });
     expect(result.state.moodBellRule).toBe('sunny');
     const bell = result.state.automations.find((a) => a.automationId === 'moodBell');
     expect(bell).toBeDefined();
-    expect(bell?.toTile).toEqual(MOOD_BELL_TILE);
-    expect(result.state.dewdrops).toBe(0);
+    expect(bell?.siteTile).toEqual(MOOD_BELL_TILE);
   });
 });

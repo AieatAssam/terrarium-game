@@ -17,6 +17,7 @@ import {
   automationSystem,
   colourGateDestination,
   colourGateLaneNote,
+  placeAutomation,
   purchaseUpgrade,
   setColourGateLane,
   transportDuration,
@@ -52,6 +53,7 @@ function withGate(overrides: Partial<SimState> = {}): SimState {
       {
         id: 'colourGate-1',
         automationId: 'colourGate',
+        siteTile: COLOUR_GATE_TILE,
         fromTile: NURSERY_TILE,
         toTile: COLOUR_GATE_TILE,
         builtAtTick: 0,
@@ -173,9 +175,11 @@ describe('setColourGateLane', () => {
     expect(setColourGateLane(withGate(), 'west', 'ember').events).toEqual([]);
   });
 
-  it('is what a newly built Gate announces, with the safe recommended rule', () => {
+  it('is what a newly placed Gate announces, with the safe recommended rule', () => {
     // GameRules §9.1: "Offer recommendations and safe defaults." A Gate that
     // arrives unset does nothing and reads as broken.
+    // 2026-08-01: purchaseUpgrade only unlocks now (plan.yaml Phase 1.2) —
+    // placeAutomation is what actually builds it and sets the default rule.
     const feedTicks = UNLOCK_THRESHOLDS.colourGate.requiredSingleHabitatFeedTicks ?? 0;
     let state: SimState = {
       ...createInitialSimState(1),
@@ -185,6 +189,7 @@ describe('setColourGateLane', () => {
         {
           id: 'gardenSlide-1',
           automationId: 'gardenSlide',
+          siteTile: GARDEN_SLIDE_TILE,
           fromTile: NURSERY_TILE,
           toTile: HABITAT_TILES.emberNook,
           builtAtTick: 0,
@@ -197,13 +202,15 @@ describe('setColourGateLane', () => {
     for (let i = 0; i < (UNLOCK_THRESHOLDS.colourGate.requiredUnsortedPileSize ?? 0); i += 1) {
       state = withSprout(state, 'dew', `pile-${i}`);
     }
-    const result = purchaseUpgrade(state, 'colourGateUnlock');
+    const unlocked = purchaseUpgrade(state, 'colourGateUnlock');
+    expect(unlocked.events).toContainEqual({ type: 'automation:unlocked', automationId: 'colourGate' });
+    const result = placeAutomation(unlocked.state, 'colourGate', COLOUR_GATE_TILE);
     expect(result.events).toContainEqual({
       type: 'automation:colourGateRuleChanged',
       lanes: { west: 'ember', east: 'dew' },
     });
     const gate = result.state.automations.find((a) => a.automationId === 'colourGate');
-    expect(gate?.toTile).toEqual(COLOUR_GATE_TILE); // built ON the fork, not in open grass
+    expect(gate?.siteTile).toEqual(COLOUR_GATE_TILE); // built ON the fork, not in open grass
   });
 });
 

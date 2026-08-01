@@ -35,7 +35,8 @@ import {
   defaultColourGateLanes,
   habitatAtTile,
   HABITAT_TILES,
-  MOOD_BELL_TILE,
+  isValidAutomationSite,
+  nearestReachableHabitat,
   NURSERY_TILE,
   sameTile,
   tileDistance,
@@ -180,50 +181,82 @@ export function dewdropSystem(state: SimState): TickResult {
 }
 
 /**
- * Garden Slide auto-unlocks and auto-builds once the manual-placement
- * threshold is hit, ALWAYS targeting Sunflower Meadow (Sun Sprouts) —
- * changed from "whichever habitat the player has been fed most" (design
- * decision 2026-07-31: automate Sunflower Meadow, which the Colour Gate can
- * never reach, since its two lanes physically leave from the northern fork
- * at (8,6) and Sunflower Meadow sits on the separate southern run out of
- * the Nursery — see src/sim/layout.ts's topology comment). This also
- * SHARPENS the Colour Gate's own behavioral-unlock narrative rather than
- * diluting it: colourGateBehavioralState's `unsortedPileSize` counts idle
- * Sprouts whose type ISN'T the Slide's fed type — with the Slide now always
- * feeding Sun, that pile is always exactly "Ember and Dew waiting to be
- * sorted", which is precisely what the Gate's two lanes exist to solve,
- * rather than depending on which habitat the Slide happened to pick.
- * Colour Gate is gated behind a purchase (see purchaseUpgrade below), not
- * this system.
+ * Garden Slide auto-unlocks once the manual-placement threshold is hit.
+ *
+ * 2026-08-01 revision (plan.yaml Phase 1.2): this used to ALSO auto-build
+ * the Slide in the same step, always targeting Sunflower Meadow. Unlocking
+ * now only removes the restriction on placing it — the player places it by
+ * hand via `placeAutomation` below, and its destination is computed from
+ * WHEREVER they put it (`nearestReachableHabitat`), not hardcoded. This is
+ * what resolves the previously-reported visual incoherence (a structure
+ * standing north of the Nursery while its forced-Meadow ride went south,
+ * never touching it) — the player choosing the site tile is now what
+ * decides the destination, so the two can never disagree again.
  */
 export function unlockSystem(state: SimState): TickResult {
   if (state.unlockedAutomations.includes('gardenSlide') || !isGardenSlideUnlocked(state.correctPlacementCount)) {
     return { state, events: [] };
   }
 
-  const target: HabitatId = 'sunflowerMeadow';
-  const instanceId = 'gardenSlide-1';
+  return {
+    state: { ...state, unlockedAutomations: [...state.unlockedAutomations, 'gardenSlide'] },
+    events: [{ type: 'automation:unlocked', automationId: 'gardenSlide' }],
+  };
+}
+
+/**
+ * Player commits a placement for an already-unlocked-but-not-yet-placed
+ * automation (2026-08-01, plan.yaml Phase 1.2/1.4) — the "plain function
+ * the runtime exposes" pattern this codebase already uses for
+ * setColourGateLane/setMoodBellRule, since docs/CONTRACTS.md's GameEvent
+ * union has no dedicated "player wants to build X here" member. No-ops
+ * (returns state unchanged) on any invalid request rather than throwing —
+ * the caller (src/input's click-to-commit handler) is expected to have
+ * already checked `isValidAutomationSite` for the ghost preview, but this
+ * function re-validates rather than trusting the client, same discipline
+ * `adjudicateAutomationDrop` already follows.
+ */
+export function placeAutomation(state: SimState, automationId: AutomationId, tile: TileCoord): TickResult {
+  if (!state.unlockedAutomations.includes(automationId)) return { state, events: [] };
+  if (state.automations.some((a) => a.automationId === automationId)) return { state, events: [] }; // already placed — one instance per kind
+  const occupied = state.automations.map((a) => a.siteTile);
+  if (!isValidAutomationSite(automationId, tile, occupied)) return { state, events: [] };
+
+  const instanceId = `${automationId}-1`;
+  const targetHabitatId = automationId === 'gardenSlide' ? (nearestReachableHabitat(tile, occupied) ?? undefined) : undefined;
+  // gardenSlide needs a real destination to be worth placing at all — if
+  // nothing is reachable (shouldn't happen on the current fixed network,
+  // but a future dynamic one could momentarily disconnect a site), decline
+  // rather than build a Slide with nowhere to go.
+  if (automationId === 'gardenSlide' && !targetHabitatId) return { state, events: [] };
+
   const instance: AutomationInstance = {
     id: instanceId,
-    automationId: 'gardenSlide',
+    automationId,
+    siteTile: tile,
     fromTile: NURSERY_TILE,
-    toTile: HABITAT_TILES[target],
+    toTile: targetHabitatId ? HABITAT_TILES[targetHabitatId] : tile,
     builtAtTick: state.tickCount,
-    targetHabitatId: target,
+    targetHabitatId,
     carryingSproutId: null,
     completesAtTick: null,
   };
 
+  const events: GameEvent[] = [{ type: 'automation:built', automationId, instanceId, siteTile: tile, targetHabitatId }];
+  let colourGateLanes = state.colourGateLanes;
+  let moodBellRule = state.moodBellRule;
+  if (automationId === 'colourGate') {
+    colourGateLanes = defaultColourGateLanes();
+    events.push({ type: 'automation:colourGateRuleChanged', lanes: { ...colourGateLanes } });
+  }
+  if (automationId === 'moodBell') {
+    moodBellRule = 'sunny';
+    events.push({ type: 'automation:moodBellRuleChanged', mood: moodBellRule });
+  }
+
   return {
-    state: {
-      ...state,
-      unlockedAutomations: [...state.unlockedAutomations, 'gardenSlide'],
-      automations: [...state.automations, instance],
-    },
-    events: [
-      { type: 'automation:unlocked', automationId: 'gardenSlide' },
-      { type: 'automation:built', automationId: 'gardenSlide', instanceId, targetHabitatId: target },
-    ],
+    state: { ...state, automations: [...state.automations, instance], colourGateLanes, moodBellRule },
+    events,
   };
 }
 
@@ -775,15 +808,37 @@ export function colourGateBehavioralState(state: SimState): ColourGateUnlockStat
   };
 }
 
-/** Behavioral gate for purchasing moodBellUnlock — both prior automations already built. Exported so the UI can explain the gate (see moodBellLockReason). */
+/**
+ * Behavioral gate for purchasing moodBellUnlock — both prior automations
+ * already built. Keyed off `state.automations` (an actual placed instance),
+ * NOT `unlockedAutomations` — see 2026-08-01: once unlocking and placing
+ * decoupled (plan.yaml Phase 1.2), `unlockedAutomations` alone no longer
+ * implies a structure exists, so this must match colourGateBehavioralState's
+ * already-correct idiom above rather than the old (pre-decoupling, harmless
+ * because unlock+build used to be atomic) shortcut.
+ */
 export function moodBellBehavioralState(state: SimState): MoodBellUnlockState {
   return {
-    gardenSlideBuilt: state.unlockedAutomations.includes('gardenSlide'),
-    colourGateBuilt: state.unlockedAutomations.includes('colourGate'),
+    gardenSlideBuilt: state.automations.some((a) => a.automationId === 'gardenSlide'),
+    colourGateBuilt: state.automations.some((a) => a.automationId === 'colourGate'),
   };
 }
 
-/** Purchases an upgrade: applies the effect and, for colourGateUnlock specifically, auto-builds the Colour Gate — but only once its behavioral unlock condition (docs/GAME_DESIGN.md) is actually met. Silently no-ops (no charge) if unaffordable, maxed, or (colourGateUnlock only) not yet behaviorally unlocked. */
+/**
+ * Purchases an upgrade: applies the effect and, for colourGateUnlock/
+ * moodBellUnlock, adds to `unlockedAutomations` — but only once each one's
+ * behavioral unlock condition (docs/GAME_DESIGN.md) is actually met.
+ *
+ * 2026-08-01 revision (plan.yaml Phase 1.2): this used to ALSO auto-build
+ * the instance in the same step. It no longer does — unlocking only removes
+ * the restriction on placing it; the player places it by hand via
+ * `placeAutomation`, which is also where the default Colour Gate lanes /
+ * Mood Bell rule now get set (moved out of here, since they only make sense
+ * once a structure actually exists).
+ *
+ * Silently no-ops (no charge) if unaffordable, maxed, already unlocked, or
+ * (colourGateUnlock/moodBellUnlock only) not yet behaviorally unlocked.
+ */
 export function purchaseUpgrade(state: SimState, upgradeId: UpgradeId): TickResult {
   const def = UPGRADES[upgradeId];
   const level = state.upgradeLevels[upgradeId] ?? 0;
@@ -795,6 +850,9 @@ export function purchaseUpgrade(state: SimState, upgradeId: UpgradeId): TickResu
   if (upgradeId === 'moodBellUnlock' && !isMoodBellUnlocked(moodBellBehavioralState(state))) {
     return { state, events: [] };
   }
+  const automationId: AutomationId | null =
+    upgradeId === 'colourGateUnlock' ? 'colourGate' : upgradeId === 'moodBellUnlock' ? 'moodBell' : null;
+  if (automationId && state.unlockedAutomations.includes(automationId)) return { state, events: [] }; // already unlocked
 
   const cost = def.costForLevel(level + 1);
   if (state.dewdrops < cost) return { state, events: [] };
@@ -806,48 +864,10 @@ export function purchaseUpgrade(state: SimState, upgradeId: UpgradeId): TickResu
     { type: 'currency:dewdropsChanged', total: dewdrops, delta: -cost },
   ];
 
-  let automations = state.automations;
   let unlockedAutomations = state.unlockedAutomations;
-  let colourGateLanes = state.colourGateLanes;
-  let moodBellRule = state.moodBellRule;
-  if (upgradeId === 'colourGateUnlock') {
-    const instanceId = 'colourGate-1';
-    const instance: AutomationInstance = {
-      id: instanceId,
-      automationId: 'colourGate',
-      fromTile: NURSERY_TILE,
-      toTile: COLOUR_GATE_TILE,
-      builtAtTick: state.tickCount,
-      carryingSproutId: null,
-      completesAtTick: null,
-    };
-    automations = [...automations, instance];
-    unlockedAutomations = [...unlockedAutomations, 'colourGate'];
-    // A new Gate always opens with the safe, recommended rule (GameRules §9.1),
-    // so it works the moment it is built instead of arriving blank.
-    colourGateLanes = defaultColourGateLanes();
-    events.push({ type: 'automation:unlocked', automationId: 'colourGate' });
-    events.push({ type: 'automation:built', automationId: 'colourGate', instanceId });
-    events.push({ type: 'automation:colourGateRuleChanged', lanes: { ...colourGateLanes } });
-  }
-  if (upgradeId === 'moodBellUnlock') {
-    const instanceId = 'moodBell-1';
-    const instance: AutomationInstance = {
-      id: instanceId,
-      automationId: 'moodBell',
-      fromTile: NURSERY_TILE,
-      toTile: MOOD_BELL_TILE,
-      builtAtTick: state.tickCount,
-      carryingSproutId: null,
-      completesAtTick: null,
-    };
-    automations = [...automations, instance];
-    unlockedAutomations = [...unlockedAutomations, 'moodBell'];
-    // Safe default (GameRules §9.1), same reasoning as the Gate's own default rule.
-    moodBellRule = 'sunny';
-    events.push({ type: 'automation:unlocked', automationId: 'moodBell' });
-    events.push({ type: 'automation:built', automationId: 'moodBell', instanceId });
-    events.push({ type: 'automation:moodBellRuleChanged', mood: moodBellRule });
+  if (automationId) {
+    unlockedAutomations = [...unlockedAutomations, automationId];
+    events.push({ type: 'automation:unlocked', automationId });
   }
 
   return {
@@ -855,10 +875,7 @@ export function purchaseUpgrade(state: SimState, upgradeId: UpgradeId): TickResu
       ...state,
       dewdrops,
       upgradeLevels: { ...state.upgradeLevels, [upgradeId]: newLevel },
-      automations,
       unlockedAutomations,
-      colourGateLanes,
-      moodBellRule,
     },
     events,
   };

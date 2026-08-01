@@ -3,11 +3,11 @@
 // SimState shape together; any SimState shape change bumps it, and a new
 // case is added to migrateEnvelope. v1 migration is a no-op stub.
 
-import { defaultColourGateLanes } from '../sim/layout';
+import { AUTOMATION_SITE_TILES, defaultColourGateLanes } from '../sim/layout';
 import { createInitialSimState, type SimState } from '../sim/state';
 import { idbDelete, idbGet, idbSet } from './db';
 
-export const CURRENT_SAVE_VERSION = 4;
+export const CURRENT_SAVE_VERSION = 5;
 
 const SAVE_KEY = 'default';
 
@@ -148,7 +148,29 @@ function migrateEnvelope(envelope: SaveEnvelope): SaveEnvelope {
       };
       return migrateEnvelope({ ...envelope, version: 4, sim: migratedSim });
     }
-    case 4:
+    case 4: {
+      // v4 predates manual placement (2026-08-01, plan.yaml Phase 1.2/1.3):
+      // AutomationInstance had no `siteTile` field, because every automation
+      // was auto-built at a single fixed default tile per automationId
+      // (AUTOMATION_SITE_TILES). A v4 save's automations were ALWAYS built
+      // at exactly that default — there is no other tile they could have
+      // been at — so backfilling from AUTOMATION_SITE_TILES[automationId] is
+      // not a guess, it is the true historical value for every pre-existing
+      // instance. Same "explicit migration case, not normaliseEnvelope"
+      // discipline as v3's per-sprout `mood` backfill above: normaliseEnvelope
+      // only fills MISSING TOP-LEVEL SimState keys, never reaches into
+      // `automations[]`.
+      const sim = envelope.sim as unknown as Omit<SimState, 'automations'> & {
+        automations: Array<Omit<SimState['automations'][number], 'siteTile'> & Partial<Pick<SimState['automations'][number], 'siteTile'>>>;
+      };
+      const migratedSim: SimState = {
+        ...sim,
+        shapeVersion: 5,
+        automations: sim.automations.map((a) => ({ ...a, siteTile: a.siteTile ?? AUTOMATION_SITE_TILES[a.automationId] })) as SimState['automations'],
+      };
+      return migrateEnvelope({ ...envelope, version: 5, sim: migratedSim });
+    }
+    case 5:
       return envelope;
     default:
       // Unknown version (older pre-migration save, or a newer one this build

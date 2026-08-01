@@ -81,6 +81,12 @@ export type GameEvent =
       automationId: AutomationId;
       instanceId: string;
       /**
+       * Where the player placed the structure (2026-08-01, manual placement
+       * — GameRules §9.8). The renderer creates/positions the structure's
+       * mesh here rather than at a fixed default.
+       */
+      siteTile: TileCoord;
+      /**
        * The single habitat this instance delivers to, when it has one (Garden
        * Slide). Absent for the Colour Gate, which routes each Sprout to its own
        * matching habitat rather than to one fixed destination.
@@ -188,6 +194,16 @@ export type GameEvent =
          * Garden Slide); the Colour Gate routes per-Sprout and has none.
          */
         automationTargets?: Partial<Record<AutomationId, HabitatId>>;
+        /**
+         * Where each built automation's structure actually stands (2026-08-01,
+         * manual placement — GameRules §9.8). A restored save replays no
+         * `automation:built`, so without this the renderer has no way to know
+         * WHERE a placed structure's mesh belongs — there is no longer a
+         * single fixed default tile per automationId to fall back to. Only
+         * automations that are actually placed appear here; an unlocked-but-
+         * unplaced automation appears in `unlockedAutomations` but not here.
+         */
+        automationSites?: Partial<Record<AutomationId, TileCoord>>;
         /**
          * Every Sprout alive in the restored save. Meshes are built from
          * `sprout:spawned`, which by definition never replays for Sprouts that

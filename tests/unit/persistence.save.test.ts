@@ -77,12 +77,13 @@ describe('migration into v3 (Colour Gate rule + Nursery rhythm)', () => {
   }
 
   it('gives a returning v2 garden the safe recommended lane rule', async () => {
-    // A v2 save now migrates all the way to the CURRENT version (4, via the
-    // v3 Mood Bell step added 2026-08-01) — v3 is no longer terminal.
+    // A v2 save now migrates all the way to the CURRENT version (5, via the
+    // v3 Mood Bell step and v4 manual-placement step, both added after this
+    // v2->v3 migration was written) — v3 is no longer terminal.
     await idbSet('default', v2Envelope());
     const loaded = await loadGame();
-    expect(loaded?.version).toBe(4);
-    expect(loaded?.sim.shapeVersion).toBe(4);
+    expect(loaded?.version).toBe(5);
+    expect(loaded?.sim.shapeVersion).toBe(5);
     expect(loaded?.sim.colourGateLanes).toEqual(defaultColourGateLanes());
   });
 
@@ -162,10 +163,13 @@ describe('migration into v4 (Mood Bell: per-sprout mood + moodBellRule)', () => 
   }
 
   it('backfills mood on every pre-existing sprout, defaulting to sunny', async () => {
+    // A v3 save now migrates all the way to the CURRENT version (5, via the
+    // v4 manual-placement step added 2026-08-01, after this v3->v4 migration
+    // was written) — v4 is no longer terminal.
     await idbSet('default', v3Envelope());
     const loaded = await loadGame();
-    expect(loaded?.version).toBe(4);
-    expect(loaded?.sim.shapeVersion).toBe(4);
+    expect(loaded?.version).toBe(5);
+    expect(loaded?.sim.shapeVersion).toBe(5);
     expect(loaded?.sim.sprouts).toHaveLength(1);
     for (const sprout of loaded?.sim.sprouts ?? []) {
       expect(sprout.mood).toBe('sunny');
@@ -201,5 +205,77 @@ describe('migration into v4 (Mood Bell: per-sprout mood + moodBellRule)', () => 
     const loaded = await loadGame();
     expect(loaded?.sim.moodBellRule).toBe('sleepy');
     expect(loaded?.sim.sprouts[0].mood).toBe('sleepy'); // buildSampleState's own sprout is genuinely 'sleepy'
+  });
+});
+
+describe('migration into v5 (manual placement: per-automation siteTile)', () => {
+  beforeEach(async () => {
+    await clearSave();
+  });
+
+  /** A v4 envelope: a built Garden Slide and Colour Gate, neither carrying `siteTile` — v4 predates manual placement, every automation was auto-built at a single fixed default tile per automationId. Typed `unknown` deliberately: a real v4-shaped record on disk never had this field, so this must NOT structurally satisfy the current (v5) AutomationInstance type. */
+  function v4Envelope(): unknown {
+    const sample = buildSampleState();
+    const v4Sim = {
+      ...sample,
+      shapeVersion: 4,
+      automations: [
+        {
+          id: 'gardenSlide-1',
+          automationId: 'gardenSlide' as const,
+          fromTile: { x: 8, z: 8 },
+          toTile: { x: 8, z: 13 },
+          builtAtTick: 0,
+          targetHabitatId: 'sunflowerMeadow' as const,
+          carryingSproutId: null,
+          completesAtTick: null,
+        },
+        {
+          id: 'colourGate-1',
+          automationId: 'colourGate' as const,
+          fromTile: { x: 8, z: 8 },
+          toTile: { x: 8, z: 6 },
+          builtAtTick: 0,
+          carryingSproutId: null,
+          completesAtTick: null,
+        },
+      ],
+    };
+    return { version: 4, sim: v4Sim, meta: { lastSavedAt: 1_700_000_000_000 } };
+  }
+
+  it('backfills siteTile from the old fixed default tile for every pre-existing automation', async () => {
+    await idbSet('default', v4Envelope());
+    const loaded = await loadGame();
+    expect(loaded?.version).toBe(5);
+    expect(loaded?.sim.shapeVersion).toBe(5);
+    const slide = loaded?.sim.automations.find((a) => a.automationId === 'gardenSlide');
+    const gate = loaded?.sim.automations.find((a) => a.automationId === 'colourGate');
+    // These are the true historical values — AUTOMATION_SITE_TILES is where
+    // every v4 build always placed them, there is no other tile they could
+    // have stood at.
+    expect(slide?.siteTile).toEqual({ x: 8, z: 7 });
+    expect(gate?.siteTile).toEqual({ x: 8, z: 6 });
+  });
+
+  it('never overwrites a siteTile the save genuinely carries', async () => {
+    const state: SimState = {
+      ...buildSampleState(),
+      automations: [
+        {
+          id: 'colourGate-1',
+          automationId: 'colourGate',
+          siteTile: { x: 8, z: 6 },
+          fromTile: { x: 8, z: 8 },
+          toTile: { x: 8, z: 6 },
+          builtAtTick: 0,
+          carryingSproutId: null,
+          completesAtTick: null,
+        },
+      ],
+    };
+    await saveGame(state, 1);
+    const loaded = await loadGame();
+    expect(loaded?.sim.automations[0].siteTile).toEqual({ x: 8, z: 6 });
   });
 });

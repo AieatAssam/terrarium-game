@@ -30,6 +30,13 @@ export interface HabitatState {
 export interface AutomationInstance {
   id: string;
   automationId: AutomationId;
+  /**
+   * Where the physical structure stands (2026-08-01, manual placement —
+   * plan.yaml Phase 1.2). Player-chosen at placement time, constrained by
+   * `isValidAutomationSite` (src/sim/layout.ts). Distinct from
+   * fromTile/toTile below, which describe the RIDE, not the structure.
+   */
+  siteTile: TileCoord;
   fromTile: TileCoord;
   toTile: TileCoord;
   /** Tick this instance was built — `singleHabitatFeedTicks` (unlocks.ts) is derived as `tickCount - builtAtTick`. */
@@ -97,7 +104,7 @@ export interface SimState {
   nurseryWaitingCount: number;
 }
 
-export const SIM_SHAPE_VERSION = 4;
+export const SIM_SHAPE_VERSION = 5;
 
 export function createInitialSimState(seed: number): SimState {
   return {

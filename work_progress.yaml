@@ -16,10 +16,10 @@
 
 meta:
   updated: 2026-08-01
-  head: 0febd9c
+  head: 3ada912 (plus Phase 1.2/1.3 work below, UNCOMMITTED as of this update)
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
-  tests_passing: 295
+  tests_passing: 317
   check_command: npm run typecheck && npm run lint && npm test && npm run build
   note: >
     This meta block had gone stale (still read a98b552/258 tests) through
@@ -1414,6 +1414,75 @@ decisions:
       NOT YET IMPLEMENTED — no src/ code touched this turn, by design (per
       advisor: revise the spec and write the plan first, get the user's
       read on both before writing any implementation).
+
+  - q: >
+      2026-08-01 — plan.yaml Phase 1 ("manual placement of the 3 existing
+      automations") in progress. Status as of this entry?
+    a: >
+      Phase 1.1 (audit), 1.2 (sim decoupling), 1.3 (site validity + v4->v5
+      migration) DONE and verified — typecheck/lint/317 unit tests/build
+      all green. Phase 1.4 (wire the existing-but-dead build-mode UI to the
+      new placeAutomation), 1.5 (UI copy), 1.6 (docs) NOT STARTED.
+      UNCOMMITTED as of this entry — do not assume these files are settled
+      if picking this up cold; check `git status` first.
+      What landed: GARDEN_PATH_TILES + pathBetween MOVED from
+      src/render/layout.ts to src/sim/layout.ts (sim needs the path
+      network to compute a placed automation's destination, and sim must
+      never import from render) — render/layout.ts now re-exports it, same
+      pattern as every other tile position. New pure sim functions:
+      findPathRoute (the BFS, extracted from src/render/sprouts.ts's
+      gardenRouteBetween, which now calls this instead of keeping its own
+      copy), nearestReachableHabitat (a site tile's destination = nearest
+      habitat reachable without routing through another automation's own
+      site — this is what fixes the Garden-Slide-visual-incoherence open
+      question below, once Phase 1.4 ships it), isJunctionTile (structural
+      fork check, >=3 path neighbours — found for free that the Nursery
+      itself is a junction too, 3 neighbours: trunk/Meadow-run/Bell-spur,
+      not just the Colour Gate), isValidAutomationSite. src/sim/systems.ts:
+      unlockSystem and purchaseUpgrade's colourGateUnlock/moodBellUnlock
+      branches now ONLY add to unlockedAutomations, no longer create an
+      instance — new placeAutomation(state, automationId, tile) is the
+      actual build action, moved the default Colour Gate lanes / Mood Bell
+      rule into it (only make sense once a structure exists). Fixed a REAL
+      bug found via this decoupling: moodBellBehavioralState checked
+      `unlockedAutomations.includes(...)` for gardenSlideBuilt/
+      colourGateBuilt — harmless before (unlock+build were atomic), wrong
+      now (an unlocked-but-unplaced Slide would have wrongly satisfied the
+      Bell's "both prior automations built" gate). colourGateBehavioralState
+      already used the correct `state.automations.find(...)` idiom, no
+      change needed there — and isMoodBellClaimed already did too, per its
+      own pre-existing doc comment anticipating exactly this. AutomationInstance
+      gained a required `siteTile: TileCoord` field; SIM_SHAPE_VERSION
+      4->5; save.ts's v4->v5 migration backfills siteTile from the OLD
+      fixed AUTOMATION_SITE_TILES[automationId] default (the true
+      historical value — a v4 save's automations were always built there,
+      no other tile was possible). `automation:built`'s event payload and
+      `save:loaded`'s snapshot both gained the site-tile fields the
+      renderer will need in Phase 1.4. New tests/unit/sim.layout.test.ts
+      (20 tests: findPathRoute, nearestReachableHabitat, isJunctionTile,
+      isValidAutomationSite). Updated sim.systems.test.ts/sim.colourGate.
+      test.ts/sim.moodBell.test.ts/persistence.save.test.ts fixtures and
+      several tests whose assertions encoded the OLD auto-build behavior
+      (now split into an unlock-only assertion plus an explicit
+      placeAutomation call). GOTCHA hit while doing this: a bulk regex
+      script adding `siteTile:` to AutomationInstance-shaped fixtures
+      false-matched two `expect.objectContaining({ automationId, toTile })`
+      event assertions in sim.systems.test.ts (they aren't
+      AutomationInstance literals, `sprout:transportStarted` events don't
+      have siteTile) — caught by typecheck, not silently wrong, but worth
+      knowing if repeating a similar bulk-fixture-patch: verify every
+      match's surrounding shape, don't assume "same field name = same
+      match" for a bulk regex against test fixtures.
+      NEXT: Phase 1.4 — wire onEnterBuildMode/onExitBuildMode into
+      mountUI() (src/main.ts), feed the ghost preview from
+      isValidAutomationSite, add a click-to-commit handler calling
+      placeAutomation, update src/render/automation.ts to create/position
+      structure meshes at automation:built's siteTile instead of a fixed
+      AUTOMATION_SITE_TILES lookup (today it pre-creates "unbuilt site"
+      markers at ALL AUTOMATION_SITE_TILES positions from scene init and
+      markBuilt just toggles visibility in place — this whole model needs
+      to change to "create the mesh where automation:built says", a real
+      render-layer restructuring, not a small tweak).
 
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?
