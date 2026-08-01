@@ -1,0 +1,781 @@
+{
+  "generatedAt": "2026-08-01T21:08:41Z",
+  "rulesVersion": "1.0",
+  "summary": {
+    "candidateCount": 48,
+    "acceptedCount": 27,
+    "rejectedCount": 21,
+    "categorySelections": {
+      "creature-readability": ["slime-rancher-2-01", "ooblets-04", "ooblets-20"],
+      "habitat-density": ["slime-rancher-2-06", "slime-rancher-2-12", "ooblets-14"],
+      "reward-feedback": ["tiny-glade-01", "slime-rancher-2-05", "ooblets-11"],
+      "garden-composition": ["ooblets-01", "garden-galaxy-04", "garden-galaxy-06"],
+      "creature-personality": ["slime-rancher-2-02", "ooblets-04", "ooblets-02"],
+      "ui-readability": ["ooblets-09", "ooblets-06", "tiny-glade-03"],
+      "lighting-materials": ["slime-rancher-2-07", "tiny-glade-09", "ooblets-17"],
+      "tactile-geometry": ["tiny-glade-02", "ooblets-03", "tiny-glade-09"],
+      "scene-composition": ["slime-rancher-2-13", "garden-galaxy-03", "ooblets-13"],
+      "collection-density": ["garden-galaxy-04", "ooblets-19"],
+      "decorative-progression": ["garden-galaxy-06", "ooblets-07", "slime-rancher-2-05"]
+    },
+    "emptyCategories": []
+  },
+  "images": [
+    {
+      "id": "slime-rancher-2-01",
+      "path": "docs/reference-candidates/slime-rancher-2/slime-rancher-2-01.jpg",
+      "decision": "accept",
+      "categories": ["creature-readability"],
+      "confidence": 88,
+      "visibleEvidence": [
+        "Dozens of blob creatures at close range with distinct silhouettes (ears, antennae, wings, cat ears, hat)",
+        "Glossy specular highlights and soft contact shadows give the bodies volume",
+        "Varied poses and mouth shapes (open-mouth cheer, wink) readable at gameplay distance",
+        "Background garden is rich but creatures still separate from it"
+      ],
+      "tinyTerrariumLesson": "Give each Sprout variant one unique attachment silhouette (leaf sprout, petal collar, twig antenna) built from reusable primitive kits, and pair it with a distinct idle face so variants read at a glance even when bodies share the same blob mesh.",
+      "doNotCopy": [
+        "Slime creature designs and faces (dot eyes + open mouth)",
+        "Specific ear/antenna/wing shapes per species",
+        "The gardener robot character",
+        "Trophy props and exact per-species colour pairings"
+      ]
+    },
+    {
+      "id": "slime-rancher-2-02",
+      "path": "docs/reference-candidates/slime-rancher-2/slime-rancher-2-02.jpg",
+      "decision": "accept",
+      "categories": ["creature-personality"],
+      "confidence": 90,
+      "visibleEvidence": [
+        "Two foreground blobs stacked in a totem-like pose with big readable faces",
+        "An orange creature peeking from behind the robot's helmet implies playful hiding behaviour",
+        "Robot's shoes repurposed as tiny planters with grass growing out",
+        "Strong rim/fill separation against a pastel plaza background"
+      ],
+      "tinyTerrariumLesson": "Add playful stacking/perching social idles where one Sprout climbs onto another or onto a prop, and let worn objects (an old boot, a cracked pot) become micro-planters to fuse creature behaviour with garden storytelling.",
+      "doNotCopy": [
+        "Slime faces and species designs",
+        "The robot character design (helmet, apron, bead arms)",
+        "Bunny-ear silhouette",
+        "The stacked-blob gag composition as a shot"
+      ]
+    },
+    {
+      "id": "slime-rancher-2-03",
+      "path": "docs/reference-candidates/slime-rancher-2/slime-rancher-2-03.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 82,
+      "visibleEvidence": [
+        "Frame dominated by the drone/helmet prop and conservatory architecture",
+        "Creatures are small mid/background accents"
+      ],
+      "rejectionReason": "Creatures too small and peripheral; industrial glass-dome setting demonstrates no category strongly; redundant with stronger greenhouse frames (06, 12)."
+    },
+    {
+      "id": "slime-rancher-2-04",
+      "path": "docs/reference-candidates/slime-rancher-2/slime-rancher-2-04.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 75,
+      "visibleEvidence": [
+        "Large pink crystal-spiked blob fills right third, sharply lit",
+        "Copper boiler with glowing coil as central focal point framed by giant curling leaves"
+      ],
+      "rejectionReason": "Decent frame but redundant: creature-readability is better served by 01 and scene-composition by 13; the heavy branded machinery dominates the transferable content."
+    },
+    {
+      "id": "slime-rancher-2-05",
+      "path": "docs/reference-candidates/slime-rancher-2/slime-rancher-2-05.jpg",
+      "decision": "accept",
+      "categories": ["reward-feedback", "decorative-progression"],
+      "confidence": 80,
+      "visibleEvidence": [
+        "Night-time fairground garden with carousel structure and glowing lamps",
+        "Creatures displayed on decorated plinths, one on a '#1' banner platform",
+        "Pinwheels and a fireworks bubble mid-burst signal an active celebration event",
+        "Space is visibly personalised and upgraded compared to a plain garden"
+      ],
+      "tinyTerrariumLesson": "Tie decorative unlocks to event moments — completing a Sprout collection tier triggers a short 'festival night' state with string lights, pinwheel props, and a podium display, so progression visibly transforms the space rather than just adding items.",
+      "doNotCopy": [
+        "Slime designs and faces",
+        "Carousel structure design",
+        "Plinth-with-creature display concept as a set",
+        "'#1' banner motif and mushroom-tree design"
+      ]
+    },
+    {
+      "id": "slime-rancher-2-06",
+      "path": "docs/reference-candidates/slime-rancher-2/slime-rancher-2-06.jpg",
+      "decision": "accept",
+      "categories": ["habitat-density"],
+      "confidence": 90,
+      "visibleEvidence": [
+        "Greenhouse interior with distinct authored zones: strawberry crop bed with rails, trellis wall with hanging vines, patio set with umbrella, lavender field band",
+        "Drone sprinkler visibly servicing soil in the midground",
+        "Foreground cat-eared blob frames the shot; foreground/midground/background all populated",
+        "Tree with hanging lanterns anchors the background layer"
+      ],
+      "tinyTerrariumLesson": "Divide the terrarium floor into 3-4 readable 'rooms' (crop bed, lounge nook, wildflower strip) separated by low rails and trellis walls, and let one autonomous helper unit visibly service a zone to make the garden feel worked-in, not staged.",
+      "doNotCopy": [
+        "Slime/cat-slime designs and faces",
+        "Drone character design",
+        "'7Z'-branded structures and exact greenhouse architecture",
+        "Strawberry crop-bed layout as a composition"
+      ]
+    },
+    {
+      "id": "slime-rancher-2-07",
+      "path": "docs/reference-candidates/slime-rancher-2/slime-rancher-2-07.jpg",
+      "decision": "accept",
+      "categories": ["lighting-materials"],
+      "confidence": 85,
+      "visibleEvidence": [
+        "Single fluffy-cloud creature centered large with translucent fresnel-glow body against backlight",
+        "Sunset sun disc, pink fog, and ruined arches layered behind",
+        "Soft subsurface-style edge glow plus readable ground contact shadow",
+        "Two smaller creatures peeking over walls add scale context"
+      ],
+      "tinyTerrariumLesson": "For a cloud/mist Sprout variant, use a fresnel edge-light shader plus soft internal emissive in Babylon so the body glows at the rim against backlight, and always anchor it with a faked blob shadow to keep translucency grounded.",
+      "doNotCopy": [
+        "Slime face (wink + open mouth) and cloud-slime design",
+        "Sun-emblem doorway prop design",
+        "Spear props and ruin arch silhouettes as a set"
+      ]
+    },
+    {
+      "id": "slime-rancher-2-08",
+      "path": "docs/reference-candidates/slime-rancher-2/slime-rancher-2-08.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 78,
+      "visibleEvidence": [
+        "Tornadoes, radial blur and heavy atmospheric haze dominate",
+        "Creatures scattered small with motion effects"
+      ],
+      "rejectionReason": "Chaos set-piece: VFX spectacle swallows creature readability and habitat information; no category is cleanly demonstrated."
+    },
+    {
+      "id": "slime-rancher-2-09",
+      "path": "docs/reference-candidates/slime-rancher-2/slime-rancher-2-09.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 80,
+      "visibleEvidence": [
+        "First-person vac-gun dominates a third of the frame",
+        "Underwater scene is mostly open sand and rock with sparse scatter; creatures mid-distance and semi-transparent"
+      ],
+      "rejectionReason": "Weapon foreground plus sparse open terrain; low information for creature readability, habitat density, or any garden category."
+    },
+    {
+      "id": "slime-rancher-2-10",
+      "path": "docs/reference-candidates/slime-rancher-2/slime-rancher-2-10.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 74,
+      "visibleEvidence": [
+        "Receding ruined archways form a tunnel route toward a warm glowing ring-door",
+        "Glowing orange creatures accent a cool blue-green palette inside a glass dome"
+      ],
+      "rejectionReason": "Good composition lesson but redundant with the stronger, cleaner vista frame 13; branded containment-dome architecture dominates the transferable content."
+    },
+    {
+      "id": "slime-rancher-2-11",
+      "path": "docs/reference-candidates/slime-rancher-2/slime-rancher-2-11.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 80,
+      "visibleEvidence": [
+        "Lightning pillar blowout with heavy rain streaks and blue-grey filter",
+        "Creatures small and partially obscured by VFX"
+      ],
+      "rejectionReason": "Storm set-piece: overexposed core and heavy filtering flatten materials; creatures unreadable; fails both lighting-materials and creature categories."
+    },
+    {
+      "id": "slime-rancher-2-12",
+      "path": "docs/reference-candidates/slime-rancher-2/slime-rancher-2-12.jpg",
+      "decision": "accept",
+      "categories": ["habitat-density"],
+      "confidence": 87,
+      "visibleEvidence": [
+        "Wide conservatory with authored zones: fenced creature paddocks, strawberry soil bed, central gnarled tree under glass dome roof",
+        "Stone paths route between plots; creature groups visible per enclosure",
+        "Clear organisation despite high object count"
+      ],
+      "tinyTerrariumLesson": "Give each creature group its own visible paddock boundary (low fence + posts) inside one shared greenhouse volume, and thread a single path network between plots so high density stays navigable rather than cluttered.",
+      "doNotCopy": [
+        "Slime species designs and faces",
+        "Energy-fence post device design",
+        "Glass-dome conservatory architecture and specific tree silhouette",
+        "Branded terminal structures"
+      ]
+    },
+    {
+      "id": "slime-rancher-2-13",
+      "path": "docs/reference-candidates/slime-rancher-2/slime-rancher-2-13.jpg",
+      "decision": "accept",
+      "categories": ["scene-composition"],
+      "confidence": 84,
+      "visibleEvidence": [
+        "Foreground tree canopy frames the top edge as a natural vignette",
+        "Character small at left third acts as focal anchor",
+        "Dome dwellings and terraced ruins layered into orange atmospheric haze",
+        "Strong foreground/midground/background separation via value and saturation falloff"
+      ],
+      "tinyTerrariumLesson": "Compose vista moments with a dark foreground canopy overhang as a natural frame and push background structures 2-3 value steps lighter with warm haze — cheap depth cue achievable in Babylon with fog plus a gradient skybox, useful for terrarium lookout camera angles.",
+      "doNotCopy": [
+        "Player character design (rancher with vacpack)",
+        "Dome-house architecture designs",
+        "Specific tree/cloud shapes",
+        "Overall key-art composition as an image"
+      ]
+    },
+    {
+      "id": "ooblets-01",
+      "path": "docs/reference-candidates/ooblets/ooblets-01.jpg",
+      "decision": "accept",
+      "categories": ["garden-composition"],
+      "confidence": 85,
+      "visibleEvidence": [
+        "Tilled soil plots in a deliberate grid with distinct crop types per tile (purple leafy rows, pink rosettes, white stalks, tall yellow rows)",
+        "Wooden log edging and log rounds used as borders and props",
+        "Midground character hoeing with three small creatures; background fence, mailbox, barn wall, rounded machine",
+        "Clear foreground/midground/background separation"
+      ],
+      "tinyTerrariumLesson": "Edge garden beds with chunky rounded logs and vary crop silhouettes per plot (tall spiral stalk vs low rosette vs leafy row) so each tile reads as a different crop state from the default camera height.",
+      "doNotCopy": [
+        "Ooblets creature designs (blue blob, yellow bird-like, goggled creature)",
+        "The orange robot character and player character design",
+        "Overall pastel palette lock"
+      ]
+    },
+    {
+      "id": "ooblets-02",
+      "path": "docs/reference-candidates/ooblets/ooblets-02.jpg",
+      "decision": "accept",
+      "categories": ["creature-personality"],
+      "confidence": 82,
+      "visibleEvidence": [
+        "Roughly 20 distinct creatures gathered in a circle formation around a central dancer under a spotlight",
+        "Floating confetti pieces and musical-note particles throughout the air",
+        "Two human characters flank the circle; speaker props at edges",
+        "Clear event-in-progress staging with celebratory feedback"
+      ],
+      "tinyTerrariumLesson": "For Sprout celebration moments, stage a circular audience formation with a lit central performer, and layer slow-falling confetti plus note particles so the reward reads even in a still frame.",
+      "doNotCopy": [
+        "All ooblet creature designs and faces",
+        "Dance-battle staging brand motif",
+        "Character outfits"
+      ]
+    },
+    {
+      "id": "ooblets-03",
+      "path": "docs/reference-candidates/ooblets/ooblets-03.jpg",
+      "decision": "accept",
+      "categories": ["tactile-geometry"],
+      "confidence": 80,
+      "visibleEvidence": [
+        "Industrial interior built from chunky rounded machines with bevelled edges, control panels, buttons and gauges",
+        "Conveyor belts carrying small buns through a loop",
+        "Layered depth: foreground crates/bins, midground conveyor, background mezzanine with railings, stairs, arched windows",
+        "Big yellow cylindrical tank with valve wheel as strong focal object"
+      ],
+      "tinyTerrariumLesson": "Build workshop/automation props from capsule-and-cylinder primitives with visible bolts, gauges and chunky levers — rounded bevels plus one oversized hero machine per room gives a tactile toy-like feel without high-poly cost.",
+      "doNotCopy": [
+        "Specific machine designs",
+        "Donut/bun product shapes",
+        "Factory art direction branding"
+      ]
+    },
+    {
+      "id": "ooblets-04",
+      "path": "docs/reference-candidates/ooblets/ooblets-04.jpg",
+      "decision": "accept",
+      "categories": ["creature-readability", "creature-personality"],
+      "confidence": 92,
+      "visibleEvidence": [
+        "Eight-plus creatures at close range filling the frame, each with a distinct silhouette (flower-hat chick, pug-like loaf, triple grumpy imps, radish biped, lidded birds)",
+        "Clear facial expressions: angry unibrow bird centre, smiling radish, grumpy triplets",
+        "Soft volumetric shading on all bodies",
+        "Creatures separate cleanly from the wooden dock background"
+      ],
+      "tinyTerrariumLesson": "Give each Sprout species one exaggerated silhouette hook (leaf hat, root legs, wide brow) and one default facial expression readable at 2-3m camera distance; brow angle alone can carry 'grumpy' without extra geometry.",
+      "doNotCopy": [
+        "Every creature design and face in this lineup (core IP of the source game)"
+      ]
+    },
+    {
+      "id": "ooblets-05",
+      "path": "docs/reference-candidates/ooblets/ooblets-05.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 74,
+      "visibleEvidence": [
+        "Hillside town with cafe deck foreground, bunting-strung street midground, dense house cluster and lighthouse background"
+      ],
+      "rejectionReason": "Pleasant town vista but it is a civic scene, not a garden or habitat frame; redundant with stronger authored-density frames (ooblets-13, 14)."
+    },
+    {
+      "id": "ooblets-06",
+      "path": "docs/reference-candidates/ooblets/ooblets-06.jpg",
+      "decision": "accept",
+      "categories": ["ui-readability", "reward-feedback"],
+      "confidence": 86,
+      "visibleEvidence": [
+        "Large title banner 'TEAM LICKZER PERFORMS' top-centre announces the action",
+        "Card-based UI shows move card with cost badge (3) and effect text",
+        "Six identical creatures ringed in orange glow mark the affected set",
+        "Background crowd with spiral eyes reacting; boombox prop with music notes"
+      ],
+      "tinyTerrariumLesson": "When a player action fires, light up the affected Sprouts with a ground-glow ring in the action's colour and pair it with a single bold banner announcement — the affected-set highlight makes cause-and-effect unambiguous.",
+      "doNotCopy": [
+        "Card UI layout and typography",
+        "'Hype' mechanic naming and team name",
+        "Creature designs and hypno-glasses motif"
+      ]
+    },
+    {
+      "id": "ooblets-07",
+      "path": "docs/reference-candidates/ooblets/ooblets-07.jpg",
+      "decision": "accept",
+      "categories": ["decorative-progression"],
+      "confidence": 80,
+      "visibleEvidence": [
+        "Top-down gridded farm with many distinct plots: miniature houses placed among crop tiles, hay-bale circles, sprinklers actively spraying arcs",
+        "White placement-grid highlight under the character indicates a build/place interaction",
+        "Lower strip shows a second, more uniform field section implying expansion"
+      ],
+      "tinyTerrariumLesson": "Show an active placement grid only under the cursor tile (not the whole field), and let functional items (sprinklers) double as decor with visible water-arc particles so progression reads as beautification.",
+      "doNotCopy": [
+        "Miniature house prop design",
+        "Crop species designs",
+        "Character design"
+      ]
+    },
+    {
+      "id": "ooblets-08",
+      "path": "docs/reference-candidates/ooblets/ooblets-08.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 78,
+      "visibleEvidence": [
+        "Night scene of one character at a heavily stickered vending-arcade machine",
+        "One small pink one-eyed creature nearby; dark blue-purple ambient light"
+      ],
+      "rejectionReason": "Single dark vignette with one small creature; frame dominated by branded machine artwork; no readable feedback, UI decision, or habitat layering."
+    },
+    {
+      "id": "ooblets-09",
+      "path": "docs/reference-candidates/ooblets/ooblets-09.jpg",
+      "decision": "accept",
+      "categories": ["ui-readability"],
+      "confidence": 88,
+      "visibleEvidence": [
+        "Quest card bottom-left lists objective with colour-coded item names and required counts (12/8/5)",
+        "Circular item-count badges above a 5-slot numbered hotbar",
+        "Top-right energy bar plus day dial with a plain-language 'OVERTIRED' status pill",
+        "HIDE/EXPAND control hints visible; HUD reads at normal gameplay scale"
+      ],
+      "tinyTerrariumLesson": "Put the active objective as a compact card with colour-coded resource names and required counts anchored bottom-left, and pair a clock dial with a plain-language status pill instead of an abstract icon.",
+      "doNotCopy": [
+        "Exact HUD layout",
+        "Item names (planklets/nurnies/clothlets)",
+        "Radial day-dial design and key-hint styling"
+      ]
+    },
+    {
+      "id": "ooblets-10",
+      "path": "docs/reference-candidates/ooblets/ooblets-10.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 70,
+      "visibleEvidence": [
+        "Character cooking at a red stove with chunky white steam puffs; one creature watching"
+      ],
+      "rejectionReason": "Small domestic vignette; feedback event is mild and the frame is weaker than the accepted reward-feedback frames (tiny-glade-01, slime-rancher-2-05, ooblets-11)."
+    },
+    {
+      "id": "ooblets-11",
+      "path": "docs/reference-candidates/ooblets/ooblets-11.jpg",
+      "decision": "accept",
+      "categories": ["reward-feedback"],
+      "confidence": 84,
+      "visibleEvidence": [
+        "Large crowd of varied creatures arranged around a central flower-creature standing in a cyan glow pool with rising light beam",
+        "Floating music notes and sparkle particles around performers",
+        "A red figure bows nearby; spectator creatures oriented toward the star",
+        "Warm desert-sunset palette with stylised foreground plants"
+      ],
+      "tinyTerrariumLesson": "Mark the star of a Sprout event with a vertical light beam plus a coloured ground pool, and give spectator Sprouts a subtle lean-in orientation toward it — crowd facing direction alone sells the moment.",
+      "doNotCopy": [
+        "All creature designs",
+        "Boombox prop design",
+        "Specific plant silhouettes"
+      ]
+    },
+    {
+      "id": "ooblets-12",
+      "path": "docs/reference-candidates/ooblets/ooblets-12.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 72,
+      "visibleEvidence": [
+        "Night forest lit by two hanging lanterns with emissive sparkle path; costumed characters along the route"
+      ],
+      "rejectionReason": "Nice night lighting but character-driven scene with branded costume content; lighting-materials is better served by tiny-glade-09 and ooblets-17 where surface response is inspectable."
+    },
+    {
+      "id": "ooblets-13",
+      "path": "docs/reference-candidates/ooblets/ooblets-13.jpg",
+      "decision": "accept",
+      "categories": ["scene-composition"],
+      "confidence": 85,
+      "visibleEvidence": [
+        "Pier boardwalk densely authored: foreground striped deck chairs, rope-post railing leading the eye",
+        "Midground arcade cabinet, gumball machine, benches, string lights and heart garlands",
+        "Background shopfronts and water with buoy complete the depth stack",
+        "Plank direction and rope line form a clear visual route through the frame"
+      ],
+      "tinyTerrariumLesson": "Use a repeated post-and-rope rail as a leading line along walkable edges, and break repetition with alternating chair/stripe colours — a simple rhythm system that makes a boardwalk feel authored, not tiled.",
+      "doNotCopy": [
+        "Arcade cabinet art and gumball machine design",
+        "Character outfits",
+        "'POUTINE' sign lettering"
+      ]
+    },
+    {
+      "id": "ooblets-14",
+      "path": "docs/reference-candidates/ooblets/ooblets-14.jpg",
+      "decision": "accept",
+      "categories": ["habitat-density"],
+      "confidence": 87,
+      "visibleEvidence": [
+        "Extremely lush cottage garden: dozens of distinct plant species with varied heights (bell flowers, cabbages, spiral sprouts, dahlias)",
+        "Miniature coloured houses nestled among beds",
+        "Central character with hoe as focal point; cottage, fence, trees, hills in background",
+        "Sparkle particles float above beds; plot edging still visible beneath the growth"
+      ],
+      "tinyTerrariumLesson": "Pack garden beds to near-overflow but keep each species' silhouette distinct and height-staggered (low rosettes front, bells mid, stalks back) so density reads as abundance rather than noise from the gameplay camera.",
+      "doNotCopy": [
+        "Plant species designs",
+        "Miniature house designs",
+        "Character design"
+      ]
+    },
+    {
+      "id": "ooblets-15",
+      "path": "docs/reference-candidates/ooblets/ooblets-15.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 68,
+      "visibleEvidence": [
+        "Two characters before a barrel-built vehicle with plank banding, porthole rings, rivets, ladder and pipework"
+      ],
+      "rejectionReason": "Tactile construction is visible but character faces dominate the foreground and confidence is low; tactile-geometry is better served by tiny-glade-02 and ooblets-03."
+    },
+    {
+      "id": "ooblets-16",
+      "path": "docs/reference-candidates/ooblets/ooblets-16.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 72,
+      "visibleEvidence": [
+        "Isometric farm with many plots of different crops and active sprinklers"
+      ],
+      "rejectionReason": "Redundant with ooblets-01 and ooblets-14, which demonstrate the same garden-density lesson with stronger composition and closer, more readable content."
+    },
+    {
+      "id": "ooblets-17",
+      "path": "docs/reference-candidates/ooblets/ooblets-17.jpg",
+      "decision": "accept",
+      "categories": ["lighting-materials"],
+      "confidence": 80,
+      "visibleEvidence": [
+        "Dim interior keyed by warm candle flames and a glowing clock face",
+        "Cauldron with glowing yellow bubbles rising as a third emissive source",
+        "Rounded props throughout (bound-bristle broom, potion flasks, CRT monitors, stool seats)",
+        "Strong warm/cool contrast between candle pools and ambient shadow"
+      ],
+      "tinyTerrariumLesson": "In dim interiors, cluster 2-3 small emissive sources (candles, glowing clock face, bubbling liquid) at different heights to sculpt form with warm pools of light, and keep every prop silhouette rounded — even screens and vents get fat bevels.",
+      "doNotCopy": [
+        "Character design",
+        "Clock design",
+        "Specific prop arrangement"
+      ]
+    },
+    {
+      "id": "ooblets-18",
+      "path": "docs/reference-candidates/ooblets/ooblets-18.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 62,
+      "visibleEvidence": [
+        "Three large rim-lit creatures against a dark background under a heavy scanline/hologram post-effect with neon grid floor"
+      ],
+      "rejectionReason": "Creatures are large but the heavy synthwave filter overlays everything, making form and material unreadable; the presentation motif is branded and non-transferable."
+    },
+    {
+      "id": "ooblets-19",
+      "path": "docs/reference-candidates/ooblets/ooblets-19.jpg",
+      "decision": "accept",
+      "categories": ["collection-density"],
+      "confidence": 82,
+      "visibleEvidence": [
+        "Shop/club interior with glass display cases and tables presenting many distinct collectibles (hats, glasses, figurines on stands, alarm clock, lamp)",
+        "Wall shelves with books and teapots; star-pattern wallpaper and pennant bunting",
+        "Items individually spotlighted and generously spaced so each reads",
+        "Multiple characters browsing; warm wood floor against purple walls"
+      ],
+      "tinyTerrariumLesson": "Display collectible unlocks on individual stands/pedestals with generous spacing and a contrasting display-surface colour — one object per pedestal makes a collection legible and makes each new unlock feel like an event.",
+      "doNotCopy": [
+        "Wallpaper pattern",
+        "Furniture and item designs",
+        "Character designs and neon sign glyph"
+      ]
+    },
+    {
+      "id": "ooblets-20",
+      "path": "docs/reference-candidates/ooblets/ooblets-20.jpg",
+      "decision": "accept",
+      "categories": ["creature-readability"],
+      "confidence": 88,
+      "visibleEvidence": [
+        "Seven-plus creatures at close range on a boardwalk, each with a distinct readable silhouette and expression",
+        "Grumpy green tadpole-like pair with huge eyes, smiling red radish biped, angry unibrow bird, sad droopy-eared yellow creature",
+        "Wooden dock planks, rope rails and hills form a clean backdrop",
+        "Soft contact shadows ground each creature"
+      ],
+      "tinyTerrariumLesson": "Pair each Sprout body shape with a contrasting default mood (round body + angry brow, droopy body + sad eyes) and stage idles in loose clusters of 3-5 so contrasting expressions play off each other.",
+      "doNotCopy": [
+        "All creature designs and faces",
+        "Arcade machine design",
+        "Background ship artwork"
+      ]
+    },
+    {
+      "id": "tiny-glade-01",
+      "path": "docs/reference-candidates/tiny-glade/tiny-glade-01.jpg",
+      "decision": "accept",
+      "categories": ["reward-feedback"],
+      "confidence": 90,
+      "visibleEvidence": [
+        "Small white sheep being petted by a gloved cursor hand with a red heart icon floating above — explicit cause-and-effect affection event",
+        "Three depth layers: foreground rocky outcrop with flowers, midground ruined walls/arches with vines, background tree canopy",
+        "Layered terrain detail: lupine-like flowers, ground blossoms, moss on stones, dirt paths, elevation change",
+        "Bottom hotbar of tool icons gives interaction context without dominating"
+      ],
+      "tinyTerrariumLesson": "Attach an immediate, legible affection response (heart burst plus reaction hop) to any direct Sprout pet/click interaction, and let terrain read in three layers — near detailed props, mid structural pieces, far massed foliage — even on a small map.",
+      "doNotCopy": [
+        "Sheep design and gloved-hand cursor",
+        "Ruined-abbey wall silhouettes",
+        "Hotbar icon set and layout",
+        "Heart-over-head icon treatment"
+      ]
+    },
+    {
+      "id": "tiny-glade-02",
+      "path": "docs/reference-candidates/tiny-glade/tiny-glade-02.jpg",
+      "decision": "accept",
+      "categories": ["tactile-geometry"],
+      "confidence": 85,
+      "visibleEvidence": [
+        "Half-timbered house module mid-manipulation with dashed selection volume, translate arrows, rotate arcs and scale handle",
+        "Building visibly layered: stone base, timber-frame plaster walls, separate shingled roof planes, chimney, flower boxes",
+        "Surrounding diorama composed with cobbled terrace, barrel, hay cart, bunting, ducks in pond",
+        "Autumn lighting reveals roof tile relief and timber bevels at gameplay distance"
+      ],
+      "tinyTerrariumLesson": "Show transform affordances (move/rotate/raise handles) directly on a selected build piece in-world, and construct every structure from visibly stacked sub-parts (base, frame, roof, trim) so placement reads as assembling a physical object, not stamping a box.",
+      "doNotCopy": [
+        "Gizmo/handle styling and dashed-selection look",
+        "Tudor house design and bunting motifs",
+        "Hotbar layout and version watermark style"
+      ]
+    },
+    {
+      "id": "tiny-glade-03",
+      "path": "docs/reference-candidates/tiny-glade/tiny-glade-03.jpg",
+      "decision": "accept",
+      "categories": ["ui-readability"],
+      "confidence": 82,
+      "visibleEvidence": [
+        "Radial colour-picker of roughly 10 swatches open next to a highlighted window frame — a clear recolour decision with the target outlined",
+        "Night scene lit by a warm porch lantern pooling on door, bench and ivy against cool blue moonlight",
+        "Fireflies and distant glowing windows as emissive accents",
+        "Foreground fence softly out of focus, establishing depth layering"
+      ],
+      "tinyTerrariumLesson": "When the player recolours an object, place the swatch picker adjacent to the outlined target in-world and preview the tint live; pair cool ambient night light with small warm emissive sources so materials keep reading after dark.",
+      "doNotCopy": [
+        "Radial swatch-picker layout",
+        "Lantern design and timber cottage architecture",
+        "Firefly motif arrangement"
+      ]
+    },
+    {
+      "id": "tiny-glade-04",
+      "path": "docs/reference-candidates/tiny-glade/tiny-glade-04.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 85,
+      "visibleEvidence": [
+        "Photo-mode frame: tilt-shift blur, exposure sliders, sun/compass dials and a full toolbar cover the frame; castle small and blurred"
+      ],
+      "rejectionReason": "UI-dominated photo-mode screenshot with heavy tilt-shift filtering; UI is camera settings, not a build/collection/reward decision."
+    },
+    {
+      "id": "tiny-glade-05",
+      "path": "docs/reference-candidates/tiny-glade/tiny-glade-05.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 88,
+      "visibleEvidence": [
+        "Elevated night vista of a town with lit windows, canal, bridges; strong blue cast and tilt-shift blur; no UI, creatures, or interaction"
+      ],
+      "rejectionReason": "Static filtered beauty shot; buildings are blurred backdrop, not inspectable geometry; no gameplay-relevant information."
+    },
+    {
+      "id": "tiny-glade-06",
+      "path": "docs/reference-candidates/tiny-glade/tiny-glade-06.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 90,
+      "visibleEvidence": [
+        "Painterly sunset wide shot of a castle on a cliff with bridge and stylised clouds; no UI, creatures, or interaction"
+      ],
+      "rejectionReason": "Pure long-distance landscape beauty shot; forms too far and stylised for material or tactile inspection; no category demonstrated."
+    },
+    {
+      "id": "tiny-glade-07",
+      "path": "docs/reference-candidates/tiny-glade/tiny-glade-07.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 92,
+      "visibleEvidence": [
+        "Photo-filter picker: 8 near-identical thumbnails of the same castle scene in different colour grades on grey background"
+      ],
+      "rejectionReason": "Redundant repeated thumbnails; filter-gallery UI unrelated to build/collection/reward decisions; thumbnails too small for any inspection."
+    },
+    {
+      "id": "tiny-glade-08",
+      "path": "docs/reference-candidates/tiny-glade/tiny-glade-08.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 85,
+      "visibleEvidence": [
+        "Rooftop-level town view with photo-mode focus reticle and full toolbar; tilt-shift blur over most of the frame"
+      ],
+      "rejectionReason": "Photo-mode UI dominates and blur obscures most architecture; density is a cityscape backdrop, not a readable personal habitat."
+    },
+    {
+      "id": "tiny-glade-09",
+      "path": "docs/reference-candidates/tiny-glade/tiny-glade-09.jpg",
+      "decision": "accept",
+      "categories": ["lighting-materials", "tactile-geometry"],
+      "confidence": 80,
+      "visibleEvidence": [
+        "Ground-level night street: warm lantern glow pools on a wooden arched door and stone steps against cool blue ambient",
+        "Close-range stone walls show individually bevelled, rounded bricks with visible mortar depth",
+        "Timber-frame houses catch warm window light on plaster and beams, showing material contrast at close distance",
+        "Small potted plant mid-street grounded by a contact shadow"
+      ],
+      "tinyTerrariumLesson": "Bevel and chamfer every masonry/timber edge so grazing light produces highlight rolloff, and light night scenes with sparse warm point lights against cool ambient so surface response and contact shadows stay inspectable up close.",
+      "doNotCopy": [
+        "Street/tower architecture composition",
+        "Lantern design and door-and-arch surround design",
+        "Starfield treatment"
+      ]
+    },
+    {
+      "id": "garden-galaxy-01",
+      "path": "docs/reference-candidates/garden-galaxy/garden-galaxy-01.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 74,
+      "visibleEvidence": [
+        "Isometric floating-island garden with checkerboard path axis, fountains, potted plants, cauldron, jar lantern, gnome figure"
+      ],
+      "rejectionReason": "Charming and dense, but garden-composition is filled by the stronger garden-galaxy-04 and 06; this frame's many small branded props make it comparatively weaker as a clean teaching reference."
+    },
+    {
+      "id": "garden-galaxy-02",
+      "path": "docs/reference-candidates/garden-galaxy/garden-galaxy-02.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 85,
+      "visibleEvidence": [
+        "Bamboo/waterfall diorama largely empty brown dirt tiles in foreground; small floating recipe UI at left; wide empty background margins"
+      ],
+      "rejectionReason": "Recipe UI too small and floating to teach ui-readability; terrain mostly bare dirt flats with large empty margins; fails density and composition bars."
+    },
+    {
+      "id": "garden-galaxy-03",
+      "path": "docs/reference-candidates/garden-galaxy/garden-galaxy-03.jpg",
+      "decision": "accept",
+      "categories": ["scene-composition"],
+      "confidence": 82,
+      "visibleEvidence": [
+        "Night diorama anchored by a crumbling brick wall segment and wrought-iron gate",
+        "Warm point sources (two candles, cauldron glow, jar lantern) create visible light pools against cool dark ground",
+        "Stacked green caterpillar-totem with a candle on its head as clear mid-frame focal point",
+        "Cow skull on root tangle, dead tree, iron fence form a readable back-layer silhouette line",
+        "Contact shadows ground cauldron, stump and candles"
+      ],
+      "tinyTerrariumLesson": "Add an optional dusk/night lighting state where 2-4 warm emissive props (candles, jars) become focal anchors — in Babylon this is cheap point lights plus emissive materials, and it dramatically re-skins the same garden geometry.",
+      "doNotCopy": [
+        "Caterpillar totem creature design",
+        "Cow-skull-and-roots prop",
+        "Gothic fence/gate asset shapes and starfield backdrop treatment"
+      ]
+    },
+    {
+      "id": "garden-galaxy-04",
+      "path": "docs/reference-candidates/garden-galaxy/garden-galaxy-04.jpg",
+      "decision": "accept",
+      "categories": ["garden-composition", "collection-density"],
+      "confidence": 88,
+      "visibleEvidence": [
+        "Formal garden with two-tier central fountain showing visible splash rings, flanked by balustrade, columns and rose pots",
+        "At least a dozen distinct collectible props: three birdbaths, perched white birds, cushion, bench, fluted columns, potted hydrangeas, candles",
+        "Path tiles form a deliberate T-junction route connecting fountain plaza to two side pools",
+        "Every tile edge dressed, yet the focal fountain reads instantly"
+      ],
+      "tinyTerrariumLesson": "Make water features the prestige unlock tier — a simple animated splash-ring decal plus a basin mesh gives a disproportionate charm payoff, and scatter 2-3 tiny ambient critters that hop between perch points to reward inspection.",
+      "doNotCopy": [
+        "White bird designs",
+        "Fountain/birdbath asset shapes and balustrade/column designs",
+        "Classical formal garden layout motif"
+      ]
+    },
+    {
+      "id": "garden-galaxy-05",
+      "path": "docs/reference-candidates/garden-galaxy/garden-galaxy-05.jpg",
+      "decision": "reject",
+      "categories": [],
+      "confidence": 78,
+      "visibleEvidence": [
+        "Rainy night forest scene with campfire, tent, cabins, dock lantern; large murky low-contrast areas; trees and stumps repeat"
+      ],
+      "rejectionReason": "Too dark and atmospherically filtered for material inspection; prop variety is repetitive forest clutter rather than an authored readable collection."
+    },
+    {
+      "id": "garden-galaxy-06",
+      "path": "docs/reference-candidates/garden-galaxy/garden-galaxy-06.jpg",
+      "decision": "accept",
+      "categories": ["garden-composition", "decorative-progression"],
+      "confidence": 90,
+      "visibleEvidence": [
+        "Symmetrical spa courtyard: central misty pool with kettle fountain flanked by glowing lanterns, candles, succulent pots, cauldron",
+        "Vine-covered pergola wrapped in string lights forms backdrop and framing device",
+        "Pale-pink seamless backdrop isolates the diorama so every object reads cleanly",
+        "Grass tufts soften all tile edges — a visibly finished, dressed space with nothing bare",
+        "Repetition-with-variation: paired candles/lanterns/pots symmetric but with differing contents"
+      ],
+      "tinyTerrariumLesson": "Support symmetric placement assists (mirror mode) and a soft-edge pass — auto-scatter grass tufts along tile borders once a decoration threshold is met, so progression visibly finishes a space rather than just adding objects.",
+      "doNotCopy": [
+        "Pergola-with-string-lights asset",
+        "Glowing lantern pillar design",
+        "Pink backdrop presentation style and specific pot/plant sculpts"
+      ]
+    }
+  ]
+}

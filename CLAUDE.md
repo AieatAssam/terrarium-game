@@ -73,3 +73,43 @@ functions on `SimRuntime`.
 Prop dimensions live once in `src/render/propDims.ts`; derive heights from it
 rather than writing literals. Balance values in `src/data/` are coupled to each
 other — tests derive from the data tables rather than hardcoding, deliberately.
+
+## Game Quality Contract
+
+Tiny Terrarium Works must remain an original, premium-feeling, cosy, colourful,
+2.5D creature-care automation game. It must not regress into a flat prototype,
+generic dashboard, empty 3D scene, static clicker, or cold factory simulator.
+
+Before changing any player-facing gameplay, art, UI, animation, Babylon scene,
+materials, lighting, or audio:
+
+1. Read `GameRules.md`.
+2. Read the relevant documents in `docs/`:
+   - `docs/ART_DIRECTION.md`
+   - `docs/MATERIAL_LIBRARY.md`
+   - `docs/REFERENCE_BOARD.md`
+   - `docs/reference-reviews/CLASSIFICATION_SUMMARY.md`
+3. Inspect the relevant curated images and their adjacent `.md` notes under
+   `docs/references/`. Never use `docs/reference-candidates/` as approved
+   design guidance.
+
+Quality requirements:
+- Implement original work only. References teach measurable qualities, never
+  characters, assets, UI, layouts, names, textures, or branded visual expression.
+- At normal gameplay camera distance, Sprouts must be lovable, readable,
+  volumetric, distinct beyond colour, and visibly animated.
+- Habitats must feel like dense, tactile, layered places worth sending Sprouts to.
+- World objects must have intentional geometry, materials, lighting, contact
+  shadows, and feedback; no default primitives or flat placeholder appearance.
+- Every new player-facing mechanic needs clear purpose, visible consequence,
+  satisfying feedback, and an understandable next goal.
+- Do not declare work complete because it functions. Validate visual quality and
+  the first-session play loop in Claude Chrome, capture evidence, and improve
+  any category below the required acceptance bar.
+
+Required validation for player-facing changes:
+- Run typecheck, lint, unit tests, production build, and relevant E2E tests.
+- Use Claude Chrome to play the changed flow from a clean save.
+- Inspect console/network errors and capture before/after screenshots.
+- Update `docs/visual-qa/improvement-log.md` with what changed, evidence,
+  scores, remaining defects, and next high-impact improvement.
