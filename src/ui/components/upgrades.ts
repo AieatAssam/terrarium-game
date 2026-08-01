@@ -112,7 +112,13 @@ export function createUpgradesPanel(store: UiStateStore, hooks: UpgradesPanelHoo
       const { meta, buyBtn, lockNote } = rows.get(upgrade.id)!;
       const level = state.upgradeLevels[upgrade.id] ?? 0;
       const maxed = level >= upgrade.maxLevel;
-      const cost = maxed ? 0 : upgrade.costForLevel(level);
+      // costForLevel is 1-indexed against the level being bought TO, not the
+      // current level — purchaseUpgrade (src/sim/systems.ts) charges
+      // costForLevel(level + 1). Displaying costForLevel(level) showed what
+      // the CURRENT level had already cost, one tier cheaper than what a
+      // click would actually charge, so an affordable-looking buy silently
+      // did nothing once dewdrops sat between the two prices.
+      const cost = maxed ? 0 : upgrade.costForLevel(level + 1);
       const canAfford = !maxed && state.dewdropTotal >= cost;
       const lockReason = maxed ? null : (hooks.getUpgradeLockReason?.(upgrade.id) ?? null);
 

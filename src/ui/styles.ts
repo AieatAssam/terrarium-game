@@ -97,6 +97,14 @@ export const UI_CSS = /* css */ `
   font-family: inherit;
   color: inherit;
   cursor: pointer;
+  transition: transform 0.08s ease;
+}
+
+/* Every button gets a press-down on click/tap — previously nothing in this
+   file gave a click any feedback at all, so a tap that missed (declined by
+   the sim, or just slow) looked identical to one that landed. */
+.tt-root button:not(:disabled):active {
+  transform: translateY(1px);
 }
 
 [data-reduced-motion='true'] .tt-root * {

@@ -216,9 +216,22 @@ export function initInput(renderer: RendererHandle, bus: EventBus): InputHandle 
     }
 
     if (dragSproutId && event.pointerId === dragPointerId) {
-      const ground = groundPointAt(x, y, DRAG_HEIGHT_PLANE);
+      const dragHeightPoint = groundPointAt(x, y, DRAG_HEIGHT_PLANE);
+      if (!dragHeightPoint) return;
+      sprouts.setDragPosition(dragSproutId, dragHeightPoint.x, dragHeightPoint.z);
+      // Hover hit-testing must use the SAME plane endDrag will use on
+      // pointerup (GROUND_PLANE), not the drag-height plane the held sprite
+      // renders on — those two projections of the same screen pixel are
+      // ~2.1 world units apart at the default camera (see
+      // drag-height-plane-vs-ground-plane in work_progress.yaml). Feeding
+      // the drag-height point to nearestWithin/nearestBuiltWithin made the
+      // highlighted habitat disagree with what endDrag actually resolves:
+      // a habitat could highlight while the cursor visually sat elsewhere,
+      // or fail to highlight with the cursor dead-center on it, and a drop
+      // that looked valid during hover would decline and snap back to the
+      // Nursery on release.
+      const ground = groundPointAt(x, y, GROUND_PLANE);
       if (!ground) return;
-      sprouts.setDragPosition(dragSproutId, ground.x, ground.z);
       const habitatId = habitats.nearestWithin(ground, HOVER_MARGIN_TILES);
       if (habitatId) {
         const valid = habitatMatch(habitatId, dragSproutId);

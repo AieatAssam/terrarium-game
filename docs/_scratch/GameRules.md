@@ -3,6 +3,13 @@
 **Status:** Canonical design specification  
 **Purpose:** This document is the authoritative reference for product, game-design, art, UX, content, and engineering decisions. Every new feature must preserve the player fantasy, core loop, accessibility rules, and scope boundaries set here. If an implementation conflicts with this document, change the implementation—not the design—unless the design change is explicitly approved and this file is revised intentionally.
 
+## Revision Log
+
+- **2026-08-01 — Phase 2 pivot toward hand-built garden logistics (user decision).** The player reported the automatic-placement model (helpers appear pre-built and pre-routed) as visually incoherent and asked for a deeper, Factorio/Satisfactory-style building layer: player-placed and player-drawn routes, junctions that accumulate Sprouts until configured, misroutes that stall for manual repair rather than silently resolving, and buildable habitats paid for in Dewdrops. This directly conflicted with §1's "must never require... factory-game familiarity" and §14's production-system guardrail as they were originally written, so the conflict was surfaced rather than resolved silently (per this document's own §17). The user chose to revise the design toward the Factorio direction. This log entry, plus the amended §1, §2.1, §2.5, §9, §10, §14, §15, and §16 notes below, is that intentional revision.
+  - **What changed:** automation, routes, and (new) habitats become player-placed and player-connected, constrained by tile/junction rules rather than auto-built; junctions can accumulate Sprouts under backpressure until routed; a misrouted Sprout stalls before the wrong habitat awaiting a manual fix instead of resolving invisibly.
+  - **What was deliberately preserved:** the caretaker fiction and presentation vocabulary (§2.1's naming table stands — a belt is still a "Garden Slide" in every player-facing string), the no-permanent-failure-state rule (a stall is always recoverable, never a loss), all of §3–§8 and §11–§13 (Sprouts' dignity, art direction, accessibility, licensing) unchanged, and the general principle that depth stays spatial and visual rather than becoming arithmetic, code, or off-screen optimisation.
+  - **Dependent updates required by this revision:** `docs/CONTRACTS.md` (new ids/events for placed structures, routes, junction state), `docs/ARCHITECTURE.md` (placement/routing as-built), `tests/unit/sim.layout.test.ts` (the pinned Nursery→Gate→habitat distance identity assumes fixed topology, which player-drawn routes make dynamic), and a save migration for existing auto-placed `AutomationInstance` records. See `plan.yaml` for the staged implementation this revision unlocks.
+
 ## 1. Design North Star
 
 **Tiny Terrarium Works** is a premium-feeling, cosy browser automation and collection game set inside a magical living terrarium.
@@ -13,7 +20,9 @@ The game’s primary emotional promise is:
 
 > “I made this little garden work, and it is becoming more beautiful, capable, and uniquely mine.”
 
-The game must feel approachable in the first five seconds, rewarding in the first minute, and increasingly rich over many sessions. It must never require programming knowledge, factory-game familiarity, arithmetic optimisation, or the ability to read dense system documentation.
+The game must feel approachable in the first five seconds, rewarding in the first minute, and increasingly rich over many sessions. It must never require programming knowledge, arithmetic optimisation, or the ability to read dense system documentation.
+
+**2026-08-01 revision:** Phase 2 deliberately introduces hand-built garden logistics — the player places helpers and draws the routes between them, and a junction can back up until it is configured correctly. This is spatial, visual building, not "factory-game familiarity" in the sense the original sentence meant to exclude (spreadsheets, formulas, or system documentation): a player must never need to compute throughput, read a manual, or write a rule in anything but pictures and drag gestures. If a mechanic can only be solved by doing arithmetic off-screen, it does not belong here regardless of how it is dressed up visually.
 
 ## 2. Product Pillars
 
@@ -21,7 +30,7 @@ The game must feel approachable in the first five seconds, rewarding in the firs
 
 The player is a caretaker, not a production-line manager. Sprouts are living, expressive creatures, habitats are homes, and automation is gentle garden care.
 
-Internally, systems can behave like factory logistics. Externally, the language and visual presentation must remain warm and intuitive:
+Internally, systems can behave like factory logistics — as of the 2026-08-01 revision, quite literally: player-placed routes, junctions, backpressure, and manual misroute repair. Externally, the language and visual presentation must remain warm and intuitive. **The 2026-08-01 revision changes the mechanics, not the fiction** — this naming table still governs every player-facing string:
 
 - “Garden Slide,” never “conveyor belt”
 - “Colour Gate,” never “filter splitter”
@@ -29,6 +38,9 @@ Internally, systems can behave like factory logistics. Externally, the language 
 - “Dewdrops,” never “currency unit”
 - “Garden Journal,” never “collection database”
 - “Seed Renewal,” never “prestige reset”
+- “Garden Route” (or “Slide segment”), never “belt” or “conveyor” — a route is still a mossy trail, glass root-tube, or water channel per §9.2; it just now has a shape the player draws
+- “Junction,” never “splitter node” — a junction is a signpost/crossing in the world, not a diagram symbol
+- “Waiting to be sorted” / “needs your help,” never “blocked” or “error” — a backed-up junction or a stalled misroute is narrated the same gentle way §11's recovery copy already handles an incorrect placement
 
 ### 2.2 Learn through play
 
@@ -81,6 +93,8 @@ The game must not contain:
 - Artificially opaque odds for collectible creatures
 
 Offline progress is a warm bonus, not an obligation. Active play is best for discovery, placement, redesign, and solving new garden problems.
+
+**2026-08-01 revision — stalls are not failure states.** §9.11 introduces a Sprout that stalls on its route just before the wrong habitat when a junction is misconfigured, waiting for the player to fix the routing or move it by hand. This is explicitly NOT a "permanent failure state": nothing is lost, nothing decays, the Sprout waits indefinitely and contentedly, and a single junction fix or hand-carry resolves it immediately with no penalty. The distinction that matters: a failure state punishes the player for a past choice; a stall is a visible, friendly invitation to make a choice, identical in spirit to the bottleneck framing already established in §9.7.
 
 ### 2.6 Delightful polish
 
@@ -388,12 +402,51 @@ It uses large pictorial colour/type controls, visibly shows its active rule, rou
 7. Nearby habitat synergy
 8. Optional timing, priority, compact layout optimisation
 9. Blueprints and challenge layouts
+10. *(2026-08-01)* Hand-placed structures and hand-drawn routes, constrained by tile/junction type
+11. *(2026-08-01)* Junction backpressure: a junction accumulates arrivals until its rule is configured
+12. *(2026-08-01)* Misroute stalls: a wrongly-routed Sprout waits at the last junction before the mismatched home for a manual fix
 
-No stage requires writing rules, code, boolean algebra, or manual ratios.
+No stage requires writing rules, code, boolean algebra, or manual ratios. Stages 10–12 add spatial building and repair, never arithmetic — see §9.8–§9.11.
 
 ### 9.7 Bottlenecks
 
 Bottlenecks are kind opportunities for problem-solving: busy waiting areas, full homes, queues at incomplete routes, or a new type without a home. Show the cause through animation/world state, then offer a simple recommended solution. Never hide critical information in dense metrics panels.
+
+### 9.8 Manual placement of every unlock *(2026-08-01 revision)*
+
+Every unlock other than pure decoration is **placed by the player**, never auto-built. The player is constrained in *where* a structure can go, never told *that* it must appear:
+
+- A helper (Garden Slide, Colour Gate, Mood Bell, future helpers) can only be placed on a valid site: on the path network, oriented with the flow, and — for structures that need one — on a genuine junction (a Colour Gate cannot be placed on a plain straight route; it needs a fork to govern).
+- Placement uses the same ghost-preview, generous-snap, valid/invalid-signal language §9.2 and §10 already establish for structures. Nothing about placement should feel different in kind between a Phase 1 structure and a hand-built route segment.
+- An unlock still has to be *earned* first (Dewdrops, and any behavioural gate already established, e.g. the Colour Gate needing the Slide built first) — earning removes the restriction on placing it, it does not place it for the player.
+- Buying an unlock the player has nowhere valid to place yet must say so plainly ("Build a junction first" rather than a disabled button with no explanation) — this is the same friendly-recovery-copy standard §11 sets for a misplaced Sprout.
+
+### 9.9 Garden Routes as buildable segments *(2026-08-01 revision)*
+
+A Garden Route (§9.2's mossy trail / root-tube / water channel) is no longer a fixed, pre-painted path — it is a segment the player places, one tile at a time, connecting a source to a destination. Building a route costs a small number of Dewdrops per segment (a real, felt cost, not decorative), so a compact layout is a genuine reward, not just an aesthetic choice.
+
+- Segments snap to the tile grid with the same forgiving placement rules as any other structure.
+- A route must connect two valid endpoints (a Nursery, a habitat, a helper, or a junction) to do anything; an unconnected segment is inert and clearly reads as unfinished, not broken.
+- Removing/rerouting a segment is safe and reversible per §10's existing "no punitive loss" rule — at most it refunds a partial amount, never confiscates progress.
+- This is still never freeform: a route is placed tile-by-tile on the grid, exactly like every other structure in this game, not drawn with an arbitrary freehand line. Freeform drawing is explicitly out of scope — it invites precision frustration §10 already forbids.
+
+### 9.10 Junctions and backpressure *(2026-08-01 revision)*
+
+A **junction** is any tile where two or more routes meet or a route forks. Junctions are what a Colour Gate (or a future routing helper) is built onto — see §9.8.
+
+- An unconfigured junction (no Gate built, or a Gate with no rule set for an arriving Sprout's kind) does not silently drop or lose Sprouts. Arrivals **accumulate**, visibly, in a clearly readable waiting cluster at the junction — the same friendly "waiting to be sorted" language as a full Nursery (§9.7).
+- Accumulation has a generous visible cap tied to the junction's own art (it fills up the way a habitat fills up, per §8.1 — nests, perches, a growing pile — never a bare progress bar). Reaching the cap pauses new arrivals at the *previous* junction or the Nursery, the same backward-pressure principle already implicit in §9.7's "busy waiting areas."
+- Configuring the Gate correctly immediately drains the backlog with a satisfying flush, not an instant teleport — motion sells the fix.
+- This is the "capacity/congestion" stage (§9.6 stage 5) made concrete and spatial, not a new arithmetic system: the player is never shown a queue depth number they must reason about, only a visibly fuller or emptier junction.
+
+### 9.11 Misroutes and repair *(2026-08-01 revision)*
+
+If a Sprout is dispatched down a route whose junction sends it toward the wrong habitat (a genuinely misconfigured Gate, not the normal fallback-to-waiting case §9.4 already covers), it **stalls on the route just before the mismatched habitat** rather than settling incorrectly or vanishing.
+
+- A stalled Sprout is calm, not distressed (§7.4's ban on distress states applies fully here) — a small "not quite home yet" cue, matching §11's recovery-copy tone.
+- Resolution is always available two ways: fix the junction's rule so the *next* wave routes correctly (does not retroactively move an already-stalled Sprout — that would be an invisible, unearned fix), or hand-carry the stalled Sprout the rest of the way exactly as in §5.2's manual Guide step.
+- A stall never expires, decays, or costs the player anything — see the §2.5 revision note above. It is a visible invitation to fix a junction, not a penalty for having built one.
+- This is what makes §9.4's Colour Gate configuration matter in a way it previously didn't as strongly: a wrong lane choice now has a small, friendly, visible, always-fixable consequence in the world, rather than resolving invisibly through the fallback path.
 
 ## 10. Building and Future Progression
 
@@ -402,6 +455,14 @@ Building is both functional and decorative. Players should be proud of compact, 
 Placement uses forgiving grid/snap rules, translucent previews, valid/invalid signals that do not rely solely on colour, clear concise explanations, and safe early repositioning. Never auto-rebuild player gardens without consent.
 
 Decorations are proof of restoration, including flower beds, lanterns, miniature bridges, water features, crystal clusters, trees, path skins, and biome landmarks. They must not compromise readability.
+
+### 10.0 Buildable habitats *(2026-08-01 revision)*
+
+Once a habitat is consistently full, the player may build an **additional habitat of the same kind** elsewhere on the plot, paid for in Dewdrops at a real, escalating cost — not raised capacity on the existing one. This makes "the garden is full" a genuine, felt building decision (§8.2's Dewdrop sink list gains "new homes" as a first-class entry, not a hypothetical) rather than a number quietly ticking up behind the scenes.
+
+- A new habitat is placed like any other structure (§9.8's placement rules), constrained to valid open plot tiles connected to the route network.
+- It must be visually equivalent in quality and readability to the original — never a cheaper or smaller reskin — so the garden reads as *more*, per §2.3's visible-transformation pillar, not as a workaround.
+- Existing habitat-capacity upgrades (§8.3) still apply per-habitat; building a second habitat is a parallel lever, not a replacement for them.
 
 ### 10.1 Future biomes
 
@@ -488,6 +549,8 @@ Excluded unless this document is intentionally revised:
 
 If a feature makes the player feel like an operator of a cold production system rather than a creative caretaker of a magical living garden, it does not belong.
 
+**2026-08-01 revision — this guardrail still applies, and is the test for the new building layer.** §9.8–§9.11 and §10.0 introduce hand-placed structures, player-drawn routes, junction backpressure, and misroute stalls — mechanically closer to a production system than anything in this document before. They stay on the caretaker side of this line only because: placement and routing are always spatial and visual (never a formula, a rule editor, or a number to optimise); a backed-up junction or a stalled Sprout is never punished, timed, or lossy (§2.5); and every consequence is narrated in the warm vocabulary §2.1 already establishes. Any implementation of these sections that starts requiring the player to calculate throughput, read a manual, or treat a stall as a mistake to be punished for has crossed back over this line and must be revised, regardless of how faithfully it matches this document's letter.
+
 ## 15. Feature Checklist
 
 Before adding or approving a feature:
@@ -505,6 +568,8 @@ Before adding or approving a feature:
 
 If any answer is no, revise or defer the feature.
 
+**2026-08-01 revision note on items 1, 5, and 8:** hand-placed structures, buildable routes, junction backpressure, and misroute stalls (§9.8–§9.11, §10.0) are designed to pass this checklist as written, not to need it softened. Item 1 (caretaker fantasy): building and repairing a garden by hand is *more* caretaker-like than watching it build itself, not less. Item 5 (calm, recoverable, no-failure): a stall or a backed-up junction must always satisfy this exactly as any other bottleneck does — if a specific implementation can't, that implementation is wrong, not the checklist. Item 8 (in-world result, not menu complexity): placement and routing must stay spatial, on the actual game board, never a separate configuration screen. Use this note to resolve apparent tension, not to lower the bar.
+
 ## 16. Phase 1 Definition of Done
 
 Phase 1 is complete when a player can:
@@ -515,6 +580,8 @@ Phase 1 is complete when a player can:
 4. Recover safely from an incorrect habitat attempt
 5. Unlock, place, and observe Garden Slide automate a familiar task
 6. Unlock, configure, and observe Colour Gate route a mixed stream
+
+   *(2026-08-01 note: this list describes the shipped Phase 1 experience and remains historically accurate — Phase 1 automations arrived pre-built. The 2026-08-01 revision changes placement to player-driven going forward per §9.8; existing saves need a migration, not a rewrite of this list.)*
 7. Buy meaningful upgrades and see their effects in the world
 8. Discover a rare Star Sprout
 9. Use Garden Journal, achievements, settings, and credits

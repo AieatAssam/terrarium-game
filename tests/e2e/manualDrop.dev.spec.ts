@@ -3,6 +3,7 @@ import {
   buyUpgradeViaUI,
   collectConsoleErrors,
   emitDropped,
+  getRecordedEvents,
   getUiState,
   grantDewdrops,
   HABITAT_TILES,
@@ -194,11 +195,14 @@ async function debugSpawnAndDrop(page: Page, sproutType: SproutTypeId, habitat: 
 }
 
 /**
- * Drives the real unlock path to a built Garden Slide targeting the Ember Nook
- * (8 ember placements make it the unambiguous most-fed habitat). `capacityLevel`
- * controls how much headroom the Ember Nook keeps: the boarding spec wants
- * several free slots because every race the dispatcher steals ends with one
- * more Sprout settled there.
+ * Drives the real unlock path to a built Garden Slide. The Slide always
+ * targets Sunflower Meadow once built (unlockSystem, src/sim/systems.ts —
+ * the earlier "whichever habitat has been fed most" heuristic this helper's
+ * ember-heavy feed mix was originally written for no longer decides the
+ * target, only the total placement count matters for the unlock threshold).
+ * `capacityLevel` controls how much headroom Sunflower Meadow keeps: the
+ * boarding spec wants several free slots because every race the dispatcher
+ * steals ends with one more Sprout settled there.
  */
 async function buildGardenSlide(page: Page, capacityLevel: 1 | 2 | 3): Promise<void> {
   await buyHabitatCapacityTo(page, capacityLevel);
@@ -252,11 +256,12 @@ test.describe('Manual drop onto automation: real pointer events', () => {
 
     await buildGardenSlide(page, 1);
 
-    // The Slide serves the Ember Nook, so a Dew Sprout is the wrong kind — and
-    // its dispatcher never takes dew, which is what makes the decline itself
-    // attributable to the pointer drop alone. The only residual interference
-    // is a natural ember making the Slide 'busy' at the moment of the drop,
-    // so the drop is retried through any busy window.
+    // The Slide always serves Sunflower Meadow once built, so a Dew Sprout is
+    // the wrong kind — and its dispatcher never takes dew, which is what
+    // makes the decline itself attributable to the pointer drop alone. The
+    // only residual interference is a natural sun spawn making the Slide
+    // 'busy' at the moment of the drop, so the drop is retried through any
+    // busy window.
     const sproutId = await debugSpawnViaDom(page, 'dew');
     const slidePoint = await projectToScreen(page, { x: GARDEN_SLIDE_TILE.x, y: 0, z: GARDEN_SLIDE_TILE.z });
 
@@ -307,8 +312,8 @@ test.describe('Manual drop onto automation: real pointer events', () => {
     await installSpawnLog(page);
     await installTimedRecorder(page);
 
-    // Capacity 3 => 15 slots per habitat, so the 8 ember placements that make
-    // the Slide target the Ember Nook leave it with room to deliver into.
+    // Capacity 3 => 15 slots per habitat, so Sunflower Meadow (the Slide's
+    // always-on target) has room to deliver into.
     await buildGardenSlide(page, 3);
 
     // Nothing idle at the Nursery but the Sprout this test is about to spawn.
@@ -353,7 +358,7 @@ test.describe('Manual drop onto automation: real pointer events', () => {
       };
 
       const before = new Set((window.__ttSpawnLog ?? []).map((s) => s.id));
-      (document.querySelector('[data-testid="debug-spawn-ember"]') as HTMLButtonElement).click();
+      (document.querySelector('[data-testid="debug-spawn-sun"]') as HTMLButtonElement).click();
       return Promise.resolve().then(() => {
         const fresh = (window.__ttSpawnLog ?? []).filter((s) => s.id.startsWith('debug-sprout-') && !before.has(s.id));
         if (fresh.length !== 1) throw new Error(`expected exactly one new debug Sprout, got ${fresh.length}`);
@@ -380,18 +385,84 @@ test.describe('Manual drop onto automation: real pointer events', () => {
       expect(started!.upFired, 'boarding must come from the pointerup dispatch, not a tick').toBe(true);
       expect(started!.automationId).toBe('gardenSlide');
       expect(started!.fromTile).toEqual(NURSERY_TILE);
-      expect(started!.toTile).toEqual(HABITAT_TILES.emberNook);
+      expect(started!.toTile).toEqual(HABITAT_TILES.sunflowerMeadow);
     }
     expect(events.some((e) => e.type === 'sprout:automationDeclined' && e.sproutId === sproutId)).toBe(false);
 
-    // The boarded ride completes normally and settles the Sprout into the
-    // Ember Nook (the Slide's target from the setup above).
+    // The boarded ride completes normally and settles the Sprout into
+    // Sunflower Meadow (the Slide's always-on target).
     await expect
       .poll(
         async () => (await getTimedEvents(page)).some((e) => e.type === 'sprout:settled' && e.sproutId === sproutId),
         { timeout: 10_000 },
       )
       .toBe(true);
+
+    console_.assertNone();
+  });
+
+  test('hovering a matching habitat highlights it, and the highlight agrees with what dropping there does', async ({ page }) => {
+    // Regression test for a real bug: handlePointerMove fed the DRAG_HEIGHT
+    // plane's ground point (where the held sprite renders) into
+    // habitats.nearestWithin, while endDrag (on pointerup) always used the
+    // GROUND plane. Those two projections of the same screen pixel are
+    // ~2.1 world units apart at the default camera (see
+    // drag-height-plane-vs-ground-plane in work_progress.yaml) — so the
+    // habitat that lit up during hover could disagree with the one endDrag
+    // actually resolved, and a drop over a lit-up (or unlit) habitat could
+    // decline and bounce back to the Nursery. Fixed by computing a second,
+    // GROUND-plane point for hover hit-testing. This test drops dead-centre
+    // on a habitat's own ground point and asserts the mesh scaling (the
+    // hover-valid visual, src/render/habitats.ts's setHover) already agreed
+    // with the outcome BEFORE pointerup fires.
+    test.setTimeout(60_000);
+    const console_ = collectConsoleErrors(page);
+    await page.goto('/');
+    await waitForDevHooks(page);
+    await installBusRecorder(page, ['sprout:placed:correct', 'sprout:placed:incorrect']);
+    await installSpawnLog(page);
+
+    const sproutId = await page.evaluate(() => {
+      const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
+      canvas.setPointerCapture = () => {};
+      canvas.hasPointerCapture = () => false;
+
+      const toClient = (wx: number, wy: number, wz: number): { x: number; y: number } => {
+        const rect = canvas.getBoundingClientRect();
+        const projected = window.__debug!.project(wx, wy, wz);
+        return { x: rect.left + projected[0] * (rect.width / canvas.width), y: rect.top + projected[1] * (rect.height / canvas.height) };
+      };
+      const fire = (type: string, at: { x: number; y: number }): void => {
+        canvas.dispatchEvent(
+          new PointerEvent(type, { pointerId: 13, isPrimary: true, bubbles: true, button: 0, buttons: 1, clientX: at.x, clientY: at.y }),
+        );
+      };
+
+      const before = new Set((window.__ttSpawnLog ?? []).map((s) => s.id));
+      (document.querySelector('[data-testid="debug-spawn-ember"]') as HTMLButtonElement).click();
+      return Promise.resolve().then(() => {
+        const fresh = (window.__ttSpawnLog ?? []).filter((s) => s.id.startsWith('debug-sprout-') && !before.has(s.id));
+        if (fresh.length !== 1) throw new Error(`expected exactly one new debug Sprout, got ${fresh.length}`);
+        const id = fresh[0].id;
+        fire('pointerdown', toClient(8, 1.13, 8)); // Nursery centre, pre-reveal mesh position
+        fire('pointermove', toClient(4, 0, 4)); // Ember Nook's own ground-plane centre
+        const debug = window.__debug as unknown as { meshInfo: (n: string) => { scaling: number[] } | null | undefined };
+        const hoverScaling = debug.meshInfo('terrarium.habitat.emberNook')?.scaling;
+        (window as unknown as { __ttHoverScaling: unknown }).__ttHoverScaling = hoverScaling;
+        fire('pointerup', toClient(4, 0, 4));
+        return id;
+      });
+    });
+
+    const hoverScaling = await page.evaluate(() => (window as unknown as { __ttHoverScaling: number[] }).__ttHoverScaling);
+    // setHover's valid-match branch scales the habitat up to 1.05 (src/render/habitats.ts).
+    expect(hoverScaling, 'Ember Nook should have shown the valid-hover scale-up while an Ember Sprout hovered dead-centre').toEqual([
+      1.05, 1.05, 1.05,
+    ]);
+
+    const events = await getRecordedEvents(page);
+    expect(events.some((e) => e.type === 'sprout:placed:correct' && e.sproutId === sproutId)).toBe(true);
+    expect(events.some((e) => e.type === 'sprout:placed:incorrect' && e.sproutId === sproutId)).toBe(false);
 
     console_.assertNone();
   });
