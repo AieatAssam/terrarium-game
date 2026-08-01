@@ -26,7 +26,7 @@ import { HABITATS } from '../data/habitats';
 import type { EventBus } from '../events/bus';
 import type { RendererHandle } from '../render/index';
 import { worldToTile, type TileCoord } from '../render/coords';
-import { SPROUT_FLOAT_HEIGHT } from '../render/sprouts';
+import { SPROUT_FLOAT_HEIGHT, SPROUT_SPRITE_SIZE } from '../render/sprouts';
 // Render (and input) may import from sim — only sim may never import
 // render/ui/audio/input. isValidAutomationSite is pure tile-graph logic
 // (2026-08-01, manual placement — GameRules §9.8), reused here so the
@@ -151,7 +151,16 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   // DRAG_HEIGHT_PLANE) and pick whichever live Sprout's XZ position is
   // closest to that point, within a generous radius — simpler, and more
   // forgiving for touch besides.
-  const SPROUT_PICK_RADIUS = 0.55;
+  // Kept in step with the sprite's own half-width (SPROUT_SPRITE_SIZE / 2,
+  // 0.475 as of the 2026-08-01 size pass) plus a deliberate forgiveness
+  // margin, rather than being an independent magic number. It was 0.55
+  // against a 0.70 sprite; when the sprite grew, a stale 0.55 would have made
+  // the hitbox SMALLER than the visible creature, which is the worst possible
+  // mismatch — the player aims at art that is not clickable and the miss
+  // falls through to a camera pan (work_progress.yaml
+  // `missed-pick-falls-through-to-pan`, reproduced in the before-capture for
+  // this pass).
+  const SPROUT_PICK_RADIUS = SPROUT_SPRITE_SIZE / 2 + 0.22;
 
   const pickSproutId = (x: number, y: number): string | null => {
     const ground = groundPointAt(x, y, DRAG_HEIGHT_PLANE);

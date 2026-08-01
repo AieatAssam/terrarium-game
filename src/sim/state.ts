@@ -6,7 +6,7 @@
 // something stable.
 
 import type { AchievementId, AutomationId, HabitatId, MoodId, SproutTypeId, UpgradeId } from '../core/ids';
-import type { NurseryRhythm } from '../data/spawning';
+import { INITIAL_SPAWN_ACCUMULATOR_MS, type NurseryRhythm } from '../data/spawning';
 import type { TileCoord } from './grid';
 import { defaultColourGateLanes, type ColourGateLanes } from './layout';
 
@@ -119,7 +119,9 @@ export function createInitialSimState(seed: number): SimState {
     upgradeLevels: {},
     unlockedAchievements: [],
     journalDiscovered: [],
-    spawnAccumulatorMs: 0,
+    // Pre-elapsed on purpose so the first pod opens ~2s in, per GameRules
+    // §6.1. See INITIAL_SPAWN_ACCUMULATOR_MS for the full reasoning.
+    spawnAccumulatorMs: INITIAL_SPAWN_ACCUMULATOR_MS,
     correctPlacementCount: 0,
     habitatDewdropFraction: {},
     colourGateLanes: defaultColourGateLanes(),

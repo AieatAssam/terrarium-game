@@ -735,10 +735,17 @@ export function createPathFlowMaterial(scene: Scene): PathFlowMaterial {
   const material = new PBRMetallicRoughnessMaterial('terrarium.path.flow.mat', scene);
   material.baseColor = new Color3(1, 0.95, 0.78);
   material.baseTexture = texture;
-  material.emissiveColor = new Color3(0.5, 0.44, 0.3);
+  // Lifted from emissive 0.50/0.44/0.30 at alpha 0.62. At the default camera
+  // the chevrons were washing out against the tread's own pale sand tone —
+  // legible in a close crop, close to invisible at the distance the game is
+  // actually played at, which undercuts the one job they have (say which way
+  // traffic flows). Still well short of a UI overlay: it stays a lit PBR
+  // material inside the scene's warm/cool light, per this function's note
+  // above.
+  material.emissiveColor = new Color3(0.68, 0.6, 0.42);
   material.metallic = 0;
   material.roughness = 0.5;
-  material.alpha = 0.62;
+  material.alpha = 0.82;
   material.backFaceCulling = false;
   material.transparencyMode = Material.MATERIAL_ALPHABLEND;
   (material as unknown as { _useAlphaFromAlbedoTexture: boolean })._useAlphaFromAlbedoTexture = true;
@@ -752,8 +759,22 @@ export function createPathFlowMaterial(scene: Scene): PathFlowMaterial {
   const advance = (nowMs: number, speed: number): void => {
     // Negative, because scrolling the texture window backwards moves the
     // pattern forwards along +u (the tile's flow direction).
-    const cycle = 1 / CHEVRONS_PER_TILE;
-    const phase = speed === 0 ? 0 : (-(nowMs / 1000) * speed * cycle) % cycle;
+    //
+    // THE WRAP PERIOD IS 1, NOT 1/CHEVRONS_PER_TILE — this was the visible
+    // jerk. Babylon composes a texture's UVs as `u = u0 * uScale + uOffset`,
+    // so `uOffset` is measured in TEXTURE periods, not in quad-UV span: one
+    // whole chevron is 1.0 of uOffset regardless of what `uScale` is. Wrapping
+    // on `1 / CHEVRONS_PER_TILE` (0.5) therefore snapped the whole march back
+    // by HALF a chevron on every cycle. The chevrons themselves were evenly
+    // spaced the entire time — each half-tile quad shows exactly
+    // CHEVRONS_PER_TILE whole periods, so spacing is uniform across tiles and
+    // corners — but twice a second the pattern jumped half a step, which reads
+    // exactly like uneven spacing plus a hitch at the loop point.
+    //
+    // At 1.0 the wrap lands on a point where the pattern is identical to where
+    // it started, so the march is genuinely seamless and the modulo is
+    // invisible.
+    const phase = speed === 0 ? 0 : -((nowMs / 1000) * speed) % 1;
     texture.uOffset = phase;
   };
 

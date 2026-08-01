@@ -14,6 +14,7 @@ import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import type { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
+import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import type { Scene } from '@babylonjs/core/scene';
 
 import { createManifestMaterial } from './assets';
@@ -54,14 +55,54 @@ export type SproutVisualState = 'reveal' | 'idle' | 'walk' | 'happy' | 'settled'
 // builds those meshes) plus this sprite's own half-height plus an explicit
 // clearance. Change a drum's height or the sprite size and these follow.
 
-/** Edge length of the Sprout billboard plane. */
-const SPROUT_SPRITE_SIZE = 0.7;
+/**
+ * Edge length of the Sprout billboard plane.
+ *
+ * Raised from 0.70 to 0.95 (2026-08-01, first-session settle-loop pass).
+ * MEASURED, not a taste call: at the default camera a 0.70 Sprout rendered
+ * roughly 20x22 CSS pixels — see
+ * docs/qa-screenshots/settle-loop/before/02-sprout-waiting.png, where the
+ * Ember Sprout is a fuzzy speck beside the Nursery mound with no readable
+ * face. docs/REFERENCE_BOARD.md's non-negotiable list fails a build whose
+ * Sprouts read as flat icons, and the promoted creature references
+ * (docs/references/slime-rancher-2/creature-readability/,
+ * docs/references/ooblets/creature-personality/) both put the creature at a
+ * size where silhouette AND expression are legible without zooming.
+ *
+ * Why 0.95 and not larger: the settled-crowd slot table below (and the
+ * invariant pinned by tests/unit/render.settleSlots.test.ts) fits six
+ * standing Sprouts inside the smallest habitat's 1.0-unit flat top face.
+ * Cards wider than about one unit start hiding the interleaved back row,
+ * which is the exact failure the SETTLE_ROW_STAGGER note describes. The rest
+ * of the readability gain is taken by the camera's default framing instead
+ * (see DEFAULT_RADIUS in src/render/camera.ts) — moving both a moderate
+ * amount beats pushing either one past what its own constraints allow.
+ */
+export const SPROUT_SPRITE_SIZE = 0.95;
 /** Diameter/edge of a Sprout's small mood-badge child mesh (Mood Bell feature, 2026-08-01). */
 const MOOD_BADGE_SIZE = 0.12;
 /** Offset from the sprite's centre (what `position` sets) to its bottom edge. */
 const SPROUT_HALF_HEIGHT = SPROUT_SPRITE_SIZE / 2;
 /** Air gap left between a surface and the sprite's bottom edge. */
 const SPROUT_SURFACE_CLEARANCE = 0.03;
+/**
+ * Vertical squash applied to a Sprout's contact-shadow disc so it reads as an
+ * ellipse on the ground under this camera's fixed ~62deg beta rather than as a
+ * perfect circle painted on the floor.
+ */
+const SHADOW_FORESHORTEN = 0.62;
+/** How far above its surface a contact shadow floats, purely to avoid
+ * z-fighting with the ground/habitat top face it lies on. */
+const SHADOW_SURFACE_LIFT = 0.012;
+/** Opacity of a contact shadow when the Sprout is resting on its surface, and
+ * when it is at the top of a drag/bob. The shadow softens and shrinks as the
+ * Sprout rises — that CHANGE is what sells the contact; a constant blob under
+ * a hovering creature reads as a painted decal. */
+const SHADOW_ALPHA_CONTACT = 0.34;
+const SHADOW_ALPHA_LIFTED = 0.12;
+/** Height above the surface at which a shadow reaches SHADOW_ALPHA_LIFTED. */
+const SHADOW_LIFT_RANGE = 1.1;
+
 /** Peak amplitude of the idle bob in `update` below. The floating height has
  * to budget for it: without this term the bob's DOWNWARD half would dip the
  * card's bottom edge back under the Nursery's top face. */
@@ -422,6 +463,22 @@ export interface SproutVisual {
   sproutType: SproutTypeId;
   mood: MoodId;
   mesh: Mesh;
+  /**
+   * Ground-plane contact shadow, kept UNDER the billboard rather than parented
+   * to it (a child of a billboarding, bobbing card would tilt and rise with
+   * it, which is the opposite of what a contact shadow does).
+   *
+   * Why a hand-placed decal and not the real shadow generator: the Sprout is a
+   * camera-facing alpha-tested plane, so a projected shadow map of it is a
+   * shifting, ragged smear that reads as dirt rather than contact. Every
+   * promoted creature reference (docs/references/ooblets/creature-personality/,
+   * docs/references/slime-rancher-2/creature-readability/) grounds its
+   * creatures with a soft, tight, elliptical contact darkening directly
+   * beneath them — that is the measurable quality being reproduced here, in an
+   * original form, and it is what stops a billboard from reading as a sticker
+   * floating in front of the world.
+   */
+  shadow: Mesh;
   material: PBRMetallicRoughnessMaterial;
   state: SproutVisualState;
   tile: TileCoord;
@@ -589,6 +646,28 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     return material;
   };
 
+  /** One StandardMaterial shared by every Sprout's contact shadow. Alpha is
+   * per-shadow (mesh.visibility), so a single material serves all of them —
+   * a material per Sprout would be pure waste at a few hundred creatures. */
+  let shadowMaterial: StandardMaterial | undefined;
+  const sharedShadowMaterial = (): StandardMaterial => {
+    if (shadowMaterial) return shadowMaterial;
+    const created = new StandardMaterial('terrarium.sprout.shadow.mat', scene);
+    created.diffuseColor = Color3.Black();
+    created.specularColor = Color3.Black();
+    created.emissiveColor = Color3.Black();
+    created.disableLighting = true; // a shadow must not itself be lit
+    // Left fully opaque on the MATERIAL: per-shadow opacity is driven by each
+    // mesh's `visibility`, which Babylon multiplies into the material alpha
+    // (and which by itself forces the mesh into the alpha-blend pass). Setting
+    // both would multiply the two and give a shadow a third of its intended
+    // strength.
+    created.alpha = 1;
+    created.backFaceCulling = false;
+    shadowMaterial = created;
+    return created;
+  };
+
   /** Builds (or returns the cached) material for one (type, cacheKey)
    * combination — `cacheKey` is either a texture state or one of the
    * drag-tint variants (see `dragMaterialFor`). Never mutated after creation;
@@ -608,6 +687,37 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     material.roughness = 0.55;
     material.metallic = 0;
     material.emissiveColor = emissiveColor;
+
+    // MOMENTARY SOLID-SQUARE FLASH ON PICKING UP A SPROUT — the fix.
+    //
+    // createManifestMaterial starts a material at `baseColor = fallbackColor`
+    // with NO baseTexture and only fills the texture in from an ASYNC
+    // callback. Until that resolves the mesh draws as a flat,
+    // fully-opaque, fallback-coloured rectangle — i.e. the Sprout briefly
+    // becomes a coloured square. (assets.ts:320 already documents this exact
+    // failure mode for the material-swap path.)
+    //
+    // Normally invisible, because a Sprout's idle/walk/happy materials are
+    // created during the reveal and have long since resolved. But the three
+    // DRAG-TINT variants (see dragMaterialFor) are created lazily on the
+    // FIRST pick-up of each (type, validity) pair — mid-gesture, with the
+    // Sprout at its largest and directly under the cursor. Hence a flash
+    // that is real, brief, ugly, and "only occasional": it can only happen
+    // once per pair per session.
+    //
+    // Fix: these variants all paint the SAME manifest texture as an existing
+    // cached material for the same (type, manifestState) — the only thing
+    // that differs is the emissive tint. So if a sibling has already resolved
+    // its texture, adopt it synchronously here and the new material is
+    // correct on its very first frame. The async load still runs underneath
+    // and simply re-assigns the identical texture. If no sibling has resolved
+    // yet, behaviour is exactly as before.
+    const resolvedSibling = sharedSproutMaterials.get(`${sproutType}:${manifestState}`);
+    if (resolvedSibling?.baseTexture) {
+      material.baseTexture = resolvedSibling.baseTexture;
+      material.baseColor = Color3.White(); // must mirror createManifestMaterial: baseColor multiplies the texture
+    }
+
     sharedSproutMaterials.set(mapKey, material);
     return material;
   };
@@ -675,11 +785,40 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     const material = normalMaterialFor(sproutType, 'reveal');
     mesh.material = material;
 
+    // Pre-warm every OTHER material this species will ever need, now, while
+    // the Sprout is still popping out of its pod — several seconds before the
+    // player can possibly pick it up. Each of these kicks off its manifest
+    // texture load on creation (see the note in sharedMaterialFor), and a
+    // material created at the moment it is first SHOWN draws one or more
+    // frames as a flat fallback-coloured square. Creating them here moves
+    // that unavoidable async window somewhere the player never sees it,
+    // instead of into the first frame of a drag gesture. Cheap and bounded:
+    // the cache is keyed per (type, variant), so this is a handful of
+    // materials per species for the whole session, not per Sprout.
+    normalMaterialFor(sproutType, 'idle');
+    normalMaterialFor(sproutType, 'walk');
+    normalMaterialFor(sproutType, 'happy');
+    dragMaterialFor(sproutType, true);
+    dragMaterialFor(sproutType, false);
+    dragMaterialFor(sproutType, null);
+
+    const shadow = MeshBuilder.CreateDisc(
+      `terrarium.sprout.${id}.shadow`,
+      { radius: SPROUT_SPRITE_SIZE * 0.34, tessellation: 16 },
+      scene,
+    );
+    shadow.rotation.x = Math.PI / 2; // lie flat on the ground plane
+    shadow.scaling.set(1, SHADOW_FORESHORTEN, 1); // ellipse, matching the iso camera's ground foreshortening
+    shadow.isPickable = false;
+    shadow.material = sharedShadowMaterial();
+    shadow.position.set(nurseryWorld.x, nurseryTopY() + SHADOW_SURFACE_LIFT, nurseryWorld.z);
+
     const visual: SproutVisual = {
       id,
       sproutType,
       mood,
       mesh,
+      shadow,
       material,
       state: 'reveal',
       tile: NURSERY_TILE,
@@ -832,6 +971,10 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     endRide(id);
     releaseNurserySlot(visual);
     visual.mesh.dispose();
+    // The shadow is a SIBLING of the mesh, not a child (see SproutVisual.shadow
+    // for why), so Babylon's recursive child disposal does not reach it and it
+    // has to be disposed by hand or it stays on the ground forever.
+    visual.shadow.dispose();
     // NOT visual.material.dispose(): the material is one of the small shared
     // per-(type, state) cache (see sharedMaterialFor), still in use by every
     // OTHER live Sprout of the same species and pose. It is disposed exactly
@@ -881,6 +1024,7 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
       if (!visual) return;
       setState(visual, 'happy');
       createSparkleBurst(scene, { x: visual.mesh.position.x, y: visual.mesh.position.y, z: visual.mesh.position.z }, { count: 20 });
+      playSettleCheer(visual);
     }),
     bus.subscribe('sprout:placed:incorrect', (e) => {
       const visual = visuals.get(e.sproutId);
@@ -1104,6 +1248,83 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     visual.mesh.visibility = valid === false ? 0.6 : 1;
   };
 
+  /**
+   * The Sprout's own half of the settle payoff: a squash-then-overshoot cheer.
+   *
+   * GameRules §5.3 lists a "Sprout happy animation" first among the things a
+   * correct match must produce. Before this, `sprout:placed:correct` called
+   * setState(visual, 'happy') and nothing else — and setState only points the
+   * mesh at a different cached material. Worse, 'happy' is superseded by
+   * 'settled' in the very same event batch, and applyNormalMaterial maps
+   * 'settled' back to the SAME 'happy' texture. So the entire "happy
+   * animation" was one still image replacing another still image, with no
+   * motion whatsoever.
+   *
+   * The shape here is deliberately anticipation-then-overshoot rather than a
+   * plain scale-up: a brief squash, a rebound past full size, then a settle
+   * back. That is the readable "it's pleased" beat the promoted
+   * creature-personality references land through pose and timing (see
+   * docs/references/ooblets/creature-personality/) — expressed here as
+   * original motion on this game's own billboard, not as any borrowed pose.
+   *
+   * Reduced motion (ambientIntensity 0) gets a much smaller, shorter version
+   * rather than none: GameRules §11 asks for less movement, not for the
+   * player to lose the confirmation that their action worked.
+   */
+  const playSettleCheer = (visual: SproutVisual): void => {
+    const motion = lastMotion ?? getMotionConfig(prefersReducedMotion(), 'high');
+    const reduced = motion.ambientIntensity <= 0;
+    const amplitude = reduced ? 0.06 : 0.22;
+    const durationMs = reduced ? 220 : 460;
+    const start = performance.now();
+    const observer = scene.onBeforeRenderObservable.add(() => {
+      const t = Math.min(1, (performance.now() - start) / durationMs);
+      // Squash under 20% of the beat, overshoot through the middle, ease home.
+      const curve = t < 0.2 ? -(t / 0.2) : Math.sin(((t - 0.2) / 0.8) * Math.PI) * (1 - t * 0.35);
+      const scale = 1 + amplitude * curve;
+      // Squash and stretch are opposed on the two axes so the card keeps its
+      // apparent volume instead of just getting bigger.
+      visual.mesh.scaling.set(1 + amplitude * curve * 0.6, scale, 1);
+      if (t >= 1) {
+        scene.onBeforeRenderObservable.remove(observer);
+        visual.mesh.scaling.set(1, 1, 1);
+      }
+    });
+  };
+
+  /**
+   * Which surface this Sprout's shadow currently falls on. Derived from the
+   * Sprout's own situation rather than tracked in a field, so it cannot drift
+   * out of sync with the position logic: a settled Sprout stands on its
+   * habitat's top face, a riding one on the automation plinth, a held one is
+   * over open ground, and anything else is at the Nursery mound.
+   */
+  const shadowSurfaceY = (visual: SproutVisual): number => {
+    if (visual.settledHabitat !== null && visual.state === 'settled') return habitatTopY(visual.settledHabitat);
+    if (rides.has(visual.id)) return automationSiteTopY();
+    if (visual.held) return 0;
+    return nurseryTopY();
+  };
+
+  /**
+   * Puts the contact shadow under the Sprout and scales/fades it by how far
+   * the Sprout is above its surface. Called every frame for every visible
+   * Sprout — cheap (a few arithmetic ops and two writes) and it has to be
+   * per-frame, because the bob, the drag and the transport arc all move the
+   * card without going through any single choke point that could update it.
+   */
+  const updateContactShadow = (visual: SproutVisual): void => {
+    const surfaceY = shadowSurfaceY(visual);
+    const lift = Math.max(0, visual.mesh.position.y - SPROUT_HALF_HEIGHT - surfaceY);
+    const t = Math.min(1, lift / SHADOW_LIFT_RANGE);
+    visual.shadow.setEnabled(true);
+    visual.shadow.position.set(visual.mesh.position.x, surfaceY + SHADOW_SURFACE_LIFT, visual.mesh.position.z);
+    // Wider and fainter the higher the Sprout is, tight and dark on contact.
+    const spread = (1 + t * 0.55) * Math.max(0.01, visual.mesh.scaling.x);
+    visual.shadow.scaling.set(spread, SHADOW_FORESHORTEN * spread, 1);
+    visual.shadow.visibility = SHADOW_ALPHA_CONTACT + (SHADOW_ALPHA_LIFTED - SHADOW_ALPHA_CONTACT) * t;
+  };
+
   const update = (motion: MotionConfig, nowMs: number): void => {
     lastMotion = motion;
     for (const visual of visuals.values()) {
@@ -1113,7 +1334,11 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
       // but at a few hundred idle Sprouts in a crowded garden it is the
       // difference between this loop doing real work for the visible dozen
       // and doing it for the whole population every frame.
-      if (!visual.mesh.isEnabled()) continue;
+      if (!visual.mesh.isEnabled()) {
+        visual.shadow.setEnabled(false);
+        continue;
+      }
+      updateContactShadow(visual);
       // A Sprout mid-ride owns its own y (arc + travel); the idle bob must not
       // fight it for the same field.
       if (visual.held || visual.state === 'reveal' || visual.state === 'settled' || rides.has(visual.id)) continue;
@@ -1133,6 +1358,8 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     sharedSproutMaterials.clear();
     for (const material of sharedMoodBadgeMaterials.values()) material.dispose();
     sharedMoodBadgeMaterials.clear();
+    shadowMaterial?.dispose();
+    shadowMaterial = undefined;
     signs.dispose();
   };
 

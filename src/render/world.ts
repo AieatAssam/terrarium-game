@@ -85,6 +85,7 @@ import {
   createPaintedMetalMaterial,
   createPathFlowMaterial,
   createPathMaterial,
+  createStoneBodyMaterial,
   createPetalMaterial,
   createSceneryStoneMaterial,
   createSoilMaterial,
@@ -128,6 +129,34 @@ const PATH_TREAD_WIDTH = (PATH_TILE_SIZE * 68) / 160;
 
 /** Chevron marches per second along a tile at full motion. */
 const PATH_FLOW_SPEED = 0.55;
+
+/**
+ * How far the path's tread bed stands proud of the soil.
+ *
+ * Reported by the player: the paths "remain flat on the ground, they do not
+ * have any verticality to them, they look painted on rather than placed on
+ * the terrain". That was literally true — the whole path network was a set of
+ * `CreateGround` quads at y = 0.01, i.e. a decal on the soil with no
+ * thickness, no side faces to catch the key light and no contact darkening.
+ *
+ * The fix is a real raised bed under the tread, built from the SAME half-tile
+ * segments the flow overlay already uses (see `flowSegments` in
+ * src/render/layout.ts), so the bed follows the actual tread band — including
+ * bending correctly around a corner, where the two halves are perpendicular —
+ * instead of stamping a square plinth on every tile.
+ *
+ * Kept low on purpose. This is a garden path, not a wall: enough that its lit
+ * side faces and its shadow separate it from the soil at gameplay camera
+ * distance, not so much that Sprouts look like they are walking on a kerb.
+ */
+const PATH_BED_HEIGHT = 0.075;
+
+/** Y of the tread's visible top face, and of the flow overlay just above it. */
+const PATH_TOP_Y = PATH_BED_HEIGHT;
+
+/** How far the bed overhangs the tread band on each side, giving the edge a
+ * lip that reads as a laid border rather than a cut-off slab. */
+const PATH_BED_OVERHANG = 0.05;
 
 /** World Y of the terrain datum — the height the ground plane sits at where
  * `terrainHeightAt` returns 0. Unchanged from the flat-ground pass so path
@@ -340,6 +369,12 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator,
   // corners and through the junction; nothing scrolls in a global screen
   // direction.
   const pathFlow = createPathFlowMaterial(scene);
+  // One shared material for every raised bed under the tread. Stone rather
+  // than the path family's own tread texture: these are the SIDES of the
+  // path, the laid edging the tread rests on, so they should read as a
+  // different material from the surface people walk on — that contrast is
+  // most of what sells the path as built rather than printed.
+  const pathBedMaterial = createStoneBodyMaterial(scene, 'terrarium.path.bed.mat', new Color3(0.45, 0.4, 0.32));
   const paths: Mesh[] = [];
   for (const { tile, piece, quarterTurns, flowSegments } of GARDEN_PATH_PIECES) {
     const world = tileToWorld(tile);
@@ -347,13 +382,44 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator,
     // canvas edge, so anything under 1.0 leaves a visible gap of bare soil at
     // every tile join and the road reads as separated stepping stones.
     const path = MeshBuilder.CreateGround(`terrarium.path.${tile.x}.${tile.z}`, { width: PATH_TILE_SIZE, height: PATH_TILE_SIZE }, scene);
-    path.position.set(world.x, 0.01, world.z);
+    path.position.set(world.x, PATH_TOP_Y, world.z);
     path.rotation.y = quarterTurns * (Math.PI / 2);
     path.receiveShadows = true;
     path.material = pathMaterialFor(piece);
     path.isPickable = false;
     path.metadata = { kind: 'path', tile, piece, quarterTurns };
     paths.push(path);
+
+    // Bed hub over the tile centre.
+    //
+    // REQUIRED, not belt-and-braces: each half-tile bed below spans from the
+    // tile CENTRE outward along its own arm, so on a 90-degree bend the
+    // quadrant lying behind BOTH arms — the outer corner of the turn — is
+    // covered by neither. The tread art does run through that quadrant (the
+    // band's outer edges meet there), so the kerb visibly stopped short and
+    // the bend's outer corner sat on bare soil with an exposed tread edge.
+    // Reported by the player: "outer corner of 90 degree bend misses curb".
+    //
+    // One `across x across` box at the centre closes it for every piece type
+    // at once — corner, junction and straight — and cannot protrude, because
+    // `across` is exactly the width the arms already occupy. Skipped for a
+    // single-arm terminus, where half of it would stick out past the tread's
+    // own end into bare soil.
+    if (flowSegments.length >= 2) {
+      const hubSize = PATH_TREAD_WIDTH + PATH_BED_OVERHANG * 2;
+      const hub = MeshBuilder.CreateBox(
+        `terrarium.path.bed.hub.${tile.x}.${tile.z}`,
+        { width: hubSize, depth: hubSize, height: PATH_BED_HEIGHT },
+        scene,
+      );
+      hub.position.set(world.x, PATH_TOP_Y - PATH_BED_HEIGHT / 2 - 0.002, world.z);
+      hub.material = pathBedMaterial;
+      hub.isPickable = false;
+      hub.receiveShadows = true;
+      shadowGenerator?.addShadowCaster(hub);
+      hub.metadata = { kind: 'path.bed.hub', tile };
+      paths.push(hub);
+    }
 
     // One quad per HALF tile (arriving half + leaving half), each only as wide
     // as the tread band. Half-tiles rather than one full-tile quad because a
@@ -362,12 +428,52 @@ export function buildGardenWorld(scene: Scene, shadowGenerator: ShadowGenerator,
     // every corner.
     for (const segment of flowSegments) {
       const step = PATH_DIRECTION_OFFSETS[segment.halfDirection];
+
+      // The raised bed for this half-tile. A box rather than a quad: its four
+      // side faces are what actually give the path verticality — they take the
+      // key light at a different angle from the flat top, and they let the
+      // tread cast and receive a contact shadow instead of being a decal
+      // painted on the soil (see PATH_BED_HEIGHT).
+      //
+      // Sized along the SEGMENT's own travel direction, so a corner tile gets
+      // two perpendicular beds that meet at the tile centre and the bed bends
+      // with the road. Overlap at that meeting point is harmless — they are
+      // opaque solids of identical height, and the visible top surface is the
+      // textured tread quad above them, not these.
+      const along = PATH_TILE_SIZE / 2;
+      const across = PATH_TREAD_WIDTH + PATH_BED_OVERHANG * 2;
+      const horizontal = segment.travelQuarterTurns % 2 === 0;
+      const bed = MeshBuilder.CreateBox(
+        `terrarium.path.bed.${tile.x}.${tile.z}.${segment.halfDirection}`,
+        {
+          width: horizontal ? along : across,
+          depth: horizontal ? across : along,
+          height: PATH_BED_HEIGHT,
+        },
+        scene,
+      );
+      // CreateBox centres on its origin, so the top face lands at
+      // PATH_TOP_Y when the centre sits half a height below it. Nudged a hair
+      // further down so the bed's own top face can never z-fight the textured
+      // tread quad that covers it.
+      bed.position.set(
+        world.x + step.x * PATH_TILE_SIZE * 0.25,
+        PATH_TOP_Y - PATH_BED_HEIGHT / 2 - 0.002,
+        world.z + step.z * PATH_TILE_SIZE * 0.25,
+      );
+      bed.material = pathBedMaterial;
+      bed.isPickable = false;
+      bed.receiveShadows = true;
+      shadowGenerator?.addShadowCaster(bed);
+      bed.metadata = { kind: 'path.bed', tile, segment };
+      paths.push(bed);
+
       const flow = MeshBuilder.CreateGround(
         `terrarium.path.flow.${tile.x}.${tile.z}.${segment.halfDirection}`,
         { width: PATH_TILE_SIZE / 2, height: PATH_TREAD_WIDTH },
         scene,
       );
-      flow.position.set(world.x + step.x * PATH_TILE_SIZE * 0.25, 0.02, world.z + step.z * PATH_TILE_SIZE * 0.25);
+      flow.position.set(world.x + step.x * PATH_TILE_SIZE * 0.25, PATH_TOP_Y + 0.01, world.z + step.z * PATH_TILE_SIZE * 0.25);
       flow.rotation.y = segment.travelQuarterTurns * (Math.PI / 2);
       flow.material = pathFlow.material;
       flow.isPickable = false;

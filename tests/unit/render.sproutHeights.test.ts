@@ -19,7 +19,7 @@ import { describe, expect, it } from 'vitest';
 import { habitatTopY, nurseryTopY, HABITAT_BODIES, topSurfaceY } from '../../src/render/propDims';
 import { SPROUT_FLOAT_HEIGHT } from '../../src/render/sprouts';
 
-const SPRITE_SIZE = 0.7;
+const SPRITE_SIZE = 0.95; // raised from 0.70 in the 2026-08-01 creature-readability pass; see src/render/sprouts.ts
 const HALF_HEIGHT = SPRITE_SIZE / 2;
 const CLEARANCE = 0.03;
 const BOB_AMPLITUDE = 0.05;
@@ -38,7 +38,7 @@ describe('Sprout float height', () => {
     // If this fails, update `SPROUT_FLOAT_HEIGHT` in tests/e2e/helpers.ts AND
     // the projected y in tests/e2e/preview.preview.spec.ts — Playwright cannot
     // import the real constant (see this file's header).
-    expect(SPROUT_FLOAT_HEIGHT).toBeCloseTo(1.13, 6);
+    expect(SPROUT_FLOAT_HEIGHT).toBeCloseTo(1.255, 6);
   });
 });
 

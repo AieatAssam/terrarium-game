@@ -24,7 +24,21 @@ import { gridCenterWorld } from './coords';
 export const GARDEN_CAMERA_ALPHA = -Math.PI / 2 - Math.PI / 4;
 const ISO_ALPHA = GARDEN_CAMERA_ALPHA;
 const ISO_BETA = Math.PI / 2.9; // ~62deg from vertical
-const DEFAULT_RADIUS = 19;
+/**
+ * Default framing distance. Pulled in from 19 to 15 (2026-08-01,
+ * first-session settle-loop pass).
+ *
+ * GameRules §4.2 asks for two things at once: default framing that shows the
+ * Nursery, the active habitats and the main paths, AND "important interaction
+ * targets remain comfortably large at default zoom". The second was failing —
+ * a Sprout measured ~20x22 CSS pixels at radius 19, small enough that a
+ * deliberate pointer-down missed it and fell through to a camera pan (see
+ * work_progress.yaml's `missed-pick-falls-through-to-pan`, reproduced during
+ * this pass). 15 keeps the whole garden — all three habitats, the Nursery and
+ * both path spurs — inside the frame, verified in-browser rather than
+ * assumed, while making every interaction target ~27% larger on screen.
+ */
+const DEFAULT_RADIUS = 15;
 const MIN_RADIUS = 7;
 const MAX_RADIUS = 28;
 const MIN_BETA = Math.PI / 6;

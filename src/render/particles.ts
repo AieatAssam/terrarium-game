@@ -125,6 +125,69 @@ export function createRippleRing(
 }
 
 /**
+ * A single Dewdrop rising off a habitat and fading — the WORLD-SPACE half of
+ * the earning loop.
+ *
+ * GameRules §5.3 lists a Dewdrop reward among the things a settle must
+ * produce, and docs/REFERENCE_BOARD.md's non-negotiable list fails any build
+ * where "correct placement only changes a number rather than visibly
+ * transforming the world". Before this, `habitat:dewdropTick` had NO
+ * subscriber in src/render or src/ui at all: dewdrops moved a HUD counter and
+ * nothing else, so a happy, earning habitat was visually identical to an
+ * empty one. The transferable lesson from the promoted reward-feedback
+ * references (docs/references/tiny-glade/reward-feedback/tiny-glade-01,
+ * ooblets/reward-feedback/ooblets-11) is that the reward symbol appears in
+ * the world AT the thing that earned it, large enough to read, and lasts long
+ * enough to be seen — not in a corner of the HUD.
+ *
+ * Original expression, not a copied one: a teardrop-proportioned billboard
+ * disc in the garden's own dew palette, rising with a slight ease-out and
+ * fading, driven by the same onBeforeRenderObservable pattern the ripple ring
+ * above already uses.
+ *
+ * `intensity` comes from MotionConfig so reduced motion gets a shorter, much
+ * smaller rise instead of a full float (never zero — the reward must still be
+ * legible; GameRules §11 asks for less movement, not less information).
+ */
+export function createDewdropMote(
+  scene: Scene,
+  position: { x: number; y: number; z: number },
+  intensity = 1,
+): void {
+  const durationMs = 900;
+  const rise = 0.25 + 0.75 * intensity;
+  const drop = MeshBuilder.CreateDisc('terrarium.dewdropMote', { radius: 0.1, tessellation: 12 }, scene);
+  drop.billboardMode = 7; // Mesh.BILLBOARDMODE_ALL — kept numeric to avoid pulling the Mesh class into this module
+  drop.position = new Vector3(position.x, position.y + 0.15, position.z);
+  drop.scaling.set(0.8, 1.25, 1); // teardrop proportion rather than a circle
+  drop.isPickable = false;
+
+  const color = new Color3(0.62, 0.86, 0.97);
+  const material = new StandardMaterial('terrarium.dewdropMote.mat', scene);
+  material.diffuseColor = color;
+  material.emissiveColor = color;
+  material.alpha = 0;
+  material.backFaceCulling = false;
+  drop.material = material;
+
+  const startY = drop.position.y;
+  const start = performance.now();
+  const observer = scene.onBeforeRenderObservable.add(() => {
+    const t = Math.min(1, (performance.now() - start) / durationMs);
+    const eased = 1 - (1 - t) * (1 - t);
+    drop.position.y = startY + rise * eased;
+    // Fade in over the first fifth, hold, then fade out — so it is at full
+    // opacity for most of its life rather than only at one instant.
+    material.alpha = 0.9 * Math.min(1, t / 0.2) * (1 - Math.max(0, (t - 0.55) / 0.45));
+    if (t >= 1) {
+      scene.onBeforeRenderObservable.remove(observer);
+      material.dispose();
+      drop.dispose();
+    }
+  });
+}
+
+/**
  * Slow warm motes drifting around the lanterns revealed by the first
  * decorative expansion (GameRules §6.6 / §4.1's "fireflies"). Deliberately a
  * SINGLE system with a box emitter spanning the lit area rather than one

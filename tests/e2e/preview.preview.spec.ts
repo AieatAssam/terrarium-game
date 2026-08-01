@@ -62,7 +62,7 @@ test.describe('production build', () => {
     const devPage = await context.newPage();
     await devPage.goto('http://localhost:5173/');
     await devPage.waitForFunction(() => Boolean(window.__debug), undefined, { timeout: 15_000 });
-    const pickup = await projectToScreen(devPage, { x: 8, y: 1.13, z: 8 }); // NURSERY_TILE, SPROUT_FLOAT_HEIGHT (see tests/e2e/helpers.ts)
+    const pickup = await projectToScreen(devPage, { x: 8, y: 1.255, z: 8 }); // NURSERY_TILE, SPROUT_FLOAT_HEIGHT (see tests/e2e/helpers.ts)
     await devPage.close();
 
     await dragBetween(page, pickup, { x: pickup.x + 60, y: pickup.y + 20 });

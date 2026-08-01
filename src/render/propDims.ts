@@ -195,6 +195,46 @@ export function automationSiteTopY(): number {
   return topSurfaceY(AUTOMATION_BODY);
 }
 
+/**
+ * The conveyor deck an automation site carries on its viewer-facing side, in
+ * the plinth mesh's LOCAL space (so every value here is measured from
+ * `AUTOMATION_BODY.centreY`, exactly like `halfHeight`).
+ *
+ * Deliberately additive: `AUTOMATION_BODY`'s own `height`/`centreY` are NOT
+ * touched by this, because `automationSiteTopY()` feeds
+ * `src/render/sprouts.ts`'s `SPROUT_RIDE_HEIGHT` — moving the plinth's top
+ * face to make room for a belt would silently move every carried Sprout too.
+ *
+ * `forward` is why this exists at all: the travelling parcels were already
+ * being drawn 0.46 out toward the camera from a plinth only 0.4 wide, i.e.
+ * hanging in mid-air off the edge of the prop with nothing under them. The
+ * deck, its rails, its end rollers and the two brackets that cantilever it
+ * off the plinth wall are what those parcels now ride on.
+ */
+export const AUTOMATION_BELT = {
+  /** Offset from the plinth centre toward the viewer (world units). */
+  forward: 0.46,
+  /** Half-length along the travel axis. Comfortably covers BEAD_TRAVEL/2. */
+  halfLength: 0.48,
+  /** Half-width across the travel axis. */
+  halfWidth: 0.14,
+  /** Deck slab thickness. */
+  thickness: 0.075,
+  /** Local Y of the deck's top face — just under the plinth's own top face,
+   * so the belt reads as a side attachment rather than a hat. */
+  topLocalY: halfHeight(AUTOMATION_BODY) - 0.02,
+  /** Side rail above the deck: how tall, and how thick across the belt. */
+  railHeight: 0.05,
+  railThickness: 0.034,
+  /** End-roller radius; also sets how far the rollers overhang each end. */
+  rollerRadius: 0.066,
+  /** Cantilever brackets joining the deck back to the plinth wall. */
+  bracketHalfWidth: 0.032,
+  bracketThickness: 0.05,
+  /** How far the parcel's own centre floats above the deck's top face. */
+  loadClearance: 0.012,
+} as const;
+
 export const AUTOMATION_BODIES: Record<AutomationId, PropBody> = {
   gardenSlide: AUTOMATION_BODY,
   colourGate: AUTOMATION_BODY,

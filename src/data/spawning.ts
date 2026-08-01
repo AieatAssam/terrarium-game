@@ -10,6 +10,29 @@ import { UPGRADES } from './upgrades';
 /** Baseline time between nursery pod spawns, before the podRhythm upgrade. */
 export const BASE_POD_SPAWN_INTERVAL_MS = 12_000;
 
+/**
+ * How long a BRAND NEW garden waits for its very first pod.
+ *
+ * GameRules §6.1 ("First five seconds") requires the opening screen to reveal
+ * a Sprout the player can immediately drag. A fresh save used to start with
+ * `spawnAccumulatorMs: 0`, so the first pod was a full
+ * BASE_POD_SPAWN_INTERVAL_MS away — twelve seconds of an empty garden under
+ * an onboarding banner reading "Drag a Sprout to its glowing home", with no
+ * Sprout to drag. Measured, not assumed: see
+ * docs/qa-screenshots/settle-loop/before/01-first-five-seconds.png.
+ *
+ * This is a HEAD START ON THE ACCUMULATOR, not a special-case first spawn:
+ * createInitialSimState seeds the ordinary accumulator so the ordinary
+ * nursery system fires the ordinary spawn early. Every later pod keeps the
+ * normal cadence, the sim stays a pure function of its state, and a restored
+ * save is unaffected because its accumulator comes from the save file.
+ */
+export const FIRST_POD_SPAWN_DELAY_MS = 2_000;
+
+/** Accumulator value a fresh garden starts at, so its first pod opens
+ * FIRST_POD_SPAWN_DELAY_MS in rather than a full interval in. */
+export const INITIAL_SPAWN_ACCUMULATOR_MS = BASE_POD_SPAWN_INTERVAL_MS - FIRST_POD_SPAWN_DELAY_MS;
+
 /** Chance a spawned pod is a Star Sprout; the rest split evenly across the 3 common types. */
 export const STAR_SPROUT_SPAWN_CHANCE = 0.06;
 

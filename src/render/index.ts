@@ -18,6 +18,7 @@ import { createGardenCamera, type GardenCamera } from './camera';
 import { createHabitatManager, type HabitatManager } from './habitats';
 import { createGardenLighting, type GardenLighting } from './lighting';
 import { getMotionConfig, prefersReducedMotion, watchReducedMotion } from './motion';
+import { createDewdropMote } from './particles';
 import { getQualityLevel, onQualityChange } from './quality';
 import { createSproutManager, type SproutManager } from './sprouts';
 import { installVisibilityThrottle } from './visibility';
@@ -297,6 +298,48 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
     world.update(motion, performance.now());
   });
 
+  // ---------------------------------------------------------------------
+  // Settle feedback (GameRules §5.3)
+  // ---------------------------------------------------------------------
+  // These three subscriptions live HERE rather than inside the habitat
+  // manager because this is the only scope holding both the habitats handle
+  // and the resolved MotionConfig (which depends on the reduced-motion
+  // preference and the quality tier, neither of which habitats.ts knows
+  // about).
+  //
+  // `reactCorrect`/`reactIncorrect` were written, debugged (see
+  // docs/ART_QA_REPORT.md:526 on the burst emitting inside opaque geometry)
+  // and exported — and then NEVER CALLED by anything in src/. A repo-wide
+  // grep before this change found only the declaration, the definition, the
+  // handle return and two doc mentions. So the habitat did not visibly react
+  // to a correct placement at all: no glow pulse, no scale bump, no burst at
+  // the drum top, no Dew Pond ripple. That is two of GameRules §5.3's six
+  // required settle channels restored by wiring, not by new design.
+  const feedbackSubscriptions = [
+    bus.subscribe('sprout:placed:correct', (event) => {
+      habitats.reactCorrect(event.habitatId, getMotionConfig(reducedMotion, getQualityLevel()));
+    }),
+    bus.subscribe('sprout:placed:incorrect', (event) => {
+      habitats.reactIncorrect(event.habitatId, getMotionConfig(reducedMotion, getQualityLevel()));
+    }),
+    bus.subscribe('habitat:dewdropTick', (event) => {
+      const motion = getMotionConfig(reducedMotion, getQualityLevel());
+      // One mote per dewdrop, capped: a habitat that banked several whole
+      // dewdrops in one tick should read as "that one is really producing"
+      // without ever becoming a particle storm (GameRules §12's performance
+      // guardrail, and §7.4's "never visual chaos").
+      const motes = Math.max(1, Math.min(3, Math.round(event.amount)));
+      const origin = habitats.get(event.habitatId).topCenter;
+      for (let i = 0; i < motes; i += 1) {
+        createDewdropMote(
+          scene,
+          { x: origin.x + (i - (motes - 1) / 2) * 0.22, y: origin.y, z: origin.z },
+          motion.ambientIntensity,
+        );
+      }
+    }),
+  ];
+
   // Subagent C's assets/manifest.json may not exist yet when this session
   // starts. Re-check a few times over the following ~15s so real textures
   // swap in without a page reload if C finishes mid-session; harmless no-op
@@ -310,6 +353,7 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
 
   const dispose = (): void => {
     clearInterval(integrationInterval);
+    for (const unsubscribe of feedbackSubscriptions) unsubscribe();
     scene.onBeforeRenderObservable.remove(renderObserver);
     stopReducedMotionWatch();
     stopQualityWatch();

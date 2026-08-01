@@ -23,7 +23,7 @@ import {
 import { TICK_MS } from '../../src/sim/loop';
 import { runTick } from '../../src/sim/tick';
 import { COLOUR_GATE_TILE, GARDEN_SLIDE_TILE, HABITAT_TILES, NURSERY_TILE, tileDistance } from '../../src/sim/layout';
-import { BASE_POD_SPAWN_INTERVAL_MS } from '../../src/data/spawning';
+import { BASE_POD_SPAWN_INTERVAL_MS, FIRST_POD_SPAWN_DELAY_MS } from '../../src/data/spawning';
 import { colourGateLockReason, isColourGateUnlocked, UNLOCK_THRESHOLDS } from '../../src/data/unlocks';
 import { UPGRADES } from '../../src/data/upgrades';
 import { HABITATS } from '../../src/data/habitats';
@@ -44,18 +44,39 @@ function withSprout(state: SimState, sproutType: 'ember' | 'dew' | 'sun' | 'star
 }
 
 describe('spawnSystem', () => {
-  it('does not spawn before the pod interval elapses', () => {
+  // GameRules §6.1 requires a Sprout on screen within the first five seconds,
+  // so a FRESH garden starts with its spawn accumulator pre-elapsed
+  // (INITIAL_SPAWN_ACCUMULATOR_MS) rather than at zero. These first two specs
+  // are therefore written against the remaining time, not against the full
+  // interval — an ordinary accumulator with a head start, not a special-cased
+  // first spawn.
+  it('does not spawn before the remaining time on a fresh pod elapses', () => {
     let state = createInitialSimState(1);
-    for (let i = 0; i < Math.floor(BASE_POD_SPAWN_INTERVAL_MS / TICK_MS) - 1; i += 1) {
+    for (let i = 0; i < Math.floor(FIRST_POD_SPAWN_DELAY_MS / TICK_MS) - 1; i += 1) {
       state = spawnSystem(state).state;
     }
     expect(state.sprouts).toHaveLength(0);
   });
 
+  it('reveals the first Sprout within the GameRules §6.1 five-second window', () => {
+    let state = createInitialSimState(1);
+    let firstSpawnMs: number | null = null;
+    for (let i = 0; i < Math.ceil(5_000 / TICK_MS); i += 1) {
+      const result = spawnSystem(state);
+      state = result.state;
+      if (firstSpawnMs === null && result.events.some((e) => e.type === 'sprout:spawned')) {
+        firstSpawnMs = (i + 1) * TICK_MS;
+      }
+    }
+    expect(firstSpawnMs).not.toBeNull();
+    expect(firstSpawnMs!).toBeLessThanOrEqual(5_000);
+    expect(state.sprouts[0].tile).toEqual(NURSERY_TILE);
+  });
+
   it('spawns exactly one Sprout once the interval elapses, and carries over remainder', () => {
     let state = createInitialSimState(1);
     let spawnedCount = 0;
-    for (let i = 0; i < Math.ceil(BASE_POD_SPAWN_INTERVAL_MS / TICK_MS); i += 1) {
+    for (let i = 0; i < Math.ceil(FIRST_POD_SPAWN_DELAY_MS / TICK_MS); i += 1) {
       const result = spawnSystem(state);
       state = result.state;
       spawnedCount += result.events.length;
@@ -63,6 +84,18 @@ describe('spawnSystem', () => {
     expect(spawnedCount).toBe(1);
     expect(state.sprouts).toHaveLength(1);
     expect(state.sprouts[0].tile).toEqual(NURSERY_TILE);
+  });
+
+  it('returns to the ordinary cadence after the first pod', () => {
+    let state = createInitialSimState(1);
+    // Past the head start and its first spawn.
+    for (let i = 0; i < Math.ceil(FIRST_POD_SPAWN_DELAY_MS / TICK_MS); i += 1) state = spawnSystem(state).state;
+    expect(state.sprouts).toHaveLength(1);
+    // One tick short of a FULL interval later, still exactly one.
+    for (let i = 0; i < Math.floor(BASE_POD_SPAWN_INTERVAL_MS / TICK_MS) - 1; i += 1) state = spawnSystem(state).state;
+    expect(state.sprouts).toHaveLength(1);
+    state = spawnSystem(state).state;
+    expect(state.sprouts).toHaveLength(2);
   });
 
   it('is deterministic: same seed produces the same sequence of sprout types', () => {

@@ -39,8 +39,11 @@
 
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
-import type { Mesh } from '@babylonjs/core/Meshes/mesh';
-import type { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
+import { Mesh } from '@babylonjs/core/Meshes/mesh';
+import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
+import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
+import { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
 import type { Scene } from '@babylonjs/core/scene';
 import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator';
 
@@ -56,8 +59,16 @@ import {
   isReservedTile,
 } from './layout';
 import { prefersReducedMotion, watchReducedMotion } from './motion';
-import { createPaintedMetalMaterial } from './pbrMaterials';
-import { bodyRings, footprintRadius, halfHeight, AUTOMATION_BODIES, AUTOMATION_PREVIEW_BODY, type PropBody } from './propDims';
+import { createPaintedMetalMaterial, createWoodBodyMaterial } from './pbrMaterials';
+import {
+  bodyRings,
+  footprintRadius,
+  halfHeight,
+  AUTOMATION_BELT,
+  AUTOMATION_BODIES,
+  AUTOMATION_PREVIEW_BODY,
+  type PropBody,
+} from './propDims';
 import { HABITATS } from '../data/habitats';
 import { SPROUT_TYPES } from '../data/sproutTypes';
 import type { EventBus } from '../events/bus';
@@ -111,9 +122,14 @@ const BEAD_COUNT = 3;
  * yaw is never rotated by any input path (see GARDEN_CAMERA_ALPHA), the same
  * invariant src/render/sprouts.ts relies on for its settle slots.
  */
-const BEAD_FORWARD = 0.46;
-/** Height of the bead above the plinth's top face. */
-const BEAD_RISE = 0.12;
+const BEAD_FORWARD = AUTOMATION_BELT.forward;
+/** Lane lamps sit UP on the plinth's own top face and well back from the
+ * viewer-facing side, so they clear the conveyor frame that now occupies it.
+ * Browser QA on the built Colour Gate showed the west lamp at the old
+ * 0.12 rise / 0.30 forward mingling with the parcels at the belt's intake
+ * end, where a lit lamp and a piece of cargo are exactly the two things that
+ * must not be confused (GameRules §9.4). */
+const LANE_LAMP_RISE = 0.2;
 
 const VIEWER_X = Math.cos(GARDEN_CAMERA_ALPHA);
 const VIEWER_Z = Math.sin(GARDEN_CAMERA_ALPHA);
@@ -126,6 +142,232 @@ const BEAD_PASSES_PER_RIDE = 4;
 const BEAD_PASS_MIN_MS = 320;
 const BEAD_PASS_MAX_MS = 1400;
 const DEFAULT_BEAD_PASS_MS = 840;
+
+/**
+ * The belt NEVER stops turning while ambient motion is allowed — it only
+ * changes pace. Previously the phase advance was gated on `carryBlend > 0`, so
+ * a conveyor spun up, ran for one short ride, spun down and dead-stopped until
+ * the next Sprout boarded: a visible start/stop hitch on every single delivery,
+ * which is what "jerking and not looping smoothly" described. An idle machine
+ * now keeps a slow, calm creep instead, and the difference between idle and
+ * working is carried by pace + the parcels themselves (which stay gated on
+ * `carryBlend`, so "an idle Slide carries nothing" is still unambiguous, per
+ * GameRules §9.3/§9.7).
+ */
+const BELT_IDLE_RATE = 0.16 / DEFAULT_BEAD_PASS_MS;
+/**
+ * Time constant (ms) for easing the belt's RATE (phase units per ms) rather
+ * than snapping it. `passMs` is reassigned on every `sprout:transportStarted`,
+ * and while the accumulator kept the belt's POSITION continuous through that,
+ * its VELOCITY stepped instantly — most visibly on the Colour Gate's two-leg
+ * dispatch, where leg 2 begins at a different duration to leg 1 mid-journey.
+ * Easing the rate makes speed changes a smooth pull rather than a jolt.
+ */
+const BELT_RATE_BLEND_MS = 280;
+/**
+ * Fraction of a pass a parcel spends fading in at the intake and out at the
+ * outfeed. The wrap point is hidden by fading to zero there (unchanged
+ * intent), but the old `sin(phase * PI)` profile did that by continuously
+ * swelling and shrinking across the WHOLE pass, so the procession read as
+ * pulsing in place rather than travelling. A short fade window at each end
+ * leaves the middle ~70% at a steady size, which is what reads as conveyed
+ * cargo.
+ */
+const BEAD_FADE_WINDOW = 0.15;
+
+const TWO_PI = Math.PI * 2;
+
+/** Smoothstep, so the parcel fade has no velocity discontinuity at either
+ * end of its window. */
+function smoothstep(t: number): number {
+  const x = Math.min(1, Math.max(0, t));
+  return x * x * (3 - 2 * x);
+}
+
+// ---------------------------------------------------------------------------
+// Belt geometry (the "flat" half of the report)
+// ---------------------------------------------------------------------------
+// The parcels were the only conveyor there was: three 0.17 spheres floating at
+// BEAD_FORWARD = 0.46 in front of a plinth only 0.4 wide — i.e. hanging off the
+// edge of the prop with nothing beneath them, in front of a billboarded flat
+// illustration. There was no deck, no rails, no rollers, no support and no
+// contact darkening, so the machine had no volume to catch light on and the
+// cargo had no surface to belong to.
+//
+// Per docs/REFERENCE_BOARD.md's material/lighting mapping (judge by bevels, PBR
+// response, normal detail, roughness variation, AO, contact shadows), and
+// tiny-glade-02's transferable lesson — "construct every structure from visibly
+// stacked sub-parts so it reads as a physical object, not a stamped box" — the
+// belt is now assembled from real, separately-lit parts: a bevelled wood deck,
+// two painted side rails, two turning end rollers and two cantilever brackets
+// tying it back into the plinth wall. All original geometry, built here.
+
+/**
+ * A bevelled slab: a box whose top and bottom edges are chamfered and whose
+ * vertical corners are rounded, so every silhouette edge catches a highlight
+ * rolloff instead of terminating in a razor line. Uses the same
+ * `createRoundedPrism` machinery the plinths and habitat drums already do.
+ */
+function bevelledSlab(
+  scene: Scene,
+  name: string,
+  halfX: number,
+  halfY: number,
+  halfZ: number,
+  bevel: number,
+): Mesh {
+  const b = Math.min(bevel, halfX * 0.9, halfY * 0.9, halfZ * 0.9);
+  return createRoundedPrism(
+    name,
+    {
+      halfWidth: halfX,
+      halfDepth: halfZ,
+      cornerRadius: Math.min(b * 1.5, halfX, halfZ),
+      radialSegments: 16,
+      rings: [
+        { y: -halfY, inset: b },
+        { y: -halfY + b, inset: 0 },
+        { y: halfY - b, inset: 0 },
+        { y: halfY, inset: b },
+      ],
+    },
+    scene,
+  );
+}
+
+interface BeltRig {
+  /** Root node; belt-local +X is the camera-lateral travel axis, -Z faces the viewer. */
+  root: TransformNode;
+  /** End rollers, each inside its own pivot so it can spin about its own axis. */
+  rollers: TransformNode[];
+}
+
+/**
+ * Builds the conveyor attached to one plinth.
+ *
+ * Everything is authored axis-aligned inside a single node rotated by
+ * `-(GARDEN_CAMERA_ALPHA + PI/2)`, which maps belt-local +X onto the world
+ * camera-lateral axis the parcels already travel along (and belt-local -Z onto
+ * the viewer direction). The garden camera's yaw is never rotated by any input
+ * path, the same invariant the parcel offsets themselves rely on.
+ *
+ * The rollers need a nested node: Babylon's Euler order is Ry·Rx·Rz, so a spin
+ * about the roller's OWN axis cannot be expressed as a fourth term on a mesh
+ * already tilted flat — the pivot carries the fixed tilt, the mesh carries the
+ * turning.
+ */
+function buildBeltRig(scene: Scene, parent: Mesh, name: string, deckMaterial: PBRMetallicRoughnessMaterial, frameMaterial: PBRMetallicRoughnessMaterial): BeltRig {
+  const belt = AUTOMATION_BELT;
+  const root = new TransformNode(`${name}.belt`, scene);
+  root.parent = parent;
+  root.position.set(VIEWER_X * belt.forward, 0, VIEWER_Z * belt.forward);
+  root.rotation.y = -(GARDEN_CAMERA_ALPHA + Math.PI / 2);
+
+  const deckCentreY = belt.topLocalY - belt.thickness / 2;
+
+  const deck = bevelledSlab(scene, `${name}.belt.deck`, belt.halfLength, belt.thickness / 2, belt.halfWidth, 0.02);
+  deck.parent = root;
+  deck.position.y = deckCentreY;
+  deck.material = deckMaterial;
+  deck.isPickable = false;
+
+  for (const side of [-1, 1]) {
+    const rail = bevelledSlab(
+      scene,
+      `${name}.belt.rail.${side > 0 ? 'far' : 'near'}`,
+      belt.halfLength + 0.015,
+      belt.railHeight / 2,
+      belt.railThickness / 2,
+      0.014,
+    );
+    rail.parent = root;
+    rail.position.set(0, belt.topLocalY + belt.railHeight / 2 - 0.018, side * (belt.halfWidth + belt.railThickness / 2 - 0.008));
+    rail.material = frameMaterial;
+    rail.isPickable = false;
+
+    const bracket = bevelledSlab(
+      scene,
+      `${name}.belt.bracket.${side > 0 ? 'far' : 'near'}`,
+      belt.bracketHalfWidth,
+      belt.bracketThickness / 2,
+      belt.forward * 0.42,
+      0.014,
+    );
+    bracket.parent = root;
+    // Runs back along belt-local +Z (away from the viewer) into the plinth wall.
+    bracket.position.set(side * (belt.halfLength * 0.52), deckCentreY - belt.thickness / 2 - 0.012, belt.forward * 0.44);
+    bracket.material = frameMaterial;
+    bracket.isPickable = false;
+  }
+
+  const rollers: TransformNode[] = [];
+  for (const end of [-1, 1]) {
+    const pivot = new TransformNode(`${name}.belt.roller.${end > 0 ? 'out' : 'in'}.pivot`, scene);
+    pivot.parent = root;
+    pivot.position.set(end * belt.halfLength, deckCentreY, 0);
+    pivot.rotation.x = Math.PI / 2; // lays the cylinder's axis across the belt
+    const roller = MeshBuilder.CreateCylinder(
+      `${name}.belt.roller.${end > 0 ? 'out' : 'in'}`,
+      { diameter: belt.rollerRadius * 2, height: belt.halfWidth * 2 + belt.railThickness * 1.6, tessellation: 14 },
+      scene,
+    );
+    roller.parent = pivot;
+    roller.material = frameMaterial;
+    roller.isPickable = false;
+    rollers.push(roller);
+  }
+
+  return { root, rollers };
+}
+
+/**
+ * A soft, radially-fading darkening disc laid just above the ground under a
+ * built site. The cast shadow alone leaves the plinth looking set down next to
+ * the garden rather than into it (the shadow map is soft and directional, so it
+ * does not darken the millimetres directly beneath the foot); this is the
+ * contact-occlusion term that grounds it. Vertex alpha rather than an opacity
+ * texture: no texture fetch, no extra memory, and the falloff is exactly the
+ * geometric one we want.
+ */
+function buildContactPad(scene: Scene, name: string, radius: number, material: PBRMetallicRoughnessMaterial): Mesh {
+  const segments = 28;
+  const positions: number[] = [0, 0, 0];
+  const colors: number[] = [1, 1, 1, 1];
+  const indices: number[] = [];
+  // Two rings: an inner plateau that holds most of the darkness, then a fade
+  // to fully transparent at the rim, so the pad has no visible hard edge.
+  const ringRadii = [radius * 0.55, radius];
+  const ringAlpha = [0.85, 0];
+  for (let ring = 0; ring < ringRadii.length; ring += 1) {
+    for (let col = 0; col <= segments; col += 1) {
+      const angle = (TWO_PI * col) / segments;
+      positions.push(ringRadii[ring] * Math.cos(angle), 0, -ringRadii[ring] * Math.sin(angle));
+      colors.push(1, 1, 1, ringAlpha[ring]);
+    }
+  }
+  const ringStart = (ring: number): number => 1 + ring * (segments + 1);
+  for (let col = 0; col < segments; col += 1) {
+    indices.push(0, ringStart(0) + col + 1, ringStart(0) + col);
+    indices.push(ringStart(0) + col, ringStart(0) + col + 1, ringStart(1) + col);
+    indices.push(ringStart(1) + col, ringStart(0) + col + 1, ringStart(1) + col + 1);
+  }
+  const mesh = new Mesh(name, scene);
+  const data = new VertexData();
+  data.positions = positions;
+  data.indices = indices;
+  data.colors = colors;
+  const normals: number[] = [];
+  VertexData.ComputeNormals(positions, indices, normals);
+  data.normals = normals;
+  data.applyToMesh(mesh);
+  mesh.setVerticesData(VertexBuffer.ColorKind, colors, false, 4);
+  mesh.hasVertexAlpha = true;
+  mesh.material = material;
+  mesh.isPickable = false;
+  mesh.receiveShadows = false;
+  mesh.setEnabled(false);
+  return mesh;
+}
 
 /** Each completed delivery adds this much "recently busy", which then decays. */
 const THROUGHPUT_PER_DELIVERY = 0.34;
@@ -188,6 +430,17 @@ interface SiteMarker {
    * accumulator stays continuous through a speed change.
    */
   beltPhase: number;
+  /**
+   * Current belt speed in phase units per ms, EASED toward its target rather
+   * than assigned. See BELT_RATE_BLEND_MS: `passMs` changes discontinuously on
+   * every boarding, and easing the rate is what keeps the velocity (not just
+   * the position) continuous through that.
+   */
+  beltRate: number;
+  /** The conveyor rig — deck, rails, brackets and the two turning rollers. */
+  belt: BeltRig;
+  /** Soft contact-occlusion disc on the ground under this site. */
+  contactPad: Mesh;
   /** Eased 0..1 weights for the two non-idle states; see ACTIVITY_BLEND_MS. */
   carryBlend: number;
   blockBlend: number;
@@ -249,7 +502,7 @@ export interface AutomationManager {
 /** How far out along world ±X the lane lamps sit from the Gate's centre. */
 const LANE_LAMP_OFFSET = 0.44;
 /** Nudge toward the viewer so a lamp is never lost behind the billboarded card. */
-const LANE_LAMP_FORWARD = 0.3;
+const LANE_LAMP_FORWARD = 0.14;
 const LANE_LAMP_DIAMETER = 0.19;
 /** Tint for a lane nobody is assigned to — a lamp that is simply not lit. */
 const LANE_LAMP_UNSET = new Color3(0.4, 0.44, 0.42);
@@ -305,6 +558,40 @@ function activityOf(site: SiteMarker): SiteActivity {
 export function createAutomationManager(scene: Scene, bus: EventBus, shadowGenerator: ShadowGenerator): AutomationManager {
   const sites = {} as Record<AutomationId, SiteMarker>;
 
+  // Shared across every automation site (there are only three, but this is the
+  // "shared PBR materials, not one texture set per object" rule and it keeps
+  // the belt's four extra sub-meshes per site to two extra materials TOTAL).
+  // Deliberately two different families so the belt is not one uniform
+  // surface: a warm wood-grain deck (rougher, streaked bump) against painted
+  // satin metal rails/rollers/brackets, which is what gives the machine
+  // material contrast at gameplay distance rather than one flat paint job.
+  const deckMaterial = createWoodBodyMaterial(scene, 'terrarium.automation.belt.deck.mat', new Color3(0.42, 0.31, 0.22));
+  const frameMaterial = createPaintedMetalMaterial(scene, 'terrarium.automation.belt.frame.mat', new Color3(0.89, 0.84, 0.72));
+  // A small constant lift on both belt surfaces. The default backend supplies
+  // no environment/IBL term (see src/render/environment.ts, and the metallic
+  // note in pbrMaterials.ts's PAINTED_METAL_RECIPE), so a surface facing away
+  // from the key light has literally nothing filling it — the rails and rollers
+  // measured as near-black in browser QA at the default camera despite a 0.89
+  // paint tint. This is the stylised stand-in for that missing bounce, kept
+  // deliberately low so it lifts the shaded side without flattening the
+  // light-to-shade rolloff the bevels exist to produce.
+  frameMaterial.emissiveColor = new Color3(0.16, 0.15, 0.13);
+  deckMaterial.emissiveColor = new Color3(0.07, 0.055, 0.04);
+  // Deliberately NOT a textured family material: this is an occlusion term, not
+  // a surface. Fully rough and near-black so it contributes no specular sheen
+  // of its own under the key light — it only darkens what is already there.
+  const contactPadMaterial = new PBRMetallicRoughnessMaterial('terrarium.automation.contact.mat', scene);
+  contactPadMaterial.baseColor = new Color3(0.05, 0.04, 0.04);
+  contactPadMaterial.metallic = 0;
+  contactPadMaterial.roughness = 1;
+  contactPadMaterial.alpha = 0.34;
+  // Two-sided on purpose. The pad's disc is hand-built here rather than via
+  // geometry.ts's `discVertexData`, so its winding is not guaranteed to match
+  // the rest of the scene's convention — and a flat ground decal gains nothing
+  // from culling. This removes the entire "invisible from above because the
+  // triangles wound the other way" failure class.
+  contactPadMaterial.backFaceCulling = false;
+
   // 2026-08-01 (manual placement, GameRules §9.8): there is no fixed default
   // site per automationId anymore — the player chooses where each structure
   // stands. Every mesh starts DISABLED at the world origin; markBuilt below
@@ -343,7 +630,17 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     );
     cap.material.alpha = 1;
 
-    const beadLocalY = halfHeight(body) + BEAD_RISE;
+    const belt = buildBeltRig(scene, mesh, `terrarium.automation.${id}`, deckMaterial, frameMaterial);
+    const contactPad = buildContactPad(
+      scene,
+      `terrarium.automation.${id}.contact`,
+      footprintRadius(body) + 0.26,
+      contactPadMaterial,
+    );
+
+    // Parcels ride ON the deck now, instead of floating a fixed distance above
+    // the plinth with nothing under them.
+    const beadLocalY = AUTOMATION_BELT.topLocalY + BEAD_DIAMETER / 2 + AUTOMATION_BELT.loadClearance;
 
     // The procession of parcels on the belt. All parented to the body so the
     // working rock carries them along, and all sharing one material (their
@@ -394,7 +691,12 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       destinationFull: false,
       passMs: DEFAULT_BEAD_PASS_MS,
       throughput: 0,
-      beltPhase: 0,
+      // Staggered per site so three machines standing near each other are not
+      // visibly locked in lockstep.
+      beltPhase: (Object.keys(sites).length * 0.37) % 1,
+      beltRate: BELT_IDLE_RATE,
+      belt,
+      contactPad,
       carryBlend: 0,
       blockBlend: 0,
       beads,
@@ -426,7 +728,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       mesh.isPickable = false;
       mesh.position.set(
         sign * LANE_LAMP_OFFSET + VIEWER_X * LANE_LAMP_FORWARD,
-        gateSite.beadLocalY,
+        halfHeight(AUTOMATION_BODIES.colourGate) + LANE_LAMP_RISE,
         VIEWER_Z * LANE_LAMP_FORWARD,
       );
       const material = createPaintedMetalMaterial(scene, `terrarium.automation.colourGate.lane.${lane}.mat`, LANE_LAMP_UNSET.clone());
@@ -506,8 +808,14 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     const world = tileToWorld(siteTile);
     site.mesh.position.set(world.x, site.baseY, world.z);
     site.mesh.setEnabled(true);
+    // Ground contact: the pad is NOT parented to the plinth, because the plinth
+    // bobs and rocks — a parented pad would sink through the ground on the down
+    // stroke and tilt with the machine, which is exactly the "floating" read it
+    // exists to prevent.
+    site.contactPad.position.set(world.x, 0.012, world.z);
+    site.contactPad.setEnabled(true);
     site.built = true;
-    shadowGenerator.addShadowCaster(site.mesh);
+    shadowGenerator.addShadowCaster(site.mesh); // includes the belt rig's descendants
   };
 
   const unsubscribers = [
@@ -643,11 +951,27 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       if (site.blockBlend < 0.0005) site.blockBlend = 0;
       const idleBlend = Math.max(0, 1 - site.carryBlend - site.blockBlend);
 
-      // The belt keeps turning while the carry weight is still bleeding off, so
-      // it eases to a stop rather than freezing mid-stride.
-      if (ambient > 0 && site.carryBlend > 0) {
-        site.beltPhase += deltaMs / site.passMs;
+      // --- belt speed --------------------------------------------------------
+      // The belt never stops and never jumps. Its RATE is eased between a calm
+      // idle creep and the sim's own ride pace, so:
+      //   * a delivery ending no longer dead-stops the machine (the old
+      //     `carryBlend > 0` gate did exactly that between every ride, which is
+      //     the start/stop hitch the report described);
+      //   * a new ride arriving with a different `passMs` (a speed upgrade, or
+      //     the Colour Gate's second dispatch leg) pulls the belt up to speed
+      //     instead of stepping its velocity mid-stride.
+      const targetRate = BELT_IDLE_RATE + (1 / site.passMs - BELT_IDLE_RATE) * site.carryBlend;
+      site.beltRate += (targetRate - site.beltRate) * (1 - Math.exp(-deltaMs / BELT_RATE_BLEND_MS));
+      if (ambient > 0) {
+        site.beltPhase += deltaMs * site.beltRate;
         if (site.beltPhase >= 1) site.beltPhase -= Math.floor(site.beltPhase);
+      }
+
+      // The end rollers turn with the belt — the one cue that keeps reading as
+      // "this machine is running" once the parcels have gone. Continuous across
+      // the phase wrap because a full turn is 2*PI.
+      for (const roller of site.belt.rollers) {
+        roller.rotation.y = ambient > 0 ? site.beltPhase * TWO_PI : 0;
       }
 
       // --- belt procession ---------------------------------------------------
@@ -664,9 +988,13 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
           if (phase >= 1) phase -= 1;
           const held = ambient > 0 ? phase : (k + 0.5) / site.beads.length; // still but still legible
           const lateral = (held - 0.5) * BEAD_TRAVEL;
-          // sin() reaches exactly 0 at both ends, so a parcel is invisible at
-          // the moment it wraps — no pop, no snap-back.
-          const swell = Math.sin(held * Math.PI) * site.carryBlend;
+          // Still exactly 0 at both ends, so a parcel is invisible at the
+          // moment it wraps — no pop, no snap-back — but now via a short
+          // smoothstep window at each end rather than a full-pass sine, so the
+          // middle of the run holds a steady size and reads as cargo being
+          // CARRIED rather than as a bead pulsing in place.
+          const edge = Math.min(held, 1 - held) / BEAD_FADE_WINDOW;
+          const swell = smoothstep(edge) * site.carryBlend;
           site.beads[k].position.set(
             LATERAL_X * lateral + VIEWER_X * BEAD_FORWARD,
             site.beadLocalY,
@@ -794,8 +1122,12 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     stopReducedMotionWatch();
     clearPreview();
     for (const lamp of Object.values(laneLamps)) lamp.material.dispose(); // meshes are children of the Gate, disposed below
+    deckMaterial.dispose();
+    frameMaterial.dispose();
+    contactPadMaterial.dispose();
     for (const site of Object.values(sites)) {
-      site.mesh.dispose(); // recursively disposes the cap + every bead + lane lamp child mesh too
+      site.contactPad.dispose(); // deliberately unparented (see markBuilt), so not covered below
+      site.mesh.dispose(); // recursively disposes the cap + every bead + the belt rig + lane lamp child mesh too
       site.material.dispose();
       site.bodyMaterial.dispose();
       site.beadMaterial.dispose();

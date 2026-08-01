@@ -323,6 +323,53 @@ material's albedo, which is why they are kept inside a narrow ~0.78–1.28 range
   from the prior StandardMaterial version, same alpha/emissive fields exist
   on PBRMetallicRoughnessMaterial.
 
+### Automation conveyor belt — deck and frame (`src/render/automation.ts`, conveyor pass)
+- Why it exists: the "conveyor" used to be three 0.17 spheres floating at
+  `AUTOMATION_BELT.forward` (0.46) in front of a plinth only 0.4 wide — off
+  the edge of the prop, unsupported, with a billboarded flat illustration
+  behind them. There was no deck, rails, rollers, brackets or contact
+  darkening, so the machine had no volume to catch light on. Player report:
+  "conveyors also look very flat."
+- Geometry (all original, built in `automation.ts` from
+  `createRoundedPrism` / `MeshBuilder.CreateCylinder`, dimensions in
+  `propDims.ts`'s new `AUTOMATION_BELT`): bevelled wood deck, two painted
+  side rails, two turning end rollers, two cantilever brackets back into the
+  plinth wall — visibly stacked sub-parts rather than one stamped box
+  (`docs/references/tiny-glade/tactile-geometry/tiny-glade-02.md`).
+  Everything is authored axis-aligned inside one `TransformNode` at
+  `rotation.y = -(GARDEN_CAMERA_ALPHA + PI/2)`, which maps belt-local +X onto
+  the camera-lateral travel axis and -Z toward the viewer. Rollers need a
+  nested pivot (`pivot.rotation.x = PI/2`, then `roller.rotation.y = spin`)
+  because Babylon's Euler order is Ry·Rx·Rz and the spin has to be innermost.
+- Two DIFFERENT families deliberately, so the belt is not one uniform
+  surface: `createWoodBodyMaterial` for the deck (rougher, streaked grain,
+  tint 0.42/0.31/0.22) against `createPaintedMetalMaterial` for
+  rails/rollers/brackets (satin, tint 0.89/0.84/0.72). Material contrast at
+  gameplay distance, not one flat paint job.
+- Both carry a small constant `emissiveColor` lift (frame 0.16/0.15/0.13,
+  deck 0.07/0.055/0.04). This is a stylised stand-in for the missing
+  environment bounce: the default backend supplies no IBL term (see the
+  known-limitation section below), so a surface facing away from the key
+  light has nothing filling it — browser QA measured the rails and rollers
+  reading as near-black at the default camera despite a 0.89 paint tint.
+  Kept low so it lifts the shaded side without flattening the light-to-shade
+  rolloff the bevels exist to produce.
+- Performance: THREE materials total for all automation belts (deck, frame,
+  contact pad), shared across every site — not one per site. About 700
+  triangles of belt per site.
+
+### Automation contact pad (`src/render/automation.ts`, conveyor pass)
+- Physical character: an occlusion term, not a surface. A two-ring disc with
+  vertex alpha (0.85 at the inner plateau, 0 at the rim), near-black,
+  `roughness` 1, `metallic` 0, `alpha` 0.34, deliberately NOT built from a
+  texture family so it contributes no specular sheen of its own.
+- Why: the cast shadow is soft and directional, so it does not darken the
+  millimetres directly beneath the plinth's foot — the structure read as set
+  down NEXT to the garden rather than into it.
+- Deliberately NOT parented to the plinth: the plinth bobs and rocks, and a
+  parented pad would sink through the ground on the down stroke and tilt with
+  the machine, which is exactly the floating read it exists to prevent.
+
 ### Scenery: instanced stone (`createSceneryStoneMaterial`, `src/render/world.ts`)
 
 Pebbles, boulders, kerb blocks and basin rim stones — every stone in the

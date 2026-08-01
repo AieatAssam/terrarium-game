@@ -447,6 +447,305 @@ completed:
 # In flight — uncommitted work in the tree RIGHT NOW
 # ---------------------------------------------------------------------------
 in_flight:
+  - owner: claude session 2026-08-01 (conveyor jerk + flatness pass) [subagent]
+    files: >
+      MINE, do not commit or "fix" without asking: src/render/automation.ts,
+      src/render/propDims.ts (ADDITIVE only — new AUTOMATION_BELT export; I
+      deliberately did NOT touch AUTOMATION_BODY height/centreY because
+      automationSiteTopY() feeds sprouts.ts's SPROUT_RIDE_HEIGHT, which
+      another agent is editing right now). Scratch harness lives in the
+      session scratchpad, not in tests/.
+    task: >
+      User report: "conveyor animations are jerking and not looping smoothly.
+      conveyors also look very flat."
+    status: >
+      IN PROGRESS. DIAGNOSIS (the expensive part, recorded before edits):
+        JERK — three mechanisms, all in automation.ts's activityObserver.
+         1. PRIMARY: line 648 gates the belt phase advance on
+            `carryBlend > 0`, so the belt only turns DURING a ride. Rides are
+            short and intermittent, so the conveyor visibly spins up, runs,
+            spins down and dead-stops between every delivery. That start/stop
+            cadence is the "not looping smoothly".
+         2. line 563 reassigns passMs on every transportStarted. The
+            accumulator keeps POSITION continuous (the file's own comment is
+            right about that) but d(phase)/dt steps instantly — a velocity
+            hitch. Worst case is the Colour Gate's documented two-leg
+            dispatch: leg 1 completes (belt spins down), leg 2 starts at a
+            different passMs (belt jumps speed) mid-journey.
+         3. line 669 `swell = sin(held*PI)` makes every bead grow from and
+            shrink to nothing across its pass, so the procession reads as
+            PULSING rather than travelling.
+        RULED OUT (negative findings, don't re-derive):
+         * The wrap point itself is NOT the jerk. `lateral` does teleport
+           +0.39 -> -0.39 at phase wrap, but sin(held*PI) is exactly 0 there,
+           so it is invisible. The existing anti-jerk comment is correct.
+         * A ride refcount is NOT needed. src/sim/systems.ts:764
+           (`if (instance.carryingSproutId) return decline('busy')`) plus
+           systems.ts:602/646 prove one ride at a time per instance, so the
+           boolean `carrying` cannot be clobbered by an overlapping ride.
+        FLAT — the "conveyor" is not modelled at all. It is 3 spheres of
+        diameter 0.17 floating at BEAD_FORWARD = 0.46 in front of a plinth of
+        halfWidth 0.4 — i.e. off the edge of the prop, unsupported, with a
+        billboarded flat illustration card behind them and no deck, rails,
+        rollers, brackets or contact darkening anywhere.
+      FIX BEING IMPLEMENTED: continuous eased belt RATE (idle creep ->
+      carry speed, beads still gated on carryBlend so idle/carrying/blocked
+      stay distinguishable and the e2e "an idle Slide runs no belt" bead-
+      enabled assertion still holds); windowed bead fade instead of the sine
+      pulse; real belt geometry (bevelled wood deck, painted rails, spinning
+      end rollers, cantilever brackets) inside one TransformNode rotated
+      rotation.y = -(GARDEN_CAMERA_ALPHA + PI/2) so belt-local +X is the
+      camera-lateral travel axis and -Z is toward the viewer; plus a soft
+      vertex-alpha contact pad under each site.
+      DONE. typecheck + lint + 321 unit tests + build ALL PASS. Browser-
+      verified with a standalone headed Playwright harness (kept in the
+      session scratchpad; NOT added to tests/). Evidence in
+      docs/qa-screenshots/conveyor/{before,after}/ — matched A/B captured by
+      the same harness, with my two files git-checkout'd back to HEAD for the
+      "before" pass and restored afterwards (no `git stash`: another agent
+      has uncommitted work in the same tree).
+      MEASURED: worst frame-to-frame parcel SPEED change, as a fraction of
+      median speed, across a scripted ride(2100ms) -> gap -> ride(900ms)
+      sequence at a real 60fps: BEFORE 0.50/0.57 over two runs, AFTER
+      0.20/0.21/0.27 over three. Zero console errors from the change (the one
+      404 logged is pre-existing and present in the before run too).
+      Reduced motion re-verified: with data-reduced-motion='true' the parcel
+      moved 0.000 world units over 900ms in both before and after.
+      ALL THREE automations were then built and photographed together
+      (04-all-three-automations.png, 05-colourGate-closeup.png,
+      05-moodBell-closeup.png). That caught a real regression the Garden
+      Slide alone could not: the Colour Gate's west lane lamp sat inside the
+      new belt's intake end, where a lit lamp and a piece of cargo are the
+      two things that must not be confused (GameRules §9.4). Fixed by moving
+      the lamps up and back (LANE_LAMP_RISE 0.12 -> 0.2, LANE_LAMP_FORWARD
+      0.3 -> 0.14) and re-shot; they now read clearly above the deck line.
+      Contact pad: made two-sided (backFaceCulling=false) rather than trust
+      a hand-wound disc's winding — it is a flat ground decal and culling
+      bought nothing. Confirmed live: isReallyVisible true, in frustum,
+      alpha-blending on, sitting at y=0.012 spanning 7.28..8.72 under the
+      site. NOT visually isolated in a screenshot, and it is largely
+      occluded by the plinth's own billboarded standee card at the default
+      camera — do not credit it with much of the material-richness score.
+      NOT VERIFIED, stated honestly: no narrow-mobile-viewport pass.
+      OBSERVED, NOT MINE: the Mood Bell's structure standee renders as a
+      BLANK tan rectangle (05-moodBell-closeup.png) — a missing/fallback
+      illustration in the flatArt/assets manifest path, not the belt. There
+      is also a single pre-existing 404 on the page (present identically in
+      the before run); a response-status listener did not capture its URL,
+      so it remains unidentified.
+      REMAINING, NOT MINE TO FIX: the largest single "flat" contributor left
+      is the structure's billboarded illustration standee (src/render/
+      flatArt.ts), which reads as a shapeless pale card behind the new belt.
+      That file was outside this task's stated scope.
+      GOTCHA CONFIRMED, cost the previous agent time too: this sandbox
+      resolves reduced motion to TRUE by default, so `ambient` starts at 0
+      and the belt is frozen in any naive screenshot. The harness must set
+      `document.documentElement.setAttribute('data-reduced-motion','false')`
+      (motion.ts's attribute beats the media query and a MutationObserver
+      picks it up live) AND launch the context with
+      reducedMotion: 'no-preference'.
+  - owner: claude session 2026-08-01 (first-session settle-loop feel pass)
+    files: >
+      MINE, uncommitted — do not "fix" or commit these from another session:
+      src/render/sprouts.ts, src/render/index.ts, src/render/camera.ts,
+      src/render/particles.ts, src/input/index.ts, src/sim/state.ts,
+      src/data/spawning.ts, tests/e2e/settleFeel.dev.spec.ts (new),
+      tests/unit/sim.systems.test.ts, tests/unit/render.sproutHeights.test.ts,
+      tests/e2e/preview.preview.spec.ts, docs/visual-qa/improvement-log.md
+      (new), docs/qa-screenshots/settle-loop/** (new).
+      NOT MINE: src/render/automation.ts is owned by a concurrently running
+      visual-fidelity-artist subagent (conveyor jerk + flatness, user-reported
+      mid-session). Its scope was explicitly restricted to that file so the
+      two edit sets cannot collide. Expect transient typecheck failures in
+      automation.ts while it works — those are not from this entry.
+    task: >
+      Make the first-session Notice->Guide->Settle beat feel good. Requested
+      with the REFERENCE_BOARD protocol (read refs, diagnose, <=3 changes,
+      measurable acceptance criteria, clean-save browser test, before/after
+      shots, rubric score >=4 on creature appeal / reward feedback /
+      interaction clarity).
+    status: >
+      IN PROGRESS — diagnosis done, no code edited yet.
+      BLOCKER FOUND AND RESOLVED: docs/references/ does not exist. Both the
+      request and docs/REFERENCE_BOARD.md §"Reference use protocol" assume a
+      curated docs/references/<game>/<category>/ tree with adjacent .md
+      notes, but only docs/reference-candidates/ (untracked, and explicitly
+      NOT approved guidance per CLAUDE.md) plus
+      docs/reference-reviews/classification.json ever landed. The accept
+      decisions, per-image visibleEvidence, tinyTerrariumLesson and
+      doNotCopy text all live in classification.json — so the promotion
+      step is the only missing pipeline stage. Promoting the subset this
+      task needs (creature-readability, reward-feedback,
+      creature-personality) rather than the whole 27-image board.
+      DIAGNOSIS (expensive to redo — this is the useful part): GameRules
+      §5.3 names six settle-feedback channels. Audited each against code:
+        1. Sprout happy animation — PRESENT BUT INERT. setState() (src/
+           render/sprouts.ts:646) only swaps the material texture; there is
+           no scale pop, hop, squash or any motion at all. And
+           'happy' is overwritten by 'settled' in the same event batch
+           (placed:correct then settled), which maps back to the same
+           'happy' texture — so a correct settle is literally a still image
+           change.
+        2. Habitat reaction — DEAD CODE. habitats.ts exports reactCorrect/
+           reactIncorrect (glow pulse + scale bump + 28-particle burst at
+           the drum top face + a Dew Pond ripple ring, all already written
+           and already bug-fixed once per ART_QA_REPORT.md:526) and
+           NOTHING IN src/ CALLS EITHER ONE. Verified by repo-wide grep:
+           the only hits are the declaration, the definition, the handle
+           return, and two doc mentions. This is the single largest gap and
+           the cheapest fix in the whole loop.
+        3. Particles — partial: a 20-count sparkle at the SPROUT only
+           (sprouts.ts:883). The richer habitat-side burst is inside the
+           dead reactCorrect.
+        4. SFX — present (audio/system.ts:111 playPlacementCorrect).
+        5. Dewdrop reward — NOT VISIBLE IN WORLD. No grant on settle at
+           all; dewdrops accrue only via habitat:dewdropTick, and NOTHING
+           in src/render or src/ui subscribes to that event — it moves a
+           HUD number and nothing else. So "correct placement only changes
+           a number", which REFERENCE_BOARD.md lists as an explicit
+           non-negotiable failure condition.
+        6. Journal acknowledgement — journal:entryDiscovered fires and
+           silently mutates a panel; no toast/ack. (GameRules calls this
+           one optional.)
+      So 2 of 6 channels are absent and 2 more are inert/invisible. That is
+      the "feels flat" cause, and it is mostly wiring, not new design.
+      LIVE EVIDENCE (Playwright, unthrottled — see the tooling gotcha below)
+      changed the priority order and found a bigger problem than any of the
+      six channels:
+        A. A SPROUT IS ~20x22 CSS PIXELS at the default camera. Captured in
+           docs/qa-screenshots/settle-loop/before/02-sprout-waiting.png and
+           confirmed by a nearest-neighbour zoom crop: the Ember Sprout is a
+           fuzzy orange speck beside the Nursery mound, no contact shadow, no
+           readable face. SPROUT_SPRITE_SIZE is 0.7 world units
+           (src/render/sprouts.ts:58). Against the promoted references
+           (ooblets-04, slime-rancher-2-01) whose creatures fill 15-30% of
+           frame height with a readable face and a grounded shadow, this
+           scores 1-2/5 on creature appeal. No amount of settle-feedback
+           polish fixes a loop whose protagonist is a smudge.
+        B. FIRST FIVE SECONDS ARE AN EMPTY GARDEN. Verified two ways:
+           01-first-five-seconds.png shows no Sprout and no pod activity
+           while the onboarding banner says "Drag a Sprout to its glowing
+           home", and in source createInitialState sets spawnAccumulatorMs:0
+           (src/sim/state.ts:122) against BASE_POD_SPAWN_INTERVAL_MS of
+           12_000 — so a clean save waits a full 12s with nothing to do.
+           GameRules §6.1 requires a Sprout in the first five seconds.
+        C. The scripted drag MISSED the Sprout and panned the camera instead
+           (03-hovering-target.png shows the world dragged away, no pick).
+           SPROUT_PICK_RADIUS is 0.55 against a 0.7 sprite. This is the
+           `missed-pick-falls-through-to-pan` open_question, reproduced, and
+           it is downstream of (A): a 20px target is hard to hit on purpose.
+        D. Minor: the "sleepy" mood badge is an untextured grey-blue BOX
+           (sprouts.ts:704) floating beside the Sprout. At 20px Sprout size
+           it reads as a missing-texture artifact, not a mood cue.
+      GOTCHA (expensive, cost ~30min): THE IN-APP BROWSER PANE CANNOT RUN
+      THIS GAME. Its tab reports document.hidden === true and rAF is
+      throttled to ~0.3 fps. src/render/visibility.ts stops the render loop
+      when hidden, and overriding document.hidden + dispatching
+      visibilitychange re-registers the loop but does NOT restore rAF — the
+      throttle is at the pane level. Because src/sim/loop.ts derives tick
+      counts from rAF deltas, the SIMULATION IS FROZEN there: nothing
+      spawns, no animation advances, and any screenshot is of a stopped
+      game. `window.__debug` exposes no scene handle, so manual
+      scene.render() pumping is not available either. Claude in Chrome was
+      also unreachable this session ("extension isn't connected"). USE
+      PLAYWRIGHT for anything timing- or animation-dependent:
+      tests/e2e/settleFeel.dev.spec.ts is written as a reusable
+      evidence-capture harness (SETTLE_PHASE=before|after env var writes to
+      docs/qa-screenshots/settle-loop/<phase>/).
+      SHIPPED (typecheck/lint/unit all green; full write-up with before/after
+      numbers and rubric scores in docs/visual-qa/improvement-log.md):
+        1. Creature presence — SPROUT_SPRITE_SIZE 0.70->0.95, camera
+           DEFAULT_RADIUS 19->15, a per-Sprout ground contact shadow that
+           tightens/darkens on descent, and SPROUT_PICK_RADIUS now DERIVED
+           from the sprite half-width (it was a stale independent 0.55, which
+           after the resize would have made the hitbox smaller than the art).
+           Measured: billboard height 79.2px, up from ~46px.
+        2. Settle payoff — wired the dead reactCorrect/reactIncorrect in
+           src/render/index.ts (the only scope holding BOTH the habitats
+           handle and the resolved MotionConfig; that is why it is not inside
+           habitats.ts), added a squash-then-overshoot cheer on the Sprout,
+           and added a world-space Dewdrop mote on habitat:dewdropTick.
+           Measured: peak habitat scale during a correct settle 1.000 -> 1.119.
+        3. The opening — createInitialSimState seeds spawnAccumulatorMs with
+           INITIAL_SPAWN_ACCUMULATOR_MS so a fresh garden's first pod opens
+           ~2s in, not 12s. Measured: Sprouts on screen within 5s, 0 -> 1.
+      ALSO FIXED (user report mid-session, "momentary square block when
+      selecting sprouts"): createManifestMaterial starts a material at a flat
+      fallback colour with NO baseTexture and fills it from an ASYNC callback,
+      so a material created at the moment it is first SHOWN draws one or more
+      frames as an opaque coloured rectangle. The three drag-tint variants
+      were created lazily on the FIRST pick-up of each (type, validity) pair —
+      mid-gesture, under the cursor — which is exactly why the flash was real
+      but "only occasional" (once per pair per session). Fix: a new material
+      adopts an already-resolved sibling's texture synchronously, and spawn()
+      pre-warms every material a species will need during the reveal. Same
+      bug class as the note already at src/render/assets.ts:320.
+      PRE-EXISTING FAILURE, NOT CAUSED BY THIS WORK — worth knowing before
+      anyone blames a change: `npx playwright test --project=dev` has 18
+      failures and 9 passes ON UNMODIFIED CODE. Verified by `git stash`ing
+      every local change and re-running. The common thread is that the
+      pointer-drag helpers no longer pick a Sprout and fall through to a
+      camera pan (placement.dev.spec.ts, manualDrop, persistence, moodBell,
+      automation all depend on that path). Real players CAN pick Sprouts up —
+      the user's own square-flash report is evidence of that — so this is
+      harness-side, not a broken game. It is why settleFeel.dev.spec.ts
+      drives its drop through `emitDropped` (the same sprout:dropped the
+      pointer path emits) instead of a real drag. FIXING THIS IS THE HIGHEST
+      PRIORITY LOOSE END: it currently leaves the game's single most important
+      interaction with no pointer-level regression coverage.
+      GARDEN PATH PASS (same session, second user report): "chevrons do not
+      loop smoothly / not evenly distributed / visible jerk" and "conveyor
+      belts remain flat on the ground, look painted on rather than placed on
+      the terrain". NOTE this is the PATH network (src/render/world.ts +
+      createPathFlowMaterial in pbrMaterials.ts), NOT the automation
+      structures — the credits call these "path-conveyor chevrons" and the two
+      systems are unrelated; do not confuse them again.
+        JERK ROOT CAUSE (one line, and the "uneven spacing" was a red herring):
+        advance() wrapped uOffset on 1/CHEVRONS_PER_TILE (0.5). Babylon
+        composes UVs as `u = u0 * uScale + uOffset`, so uOffset is measured in
+        WHOLE TEXTURE PERIODS no matter what uScale is — one chevron is 1.0 of
+        uOffset. Wrapping at 0.5 snapped the whole march back by half a
+        chevron every cycle. The spacing was always uniform (each half-tile
+        flow quad shows exactly CHEVRONS_PER_TILE whole periods, so it is even
+        across tiles AND around corners); what looked like uneven distribution
+        was that half-step jump twice a second. Fixed by wrapping on 1.
+        Side effect worth knowing: the march is now genuinely
+        PATH_FLOW_SPEED chevrons/sec, i.e. 2x the old rate — the old constant's
+        own doc comment had always CLAIMED that rate and the code delivered
+        half of it.
+        VERTICALITY: the whole network was CreateGround quads at y=0.01 — zero
+        thickness, no lit side faces, no contact shadow, so "painted on" was
+        literally accurate. Added a raised stone bed (PATH_BED_HEIGHT 0.075)
+        built from the SAME half-tile `flowSegments` the flow overlay uses, so
+        it follows the tread band and bends round corners instead of stamping
+        a square plinth per tile. Measured live: 44 bed meshes, min height
+        0.075, top face y 0.073. Tread quad moved from y=0.01 to PATH_TOP_Y;
+        bed top is nudged 0.002 BELOW it so the two can never z-fight.
+        FOLLOW-UP BUG in that same bed work, reported by the player and real:
+        "outer corner of 90 degree bend misses curb". Each half-tile bed spans
+        from the tile CENTRE outward along its own arm, so on a bend the
+        quadrant behind BOTH arms — the outer corner of the turn — was covered
+        by neither, while the tread art DOES run through it (the band's two
+        outer edges meet there). Fix: one `across x across` hub box at each
+        tile centre, which closes corners, junctions and straights at once and
+        cannot protrude because `across` is exactly the width the arms already
+        occupy. Skipped when flowSegments.length < 2 (a single-arm terminus,
+        where half the hub would stick out past the tread's end into soil).
+        Bed meshes 44 -> 65. If you add a new path piece type, remember the
+        hub is keyed off segment COUNT, not piece type.
+        NOT VERIFIED: that the jerk is gone IN MOTION. A wrap discontinuity is
+        a motion artifact and Playwright screenshots are not timed finely
+        enough to catch it frame-to-frame; the fix rests on the uOffset
+        semantics plus a captured march sequence
+        (tests/e2e/pathFlow.dev.spec.ts writes docs/qa-screenshots/path/).
+        Wants a human eye in play before calling it closed.
+      GOTCHA for anyone writing e2e around spawns: `debugSpawnAndGetId` pops
+      the LAST spawn id, and the Nursery pod keeps spawning throughout — a
+      natural dew/sun Sprout landing in the same moment silently hands back
+      the wrong id, the drop is adjudicated as a MISmatch, and the spec fails
+      for a reason unrelated to what it tests (observed as peakHabitatScale
+      1.002, the incorrect-placement wobble, instead of 1.119). Select the id
+      from recorded bus traffic filtered by sproutType instead.
   - owner: claude session 2026-08-01 (Mood Bell — Phase 2 first feature)
     files: see plan.yaml (repo root) — the authoritative, detailed,
       phase-by-phase plan. THIS entry is deliberately a lightweight STATUS
