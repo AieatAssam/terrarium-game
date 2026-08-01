@@ -242,6 +242,15 @@ condition (see "Income & affordability" below — affording it lands around
 minute 9, so the behavioral condition is the binding constraint, not the
 price).
 
+**Mood Bell's unlock (2026-08-01) is simpler still**: both Garden Slide and
+Colour Gate must already exist (`requiresGardenSlideBuilt` and
+`requiresColourGateBuilt`, `src/data/unlocks.ts`) — no tick/pile condition,
+since "you've mastered single-route and dual-route routing" is itself the
+felt milestone this time. Its 1500-Dewdrop cost is the binding constraint by
+construction (the behavioral gate is satisfied the instant the Gate is), and
+is a first-pass estimate not yet checked against real play at this stage of
+progression the way the earlier values were.
+
 ### Garden topology: the trunk and the fork
 
 The Colour Gate needs somewhere to *be* a gate. The first layout gave each
@@ -262,7 +271,7 @@ The garden now has a short shared **trunk** ending in a real **fork**:
                                         |
                                 [ GARDEN SLIDE 8,7 ]
                                         |
-                                  Nursery (8,8)
+                                  Nursery (8,8)--[ MOOD BELL 9,8 ]
                                         |
                                 (8,9) ... (8,12)
                                         |
@@ -298,6 +307,13 @@ Why this shape:
   waiting area (see `planRide`'s doc comment in `src/sim/systems.ts`); the
   Meadow path was only ever narrated that way, not functionally load-bearing
   for it.
+- **The Mood Bell's structure stands on a short spur east of the Nursery
+  (9,8), added 2026-08-01.** Same precedent as the Slide's own site tile: no
+  ride ever travels through it. A Bell delivery rides Nursery -> whichever
+  habitat the boarded Sprout's own type wants, reusing the exact same path
+  network the Slide and Gate already use for all 3 habitats — the spur
+  exists purely so the structure has somewhere to stand on the path network
+  (§9.2), not because any ride needs it.
 - **Travelling through the Gate is free.** `tileDistance(Nursery, Gate) +
   tileDistance(Gate, home)` equals `tileDistance(Nursery, home)` (2 + 6 = 8) for
   both northern homes, so a Gate delivery takes the same time as the old direct
@@ -337,6 +353,59 @@ and re-checked every tick so it moves on by itself the moment the way is clear.
 A newly built Gate opens with the safe recommended rule (Ember west, Dew east)
 per §9.1, so it works immediately rather than arriving blank and reading as
 broken.
+
+### The Mood Bell's rule (2026-08-01, Phase 2's first feature)
+
+**"A helper that reads whether a Sprout is Sunny or Sleepy and carries a whole
+mood's worth of them straight home — of any colour."** (§9.5 names "Mood Bell"
+explicitly among Routing helpers; §7.3 names "mood" as a future Sprout trait;
+§9.6 stage 4 is "multi-attribute routes" — Phase 1 only reached stage 3.)
+
+Every Sprout now carries a second, independent attribute, mood (`sunny` |
+`sleepy`), assigned at spawn via its own RNG draw — completely orthogonal to
+colour/type. Mood never changes which habitat is correct for a Sprout; it only
+changes who carries it there.
+
+The Bell's control is simpler than the Gate's: one toggle, not a 2-lane map —
+Sunny or Sleepy, chosen with one tap. Whichever mood is chosen, ANY idle
+Sprout of that mood boards and rides in a single leg straight to **its own**
+correct habitat, computed from its type (unlike the Garden Slide's one fixed
+destination). Delivery is always correct by construction, so unlike a Gate
+lane the player could point at the wrong home, there is no per-choice
+mismatch note to show.
+
+**Building the Bell changes what the Slide and Gate do.** This is the part
+worth being explicit about, because it is a real behavior change to two
+automations the player already understands, not a hidden priority quirk:
+once the Bell exists, a Sprout matching its current mood is excluded from
+the Garden Slide's and Colour Gate's own Nursery-pickup eligibility — it is
+the Bell's, full stop, regardless of which automation's `planRide` checks
+first on a given tick. Without this exclusion, the Slide/Gate (checked
+earlier in the tick's dispatch order) would keep taking any Sprout they are
+independently eligible for, and the Bell — built later, with nothing
+reserved for it — would visibly do nothing for its cost. `isMoodBellClaimed`
+in `src/sim/systems.ts` is this partition; see its own doc comment for the
+mechanics. A Sprout already mid-journey at the Gate's signpost when the
+partition applies to its mood keeps going — only a *fresh* Nursery pickup is
+ever redirected.
+
+Unlock is behavioral, simpler than the Gate's: both the Garden Slide and
+Colour Gate must already be built (no tick/pile condition needed — "you've
+mastered single-route and dual-route routing" is itself the milestone).
+Cost: `moodBellUnlock`, flat 1500 Dewdrops — roughly 2x the Gate's 700,
+continuing the escalating per-automation cost pattern; a first-pass estimate
+like every other balance value in this doc, not yet playtested at real
+scale. The Bell excludes Star Sprouts from delivery, same reason the Gate
+does (no single correct habitat — automating it away would rob the rare-
+reveal moment, §6.5/§7.2). A newly built Bell opens with the safe default
+rule (`sunny`), same §9.1 reasoning as the Gate's own default lanes.
+
+Visually, mood is a small additive badge (a sphere for Sunny, a box for
+Sleepy — shape carries the distinction, not colour alone, §7.1) parented to
+each Sprout's sprite, deliberately NOT folded into the existing (sproutType
+× visual-state) shared-material cache (`src/render/sprouts.ts`) — a second
+multiplicative dimension there would multiply the texture/material count for
+no reason, since a badge's appearance depends on mood alone.
 
 ### Nursery rhythm: why Sprouts stop accumulating
 
@@ -429,7 +498,7 @@ the cheap end of this claim (level-1 costs reachable against a conservative,
 low settled-Sprout estimate at the 4.5-minute mark) directly against the live
 `baseDewdropRate` constant, independent of this doc's projection.
 
-### Six upgrades
+### Seven upgrades
 
 | id | effect | maxLevel | cost curve (per level) |
 |---|---|---|---|
@@ -439,6 +508,7 @@ low settled-Sprout estimate at the 4.5-minute mark) directly against the live
 | `dewdropMultiplier` | +15% Dewdrop income per level (additive to 1.0 base) | 3 | 130, 275, 575 |
 | `decorativeExpansion1` | unlocks first cosmetic scenery set | 1 | 120 |
 | `colourGateUnlock` | builds the Colour Gate automation | 1 | 700 |
+| `moodBellUnlock` | builds the Mood Bell automation (2026-08-01) | 1 | 1500 |
 
 All multi-level curves are geometric (`cost = base × growth^(level-1)`,
 rounded to the nearest 5) so each level costs noticeably more than the last;
@@ -603,6 +673,12 @@ Explicitly not built, not planned, and not implied by anything above:
   whatever tests currently assert "no additional automations" as a
   boundary. The 8 locked Journal slots were always visibly Phase 2+ content,
   present but not yet implemented or mechanically hinted at.
+
+  **The Mood Bell (2026-08-01) is the first concrete feature realizing this
+  lift** — see "The Mood Bell's rule" above. `docs/CONTRACTS.md`'s
+  `AutomationId` now includes `'moodBell'` and a `MoodId` union exists
+  alongside `SproutTypeId` (mood is a second, orthogonal attribute, never a
+  fourth Sprout type).
 - **No per-habitat upgrade instances.** `habitatCapacity` and
   `dewdropMultiplier` apply uniformly across all three habitats; there is no
   "upgrade Ember Nook specifically" path in Phase 1.

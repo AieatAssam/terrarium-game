@@ -40,16 +40,19 @@ export interface BuildMenuHandle {
 const AUTOMATION_LABEL: Record<AutomationId, string> = {
   gardenSlide: 'Garden Slide',
   colourGate: 'Colour Gate',
+  moodBell: 'Mood Bell',
 };
 
 const AUTOMATION_ICON: Record<AutomationId, keyof typeof icons> = {
   gardenSlide: 'gardenSlide',
   colourGate: 'colourGate',
+  moodBell: 'moodBell',
 };
 
 const AUTOMATION_MANIFEST_KEY: Record<AutomationId, string> = {
   gardenSlide: 'ui.icon.gardenSlide',
   colourGate: 'ui.icon.colourGate',
+  moodBell: 'ui.icon.moodBell',
 };
 
 export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: BuildMenuHooks = {}): BuildMenuHandle {

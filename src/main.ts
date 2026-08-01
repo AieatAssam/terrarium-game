@@ -59,6 +59,10 @@ const ui = mountUI(document.body, bus, {
   onSetColourGateLane: (lane, sproutType) => {
     void simRuntimePromise.then((sim) => sim.setColourGateLane(lane, sproutType));
   },
+  // The Mood Bell's single rule. Same shape as onSetColourGateLane above.
+  onSetMoodBellRule: (mood) => {
+    void simRuntimePromise.then((sim) => sim.setMoodBellRule(mood));
+  },
   debug: {
     spawnSprout: (sproutType) => {
       void simRuntimePromise.then((sim) => sim.debug.spawnSprout(sproutType));

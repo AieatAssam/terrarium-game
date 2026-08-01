@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   BASE_POD_SPAWN_INTERVAL_MS,
   getPodSpawnIntervalMs,
+  pickMood,
   pickSproutType,
   SPAWN_WEIGHTS,
   STAR_SPROUT_SPAWN_CHANCE,
 } from '../../src/data/spawning';
 import { UNLOCK_THRESHOLDS } from '../../src/data/unlocks';
+import { nextRandom } from '../../src/sim/rng';
+import type { MoodId, SproutTypeId } from '../../src/core/ids';
 
 describe('spawn weights', () => {
   it('sum to exactly 1', () => {
@@ -29,6 +32,48 @@ describe('pickSproutType', () => {
     expect(pickSproutType(SPAWN_WEIGHTS.ember + SPAWN_WEIGHTS.dew + 0.0001)).toBe('sun');
     expect(pickSproutType(1 - STAR_SPROUT_SPAWN_CHANCE / 2)).toBe('star');
     expect(pickSproutType(0.999999)).toBe('star');
+  });
+});
+
+describe('pickMood', () => {
+  it('is a deterministic 50/50 split', () => {
+    expect(pickMood(0)).toBe('sunny');
+    expect(pickMood(0.4999)).toBe('sunny');
+    expect(pickMood(0.5)).toBe('sleepy');
+    expect(pickMood(0.999999)).toBe('sleepy');
+  });
+
+  it('is uncorrelated with sproutType across a seeded run — mood must use its own RNG draw, never reuse the type roll', () => {
+    // Regression guard for the exact bug an advisor review of this feature
+    // flagged: if pickMood were ever called with the SAME random01 that
+    // produced the type (instead of its own independent nextRandom draw),
+    // mood would become a pure function of type — e.g. ember always sunny —
+    // and the Mood Bell could never carry a mixed set of types. Two
+    // INDEPENDENT successive nextRandom draws per iteration, matching how
+    // spawnSystem must call these (see src/sim/systems.ts).
+    let seed = 12345;
+    const seenMoodsByType = new Map<SproutTypeId, Set<MoodId>>();
+    for (let i = 0; i < 200; i += 1) {
+      const typeRoll = nextRandom(seed);
+      seed = typeRoll.nextSeed;
+      const moodRoll = nextRandom(seed);
+      seed = moodRoll.nextSeed;
+
+      const type = pickSproutType(typeRoll.value);
+      const mood = pickMood(moodRoll.value);
+      const seen = seenMoodsByType.get(type) ?? new Set<MoodId>();
+      seen.add(mood);
+      seenMoodsByType.set(type, seen);
+    }
+
+    // Every common type seen should have shown up with BOTH moods at least
+    // once in 200 iterations — if a type only ever produced one mood, mood
+    // is almost certainly derived from (or correlated with) type rather
+    // than independent of it.
+    for (const [type, moods] of seenMoodsByType) {
+      if (type === 'star') continue; // rare enough that 200 iterations may not sample both moods
+      expect(moods.size, `sproutType "${type}" only ever produced mood(s): ${[...moods].join(', ')}`).toBe(2);
+    }
   });
 });
 

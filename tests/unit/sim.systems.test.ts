@@ -35,7 +35,10 @@ const CAP = HABITATS.emberNook.baseCapacity;
 function withSprout(state: SimState, sproutType: 'ember' | 'dew' | 'sun' | 'star', overrides: Partial<SimState['sprouts'][number]> = {}) {
   return {
     ...state,
-    sprouts: [...state.sprouts, { id: 'test-sprout', sproutType, tile: NURSERY_TILE, state: 'idle' as const, ...overrides }],
+    sprouts: [
+      ...state.sprouts,
+      { id: 'test-sprout', sproutType, mood: 'sunny' as const, tile: NURSERY_TILE, state: 'idle' as const, ...overrides },
+    ],
   };
 }
 
@@ -594,9 +597,13 @@ describe('checkAchievements', () => {
 
   it('only unlocks firstRareSprout for a star spawn, not a common one', () => {
     const state = createInitialSimState(1);
-    const common = [{ type: 'sprout:spawned' as const, sproutId: 'a', sproutType: 'ember' as const, podId: 'nursery' }];
+    const common = [
+      { type: 'sprout:spawned' as const, sproutId: 'a', sproutType: 'ember' as const, mood: 'sunny' as const, podId: 'nursery' },
+    ];
     expect(checkAchievements(state, common).events).toEqual([]);
-    const rare = [{ type: 'sprout:spawned' as const, sproutId: 'b', sproutType: 'star' as const, podId: 'nursery' }];
+    const rare = [
+      { type: 'sprout:spawned' as const, sproutId: 'b', sproutType: 'star' as const, mood: 'sunny' as const, podId: 'nursery' },
+    ];
     expect(checkAchievements(state, rare).events).toEqual([{ type: 'achievement:unlocked', achievementId: 'firstRareSprout' }]);
   });
 });

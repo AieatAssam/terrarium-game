@@ -33,6 +33,8 @@ export interface UnlockThreshold {
    * once, the player has visibly felt that limitation.
    */
   requiredUnsortedPileSize?: number;
+  /** moodBell only: Colour Gate must already be built (alongside gardenSlide, via requiresGardenSlideBuilt). */
+  requiresColourGateBuilt?: boolean;
 }
 
 export const UNLOCK_THRESHOLDS: Record<AutomationId, UnlockThreshold> = {
@@ -61,6 +63,15 @@ export const UNLOCK_THRESHOLDS: Record<AutomationId, UnlockThreshold> = {
     requiresGardenSlideBuilt: true,
     requiredSingleHabitatFeedTicks: 300,
     requiredUnsortedPileSize: 3,
+  },
+  moodBell: {
+    automationId: 'moodBell',
+    requiredCorrectPlacements: 0,
+    // No tick/pile condition, unlike colourGate — simpler on purpose: "both
+    // prior automations already exist" is itself the milestone (single-route
+    // and dual-route both mastered, ready for a third routing dimension).
+    requiresGardenSlideBuilt: true,
+    requiresColourGateBuilt: true,
   },
 };
 
@@ -120,4 +131,22 @@ export function colourGateLockReason(state: ColourGateUnlockState): string | nul
   }
 
   return null;
+}
+
+export interface MoodBellUnlockState {
+  gardenSlideBuilt: boolean;
+  colourGateBuilt: boolean;
+}
+
+export function isMoodBellUnlocked(state: MoodBellUnlockState): boolean {
+  return state.gardenSlideBuilt && state.colourGateBuilt;
+}
+
+/** Mirrors colourGateLockReason's spirit: the one specific thing still missing, cheapest-to-satisfy first, in garden language. */
+export function moodBellLockReason(state: MoodBellUnlockState): string | null {
+  if (isMoodBellUnlocked(state)) return null;
+  if (!state.gardenSlideBuilt) {
+    return 'Your Garden Slide needs to be built first.';
+  }
+  return 'Your Colour Gate needs to be built first.';
 }

@@ -2,11 +2,11 @@
 // redefine or rename members here; report needed changes back for a
 // CONTRACTS.md update first.
 
-import type { AchievementId, AutomationId, HabitatId, SproutTypeId, UpgradeId } from '../core/ids';
+import type { AchievementId, AutomationId, HabitatId, MoodId, SproutTypeId, UpgradeId } from '../core/ids';
 import type { TileCoord } from '../sim/grid';
 
 export type GameEvent =
-  | { type: 'sprout:spawned'; sproutId: string; sproutType: SproutTypeId; podId: string }
+  | { type: 'sprout:spawned'; sproutId: string; sproutType: SproutTypeId; mood: MoodId; podId: string }
   | { type: 'sprout:pickedUp'; sproutId: string }
   | {
       type: 'sprout:dropped';
@@ -113,6 +113,18 @@ export type GameEvent =
     }
   | {
       /**
+       * The Mood Bell's active rule changed — which mood it currently
+       * welcomes. Mirrors `automation:colourGateRuleChanged`'s reasoning
+       * exactly, for a single toggle instead of a 2-lane map. Emitted on
+       * every change AND once when the Bell is first built (with its safe
+       * default, 'sunny'), so a listener that subscribed before the build
+       * still learns the starting rule.
+       */
+      type: 'automation:moodBellRuleChanged';
+      mood: MoodId;
+    }
+  | {
+      /**
        * The Nursery pod changed how briskly it opens, because of how many
        * Sprouts are currently waiting for a home (see src/data/spawning.ts).
        *
@@ -191,6 +203,7 @@ export type GameEvent =
         sprouts?: {
           id: string;
           sproutType: SproutTypeId;
+          mood: MoodId;
           tile: { x: number; z: number };
           /** 'settled' Sprouts sit in their habitat; everything else waits at the Nursery. */
           settled: boolean;
@@ -205,6 +218,7 @@ export type GameEvent =
          * consumers/tests written before them still typecheck.
          */
         colourGateLanes?: { west: SproutTypeId | null; east: SproutTypeId | null };
+        moodBellRule?: MoodId;
         nurseryRhythm?: 'lively' | 'easing' | 'resting';
         /** How many Sprouts are waiting for a home right now, to go with `nurseryRhythm`. */
         waitingSproutCount?: number;

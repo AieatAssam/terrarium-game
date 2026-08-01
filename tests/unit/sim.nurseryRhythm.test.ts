@@ -45,6 +45,7 @@ function waiting(count: number, overrides: Partial<SimState> = {}): SimState {
     sprouts: Array.from({ length: count }, (_, i) => ({
       id: `waiting-${i}`,
       sproutType: 'ember' as const,
+      mood: 'sunny' as const,
       tile: NURSERY_TILE,
       state: 'idle' as const,
     })),
@@ -108,11 +109,11 @@ describe('countWaitingSprouts', () => {
     const state: SimState = {
       ...createInitialSimState(1),
       sprouts: [
-        { id: 'a', sproutType: 'ember', tile: NURSERY_TILE, state: 'idle' },
-        { id: 'b', sproutType: 'dew', tile: NURSERY_TILE, state: 'transporting' },
-        { id: 'c', sproutType: 'sun', tile: NURSERY_TILE, state: 'settled' },
+        { id: 'a', sproutType: 'ember', mood: 'sunny', tile: NURSERY_TILE, state: 'idle' },
+        { id: 'b', sproutType: 'dew', mood: 'sunny', tile: NURSERY_TILE, state: 'transporting' },
+        { id: 'c', sproutType: 'sun', mood: 'sunny', tile: NURSERY_TILE, state: 'settled' },
         // Pausing at the Colour Gate's signpost — still waiting for a home.
-        { id: 'd', sproutType: 'ember', tile: { x: 8, z: 6 }, state: 'idle' },
+        { id: 'd', sproutType: 'ember', mood: 'sunny', tile: { x: 8, z: 6 }, state: 'idle' },
       ],
     };
     expect(countWaitingSprouts(state)).toBe(2);

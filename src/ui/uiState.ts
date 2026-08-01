@@ -5,7 +5,7 @@
 // advanced by the corresponding bus event, never optimistically by a click
 // handler — so the UI can never show progress the sim hasn't confirmed.
 
-import type { AchievementId, AutomationId, SproutTypeId, UpgradeId } from '../core/ids';
+import type { AchievementId, AutomationId, MoodId, SproutTypeId, UpgradeId } from '../core/ids';
 import type { EventBus, GameEvent } from '../events';
 
 export interface OfflineReturnInfo {
@@ -30,6 +30,8 @@ export interface UiState {
   lastBuiltAutomation: AutomationId | undefined;
   /** The Colour Gate's active rule (GameRules §9.4: it must visibly show it). */
   colourGateLanes: ColourGateLaneState;
+  /** The Mood Bell's active rule — which mood it currently welcomes. */
+  moodBellRule: MoodId;
   /** How briskly the Nursery pod is opening, and how many little ones are waiting. */
   nurseryRhythm: 'lively' | 'easing' | 'resting';
   waitingSproutCount: number;
@@ -56,6 +58,9 @@ function createInitialState(): UiState {
     // Matches the Gate's own safe default (src/sim/layout.ts) so the panel
     // never flashes an empty rule between mount and the first event.
     colourGateLanes: { west: 'ember', east: 'dew' },
+    // Matches the Bell's own safe default (src/sim/state.ts) so the panel
+    // never flashes a wrong rule between mount and the first event.
+    moodBellRule: 'sunny',
     nurseryRhythm: 'lively',
     waitingSproutCount: 0,
   };
@@ -103,6 +108,10 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
       ...prev,
       colourGateLanes: { ...event.lanes },
     })),
+    on('automation:moodBellRuleChanged', (prev, event) => ({
+      ...prev,
+      moodBellRule: event.mood,
+    })),
     on('nursery:rhythmChanged', (prev, event) => ({
       ...prev,
       nurseryRhythm: event.rhythm,
@@ -111,6 +120,7 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
     on('save:loaded', (prev, event) => ({
       ...prev,
       colourGateLanes: event.snapshot.colourGateLanes ? { ...event.snapshot.colourGateLanes } : prev.colourGateLanes,
+      moodBellRule: event.snapshot.moodBellRule ?? prev.moodBellRule,
       nurseryRhythm: event.snapshot.nurseryRhythm ?? prev.nurseryRhythm,
       waitingSproutCount: event.snapshot.waitingSproutCount ?? prev.waitingSproutCount,
       // Silent hydration from the restored save — deliberately does NOT

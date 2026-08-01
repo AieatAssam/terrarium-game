@@ -18,6 +18,7 @@ import {
   COLOUR_GATE_TILE,
   GARDEN_SLIDE_TILE,
   HABITAT_TILES,
+  MOOD_BELL_TILE,
   NURSERY_TILE,
 } from '../sim/layout';
 
@@ -28,6 +29,7 @@ export {
   COLOUR_GATE_TILE,
   GARDEN_SLIDE_TILE,
   HABITAT_TILES,
+  MOOD_BELL_TILE,
   NURSERY_TILE,
 };
 
@@ -67,12 +69,21 @@ function pathBetween(from: TileCoord, to: TileCoord): TileCoord[] {
  * z=6 and only then turns north at x=4 (and run 3 mirrors it) — so the two lanes
  * genuinely leave the fork sideways, which is what makes the decision readable
  * from the garden camera.
+ *
+ * A 5th run (Mood Bell feature, 2026-08-01), Nursery -> Mood Bell (9,8), was
+ * added purely for the structure's own decorative site — NO Mood Bell ride
+ * ever travels this tile. A Bell delivery rides Nursery -> whichever habitat
+ * the boarded Sprout's own type wants, using runs 1-4 above exactly like the
+ * Garden Slide's own ride already does (see src/sim/layout.ts's topology
+ * comment for why the Slide's own site tile is the same kind of decoration-
+ * only stop).
  */
 export const GARDEN_PATH_TILES: TileCoord[] = (() => {
   const runs: TileCoord[][] = [
     pathBetween(NURSERY_TILE, COLOUR_GATE_TILE),
     ...COLOUR_GATE_LANE_LIST.map((lane) => pathBetween(COLOUR_GATE_TILE, HABITAT_TILES[COLOUR_GATE_LANE_HABITATS[lane]])),
     pathBetween(NURSERY_TILE, HABITAT_TILES.sunflowerMeadow),
+    pathBetween(NURSERY_TILE, MOOD_BELL_TILE),
   ];
   const seen = new Set<string>();
   const tiles: TileCoord[] = [];

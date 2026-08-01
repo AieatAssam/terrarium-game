@@ -232,7 +232,8 @@ export function initInput(renderer: RendererHandle, bus: EventBus): InputHandle 
       // or Colour Gate too, not only while hovering a home.
       const automationId = automation.nearestBuiltWithin(ground, HOVER_MARGIN_TILES);
       const visual = sprouts.get(dragSproutId);
-      const automationValid = automationId && visual ? automation.matchesSprout(automationId, visual.sproutType) : null;
+      const automationValid =
+        automationId && visual ? automation.matchesSprout(automationId, visual.sproutType, visual.mood) : null;
       sprouts.setDragValidity(dragSproutId, automationId ? automationValid : null);
       return;
     }

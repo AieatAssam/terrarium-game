@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   isColourGateUnlocked,
   isGardenSlideUnlocked,
+  isMoodBellUnlocked,
+  moodBellLockReason,
   UNLOCK_THRESHOLDS,
   type ColourGateUnlockState,
+  type MoodBellUnlockState,
 } from '../../src/data/unlocks';
 
 describe('Garden Slide unlock threshold', () => {
@@ -56,5 +59,39 @@ describe('Colour Gate unlock condition', () => {
     expect(
       isColourGateUnlocked(state({ singleHabitatFeedTicks: requiredFeedTicks + 100, unsortedPileSize: requiredPile + 5 })),
     ).toBe(true);
+  });
+});
+
+describe('Mood Bell unlock condition', () => {
+  function state(overrides: Partial<MoodBellUnlockState>): MoodBellUnlockState {
+    return { gardenSlideBuilt: true, colourGateBuilt: true, ...overrides };
+  }
+
+  it('is locked if neither prior automation is built', () => {
+    expect(isMoodBellUnlocked(state({ gardenSlideBuilt: false, colourGateBuilt: false }))).toBe(false);
+  });
+
+  it('is locked if only Garden Slide is built', () => {
+    expect(isMoodBellUnlocked(state({ colourGateBuilt: false }))).toBe(false);
+  });
+
+  it('is locked if only Colour Gate is built', () => {
+    expect(isMoodBellUnlocked(state({ gardenSlideBuilt: false }))).toBe(false);
+  });
+
+  it('unlocks once both prior automations are built', () => {
+    expect(isMoodBellUnlocked(state({}))).toBe(true);
+  });
+
+  it('moodBellLockReason names the specific missing automation in garden language, never the other automation\'s own gate details', () => {
+    const noSlide = moodBellLockReason(state({ gardenSlideBuilt: false }));
+    expect(noSlide).not.toBeNull();
+    expect(noSlide).not.toMatch(/colourGateUnlock|gardenSlide/);
+
+    const noGate = moodBellLockReason(state({ colourGateBuilt: false }));
+    expect(noGate).not.toBeNull();
+    expect(noGate).not.toMatch(/colourGateUnlock/);
+
+    expect(moodBellLockReason(state({}))).toBeNull();
   });
 });

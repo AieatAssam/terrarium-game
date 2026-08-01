@@ -7,7 +7,10 @@ export type SproutTypeId = 'ember' | 'dew' | 'sun' | 'star';
 
 export type HabitatId = 'emberNook' | 'dewPond' | 'sunflowerMeadow';
 
-export type AutomationId = 'gardenSlide' | 'colourGate';
+/** A second, orthogonal Sprout attribute (GameRules §7.3) — never affects which habitat is correct for a Sprout. */
+export type MoodId = 'sunny' | 'sleepy';
+
+export type AutomationId = 'gardenSlide' | 'colourGate' | 'moodBell';
 
 export type UpgradeId =
   | 'podRhythm'
@@ -15,7 +18,8 @@ export type UpgradeId =
   | 'gardenSlideSpeed'
   | 'dewdropMultiplier'
   | 'decorativeExpansion1'
-  | 'colourGateUnlock';
+  | 'colourGateUnlock'
+  | 'moodBellUnlock';
 
 export type AchievementId =
   'firstPlacement' | 'firstAutomation' | 'firstFullHabitat' | 'firstRareSprout' | 'firstExpansion';

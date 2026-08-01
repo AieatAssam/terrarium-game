@@ -5,7 +5,7 @@
 // file only establishes the shell so downstream agents compile against
 // something stable.
 
-import type { AchievementId, AutomationId, HabitatId, SproutTypeId, UpgradeId } from '../core/ids';
+import type { AchievementId, AutomationId, HabitatId, MoodId, SproutTypeId, UpgradeId } from '../core/ids';
 import type { NurseryRhythm } from '../data/spawning';
 import type { TileCoord } from './grid';
 import { defaultColourGateLanes, type ColourGateLanes } from './layout';
@@ -15,6 +15,8 @@ export type SproutInstanceState = 'idle' | 'walking' | 'transporting' | 'settled
 export interface SproutInstance {
   id: string;
   sproutType: SproutTypeId;
+  /** Second, orthogonal attribute (Mood Bell feature, 2026-08-01) — never affects which habitat is correct for this Sprout. */
+  mood: MoodId;
   tile: TileCoord;
   state: SproutInstanceState;
 }
@@ -71,6 +73,14 @@ export interface SimState {
    */
   colourGateLanes: ColourGateLanes;
   /**
+   * The Mood Bell's active rule: which mood it currently welcomes. Unlike
+   * `colourGateLanes`, this has no "nobody yet" null state — it is always
+   * populated (defaults `'sunny'`), since the value is simply inert until
+   * the Bell is actually built (`unlockedAutomations` gates whether it has
+   * any effect, not this field itself).
+   */
+  moodBellRule: MoodId;
+  /**
    * The Nursery pod's last-announced rhythm, and the waiting-Sprout count that
    * went with it. Both are purely derived from how many Sprouts are waiting
    * (see src/data/spawning.ts) — they are stored only so
@@ -87,7 +97,7 @@ export interface SimState {
   nurseryWaitingCount: number;
 }
 
-export const SIM_SHAPE_VERSION = 3;
+export const SIM_SHAPE_VERSION = 4;
 
 export function createInitialSimState(seed: number): SimState {
   return {
@@ -106,6 +116,7 @@ export function createInitialSimState(seed: number): SimState {
     correctPlacementCount: 0,
     habitatDewdropFraction: {},
     colourGateLanes: defaultColourGateLanes(),
+    moodBellRule: 'sunny',
     nurseryRhythm: 'lively',
     nurseryWaitingCount: 0,
   };

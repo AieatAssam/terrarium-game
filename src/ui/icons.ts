@@ -32,6 +32,13 @@ export const icons = {
     '<path d="M12 2.5l2.47 6.62 7.03.5-5.44 4.52 1.83 6.86L12 17.05l-6.89 3.95 1.83-6.86-5.44-4.52 7.03-.5L12 2.5z" fill="currentColor"/>',
   ),
 
+  // Mood icons: shape is the primary signal (a sphere vs. a box in the 3D
+  // scene — src/render/sprouts.ts), colour is secondary. These 2D glyphs
+  // mirror that shape distinction (a filled circle vs. a filled square)
+  // rather than relying on the sun/moon metaphor alone.
+  moodSunny: decorative('<circle cx="12" cy="12" r="7" fill="currentColor"/>'),
+  moodSleepy: decorative('<rect x="6" y="6" width="12" height="12" fill="currentColor"/>'),
+
   lockedSlot: decorative(
     '<path d="M6 10V8a6 6 0 0 1 12 0v2h.5A1.5 1.5 0 0 1 20 11.5v8A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5v-8A1.5 1.5 0 0 1 5.5 10H6zm2 0h8V8a4 4 0 0 0-8 0v2z" fill="currentColor"/>',
   ),
@@ -41,6 +48,9 @@ export const icons = {
   ),
   colourGate: decorative(
     '<path d="M4 21V6a2 2 0 0 1 2-2h2v17H4zm6 0V4h4v17h-4zm6 0V4h2a2 2 0 0 1 2 2v15h-4z" fill="currentColor"/>',
+  ),
+  moodBell: decorative(
+    '<path d="M12 2a1.5 1.5 0 0 1 1.5 1.5v.6C16.6 4.8 19 7.6 19 11v4l2 3H3l2-3v-4c0-3.4 2.4-6.2 5.5-6.9v-.6A1.5 1.5 0 0 1 12 2z" fill="currentColor"/><path d="M9 20a3 3 0 0 0 6 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
   ),
 
   journal: decorative(

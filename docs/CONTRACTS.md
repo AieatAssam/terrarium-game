@@ -35,8 +35,11 @@ Nursery, habitats, paths, slides, gates all place via `TileCoord`. Automation ro
 `src/sim/layout.ts` owns every gameplay tile position and the garden's topology:
 a shared **trunk** north out of the Nursery (8,8) → Garden Slide (8,7) → Colour
 Gate (8,6), which is a genuine **fork** — a west lane to Ember Nook (4,4) and an
-east lane to Dew Pond (12,4) — plus an untouched southern run from the Nursery to
-Sunflower Meadow (8,13) that serves as the hand-carried fallback route.
+east lane to Dew Pond (12,4) — a southern run from the Nursery to Sunflower
+Meadow (8,13) that the Garden Slide always rides (2026-07-31; a player can
+still walk it by hand too), and a short spur east of the Nursery to the Mood
+Bell (9,8) — decorative only, no ride ever travels through it (its own rides
+reuse the same Nursery→habitat network the Slide and Gate already use).
 `COLOUR_GATE_LANE_HABITATS` maps each lane to the home it leads to; that mapping
 is a fact about the garden's shape and is never player-editable (the player
 chooses which *kind* each lane invites, not where a lane goes).
@@ -51,14 +54,17 @@ the Gate costs a Sprout nothing.
 ```ts
 type SproutTypeId = 'ember' | 'dew' | 'sun' | 'star';
 type HabitatId = 'emberNook' | 'dewPond' | 'sunflowerMeadow';
-type AutomationId = 'gardenSlide' | 'colourGate';
+/** A second, orthogonal Sprout attribute (GameRules §7.3) — never affects which habitat is correct for a Sprout. */
+type MoodId = 'sunny' | 'sleepy';
+type AutomationId = 'gardenSlide' | 'colourGate' | 'moodBell';
 type UpgradeId =
   | 'podRhythm'
   | 'habitatCapacity'
   | 'gardenSlideSpeed'
   | 'dewdropMultiplier'
   | 'decorativeExpansion1'
-  | 'colourGateUnlock';
+  | 'colourGateUnlock'
+  | 'moodBellUnlock';
 type AchievementId =
   | 'firstPlacement'
   | 'firstAutomation'
@@ -71,7 +77,7 @@ type AchievementId =
 
 ```ts
 type GameEvent =
-  | { type: 'sprout:spawned'; sproutId: string; sproutType: SproutTypeId; podId: string }
+  | { type: 'sprout:spawned'; sproutId: string; sproutType: SproutTypeId; mood: MoodId; podId: string }
   | { type: 'sprout:pickedUp'; sproutId: string }
   | { type: 'sprout:dropped'; sproutId: string; overHabitat: HabitatId | null; overAutomation?: AutomationId | null }
   | { type: 'sprout:placed:correct'; sproutId: string; habitatId: HabitatId }
@@ -86,6 +92,7 @@ type GameEvent =
   | { type: 'automation:built'; automationId: AutomationId; instanceId: string; targetHabitatId?: HabitatId }
   | { type: 'automation:unlocked'; automationId: AutomationId }
   | { type: 'automation:colourGateRuleChanged'; lanes: { west: SproutTypeId | null; east: SproutTypeId | null } }
+  | { type: 'automation:moodBellRuleChanged'; mood: MoodId }
   | { type: 'nursery:rhythmChanged'; rhythm: 'lively' | 'easing' | 'resting'; waitingCount: number }
   | { type: 'upgrade:purchased'; upgradeId: UpgradeId; level: number }
   | { type: 'achievement:unlocked'; achievementId: AchievementId }
@@ -101,8 +108,9 @@ interface SaveLoadedSnapshot {
   journalDiscovered: SproutTypeId[];
   fullHabitats?: HabitatId[];
   automationTargets?: Partial<Record<AutomationId, HabitatId>>;
-  sprouts?: { id: string; sproutType: SproutTypeId; tile: TileCoord; settled: boolean; habitatId?: HabitatId }[];
+  sprouts?: { id: string; sproutType: SproutTypeId; mood: MoodId; tile: TileCoord; settled: boolean; habitatId?: HabitatId }[];
   colourGateLanes?: { west: SproutTypeId | null; east: SproutTypeId | null };
+  moodBellRule?: MoodId;
   nurseryRhythm?: 'lively' | 'easing' | 'resting';
   waitingSproutCount?: number;
 }
@@ -212,6 +220,34 @@ like garden infrastructure the player can also work *with*, not only observe.
   uses, so a manual drop can never start a ride the automation would have
   refused on its own next tick.
 
+### Members added for the Mood Bell (Phase 2's first feature, 2026-08-01)
+
+- **`sprout:spawned.mood`** — every Sprout now carries a second, independent
+  attribute (`MoodId`) alongside `sproutType`, assigned via its own RNG draw
+  at spawn (never derived from the type roll — see `src/data/spawning.ts`).
+  Added to the event because the render layer only ever learns a Sprout's
+  attributes from this event; without it there is no way to pick a mood
+  badge or validate a Mood Bell hover/drop.
+- **`automation:moodBellRuleChanged`** — mirrors
+  `automation:colourGateRuleChanged`'s reasoning exactly, for the Bell's own
+  single-mood toggle (`SimState.moodBellRule`) instead of the Gate's two-lane
+  map. Emitted on every player change and once when the Bell is built,
+  carrying its safe default (`'sunny'`).
+- **`save:loaded.snapshot.moodBellRule`** — same reasoning as
+  `snapshot.colourGateLanes`: the rule only announces on change, so a reload
+  needs it restored from the snapshot rather than re-derived.
+
+Mood is deliberately **not** a fourth `SproutTypeId` and never changes
+`sproutMatchesHabitat` — it is a second, orthogonal routing dimension
+(GameRules §9.6 stage 4, "multi-attribute routes"). The Mood Bell is a
+Slide-shaped single-leg automation (one rule, one destination computed
+per-sprout from its own type), not Gate-shaped — see
+`src/sim/systems.ts`'s `planRide` doc comments for the dispatch mechanics,
+including why building the Bell also changes what the Slide/Gate do (a
+Sprout matching the Bell's current mood is excluded from their own pickup
+eligibility once the Bell exists — a real routing partition, not a race
+between automations checking in build order).
+
 ## Simulation boundary
 
 - `src/sim/` has zero imports from `src/render`, `src/ui`, `src/audio`. Enforced by an architecture test (A writes it) that fails the build if violated (grep-based or dependency-cruiser-lite, no heavy tool needed).
@@ -225,6 +261,7 @@ like garden infrastructure the player can also work *with*, not only observe.
 
 Each in `src/data/`, plain typed objects/arrays, no class logic:
 - `sproutTypes.ts` — id, displayName, primaryColor, silhouetteKey (asset key), habitatId (correct match), rarity
+- `moods.ts` — id, displayName, primaryColor, silhouetteKey (badge asset key). Purely descriptive: mood never determines habitat correctness.
 - `habitats.ts` — id, displayName, baseCapacity, baseDewdropRate, matchSproutType
 - `upgrades.ts` — id, cost curve fn or table, effect descriptor, maxLevel
 - `achievements.ts` — id, triggerEvent, condition, rewardText
@@ -258,8 +295,13 @@ Original Web Audio synthesis only (no external license risk). F implements a sma
 
 Versioned JSON object in IndexedDB, top-level `{ version: number, sim: SimState, meta: { lastSavedAt: number } }`. Any sim state shape change bumps `version`; A owns migration stub (no-op for v1).
 
-Current version is **3**. v2→v3 backfills `SimState.colourGateLanes` (the Colour
+Current version is **4**. v2→v3 backfills `SimState.colourGateLanes` (the Colour
 Gate's lane rule, defaulting to the safe recommendation) and
 `SimState.nurseryRhythm` (defaulting to `'lively'`, which the very next tick
 re-derives from how many Sprouts are actually waiting — so a returning,
-overcrowded garden correctly settles into `'resting'` immediately).
+overcrowded garden correctly settles into `'resting'` immediately). v3→v4
+backfills `SproutInstance.mood` on every already-persisted Sprout (a
+deterministic default, `'sunny'` — migration is pure and cannot re-roll with
+RNG, so this is a one-time visual quirk for saves that predate mood) and
+`SimState.moodBellRule` (defaulting to `'sunny'`, the same safe default a
+freshly-built Bell starts with).

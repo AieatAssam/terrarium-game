@@ -31,7 +31,7 @@
 //                                        |
 //                                  [SLIDE 8,7]                west lane / east lane
 //                                        |
-//                                  Nursery (8,8)
+//                                  Nursery (8,8)--[BELL 9,8]
 //                                        |
 //                                  (8,9) .. (8,12)
 //                                        |
@@ -54,6 +54,13 @@
 //     a non-matching or off-lane Sprout (see planRide's own doc comment) — the
 //     Meadow path was never functionally load-bearing for that, only narrated
 //     that way.
+//   * a short spur east of the Nursery, (8,8) -> (9,8), carries the Mood
+//     Bell's own structure (design decision 2026-08-01: a second, orthogonal
+//     Sprout attribute, "mood", GameRules §7.3/§9.5/§9.6 stage 4). Like the
+//     Slide's site tile, this is decorative only — a Bell delivery rides
+//     Nursery -> whichever habitat the boarded Sprout's own TYPE wants,
+//     reusing the same path network the Slide/Gate already use for all 3
+//     habitats, never through (9,8) itself.
 //
 // Arithmetic that must keep holding (pinned in tests/unit/sim.layout.test.ts):
 // `tileDistance(NURSERY, GATE) + tileDistance(GATE, habitat)` equals
@@ -77,11 +84,22 @@ export const HABITAT_TILES: Record<HabitatId, TileCoord> = {
 export const GARDEN_SLIDE_TILE: TileCoord = { x: 8, z: 7 };
 /** The fork itself, at the north end of the trunk. */
 export const COLOUR_GATE_TILE: TileCoord = { x: 8, z: 6 };
+/**
+ * A short decorative spur east of the Nursery (Mood Bell feature,
+ * 2026-08-01). Like the Garden Slide's own site tile, this is NEVER a ride
+ * waypoint — a Bell delivery rides straight Nursery -> destination habitat,
+ * reusing the exact same path network the Slide and Gate already use for
+ * all 3 habitats. Only the structure's own decorative placement needs this
+ * tile (and one short connecting path segment, added in
+ * src/render/layout.ts's GARDEN_PATH_TILES construction).
+ */
+export const MOOD_BELL_TILE: TileCoord = { x: 9, z: 8 };
 
 /** Where a player-built automation instance's ghost/site marker sits by default (before it's actually built). */
 export const AUTOMATION_SITE_TILES: Record<AutomationId, TileCoord> = {
   gardenSlide: GARDEN_SLIDE_TILE,
   colourGate: COLOUR_GATE_TILE,
+  moodBell: MOOD_BELL_TILE,
 };
 
 /** The two lanes leaving the Colour Gate's fork. */

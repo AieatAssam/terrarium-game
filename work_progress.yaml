@@ -298,6 +298,58 @@ completed:
 # In flight — uncommitted work in the tree RIGHT NOW
 # ---------------------------------------------------------------------------
 in_flight:
+  - owner: claude session 2026-08-01 (Mood Bell — Phase 2 first feature)
+    files: see plan.yaml (repo root) — the authoritative, detailed,
+      phase-by-phase plan. THIS entry is deliberately a lightweight STATUS
+      tracker only; do not duplicate plan detail here, update plan.yaml's
+      own per-phase `status:` fields instead and keep this entry to a
+      running summary of where execution actually is.
+    task: >
+      Third automation ("Mood Bell") + a second, independent Sprout
+      attribute ("mood": sunny/sleepy) — GameRules §9.5/§7.3/§9.6 stage 4.
+      Full design (including an advisor-caught traffic-partition fix —
+      without it, the Gate/Slide would dominate the Bell and it would
+      visibly do nothing) is written out in plan.yaml, phases 1-10, each
+      with exact steps/constraints/verification/reasoning, written so a
+      less-capable agent can execute without guessing. Read plan.yaml
+      before continuing this work in any future session.
+    status: >
+      DONE for phases 1-7, 9-10 (core types/CONTRACTS.md, data layer, sim
+      state/persistence migration, tests-written-first, sim dispatch +
+      traffic partition, render layer, UI layer, docs, final verification).
+      PARTIAL for phase 8 (e2e + browser verification) — see plan.yaml
+      phase 8's own status field for the full honest account: the spec is
+      written and typechecks/lints clean, a manual browser session
+      confirmed the Mood Bell panel/nav/lock-reason are genuinely wired to
+      live sim state, but the automated Playwright run of
+      moodBell.dev.spec.ts could not complete in this sandbox — it failed
+      twice with clearly environmental signatures (a 90s actionability
+      timeout on a plain button click across all 6 tests at the identical
+      step, then "Target page, context or browser has been closed" on a
+      fresh isolated single-test retry), matching this session's own
+      already-documented sandbox-degradation pattern from sustained heavy
+      Playwright/Babylon use over many hours. The property the e2e spec
+      exists to catch (the traffic partition, per-sprout destination,
+      toggle wiring) is already covered and PASSING in
+      tests/unit/sim.moodBell.test.ts's 18 tests against the real sim
+      functions — confidence this isn't masking a real bug is high, but the
+      full-stack automated proof is a genuine, named gap, not silently
+      claimed done. Full verification stack (typecheck/lint/292 unit
+      tests/build) passes cleanly. Next session resuming this: re-run the
+      e2e spec fresh before assuming anything is broken (see plan.yaml
+      phase 8's exact command).
+
+      One real design fix along the way, caught by the partition TEST
+      itself before implementation: isMoodBellClaimed originally keyed off
+      unlockedAutomations, inconsistent with how this codebase already
+      answers "does this automation exist" elsewhere (an actual instance in
+      state.automations) — switched to match. Also touched two test files
+      beyond the original plan's list when TypeScript/test runs surfaced
+      them: src/ui/components/buildMenu.ts (3 more Record<AutomationId,...>
+      tables, not in the original plan-mode design) and
+      tests/unit/render.pathPieces.test.ts (the new reserved tile made the
+      Nursery a genuine tee, shifting pinned piece-type counts — same
+      category of change as when the Colour Gate fork first went in).
   - owner: claude session 2026-08-01 (e2e verification pass, unblocked queue)
     files:
       [

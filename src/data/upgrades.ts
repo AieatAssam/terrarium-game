@@ -114,6 +114,21 @@ export const UPGRADES: Record<UpgradeId, UpgradeDefinition> = {
     effect: { kind: 'automationUnlock', magnitudePerLevel: 1 },
     costForLevel: flatCost(700),
   },
+  moodBellUnlock: {
+    id: 'moodBellUnlock',
+    displayName: 'Mood Bell',
+    description:
+      "Builds the Mood Bell: a helper that reads whether a Sprout is Sunny or Sleepy and carries a whole " +
+      "mood's worth of them straight home — of any colour. Only purchasable once your Garden Slide and " +
+      'Colour Gate are both already built.',
+    maxLevel: 1,
+    effect: { kind: 'automationUnlock', magnitudePerLevel: 1 },
+    // First-pass estimate, not yet playtested: roughly 2x colourGateUnlock's
+    // 700, continuing the escalating per-automation cost pattern. Re-check
+    // against real income once this ships, same as every other balance
+    // value in this file started as an estimate.
+    costForLevel: flatCost(1500),
+  },
 };
 
 export const UPGRADE_LIST: UpgradeDefinition[] = Object.values(UPGRADES);

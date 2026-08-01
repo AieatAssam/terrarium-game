@@ -198,4 +198,5 @@ export function automationSiteTopY(): number {
 export const AUTOMATION_BODIES: Record<AutomationId, PropBody> = {
   gardenSlide: AUTOMATION_BODY,
   colourGate: AUTOMATION_BODY,
+  moodBell: AUTOMATION_BODY,
 };

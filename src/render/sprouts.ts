@@ -22,11 +22,13 @@ import { tileToWorld, type TileCoord } from './coords';
 import { createHabitatOccupancySigns, occupancySignState } from './habitats';
 import { GARDEN_PATH_TILES, HABITAT_TILES, NURSERY_TILE } from './layout';
 import { easingFn, getMotionConfig, prefersReducedMotion, type MotionConfig } from './motion';
+import { createPaintedMetalMaterial } from './pbrMaterials';
 import { createSparkleBurst } from './particles';
 import { automationSiteTopY, habitatTopY, nurseryTopY } from './propDims';
 import type { EventBus } from '../events/bus';
-import type { HabitatId, SproutTypeId } from '../core/ids';
+import type { HabitatId, MoodId, SproutTypeId } from '../core/ids';
 import { getEffectiveHabitatCapacity } from '../data/habitats';
+import { MOODS } from '../data/moods';
 import { SPROUT_TYPES } from '../data/sproutTypes';
 
 export type SproutVisualState = 'reveal' | 'idle' | 'walk' | 'happy' | 'settled';
@@ -54,6 +56,8 @@ export type SproutVisualState = 'reveal' | 'idle' | 'walk' | 'happy' | 'settled'
 
 /** Edge length of the Sprout billboard plane. */
 const SPROUT_SPRITE_SIZE = 0.7;
+/** Diameter/edge of a Sprout's small mood-badge child mesh (Mood Bell feature, 2026-08-01). */
+const MOOD_BADGE_SIZE = 0.12;
 /** Offset from the sprite's centre (what `position` sets) to its bottom edge. */
 const SPROUT_HALF_HEIGHT = SPROUT_SPRITE_SIZE / 2;
 /** Air gap left between a surface and the sprite's bottom edge. */
@@ -457,6 +461,7 @@ const TRANSPORT_HOP_HEIGHT = 0.18;
 export interface SproutVisual {
   id: string;
   sproutType: SproutTypeId;
+  mood: MoodId;
   mesh: Mesh;
   material: PBRMetallicRoughnessMaterial;
   state: SproutVisualState;
@@ -602,6 +607,29 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
   // below — not 850.
   const sharedSproutMaterials = new Map<string, PBRMetallicRoughnessMaterial>();
 
+  /**
+   * Mood badges (Mood Bell feature, 2026-08-01): a small ADDITIVE child mesh
+   * per Sprout showing its mood, deliberately NOT folded into
+   * `sharedSproutMaterials`'/`sharedMaterialFor`'s existing (sproutType,
+   * cacheKey) texture cache — mood is orthogonal to type/state, and widening
+   * that cache's key to a 3-dimensional (type x mood x state) matrix would
+   * multiply the material/texture count for no reason, since a badge's
+   * colour depends on mood ALONE. Two shared materials total (one per mood),
+   * same "shared, never mutated in place" discipline as `sharedSproutMaterials`.
+   * Shape (not just colour) distinguishes the two — GameRules §7.1 colour+
+   * shape encoding — via two different primitive meshes, not two textures.
+   */
+  const sharedMoodBadgeMaterials = new Map<MoodId, PBRMetallicRoughnessMaterial>();
+  const moodBadgeMaterialFor = (mood: MoodId): PBRMetallicRoughnessMaterial => {
+    const existing = sharedMoodBadgeMaterials.get(mood);
+    if (existing) return existing;
+    const fallback = parseHexColor(MOODS[mood]?.primaryColor, new Color3(0.8, 0.8, 0.8));
+    const material = createPaintedMetalMaterial(scene, `terrarium.sprout.moodBadge.${mood}`, fallback);
+    material.emissiveColor = fallback.scale(0.5);
+    sharedMoodBadgeMaterials.set(mood, material);
+    return material;
+  };
+
   /** Builds (or returns the cached) material for one (type, cacheKey)
    * combination — `cacheKey` is either a texture state or one of the
    * drag-tint variants (see `dragMaterialFor`). Never mutated after creation;
@@ -661,7 +689,7 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     applyNormalMaterial(visual);
   };
 
-  const spawn = (id: string, sproutType: SproutTypeId, podId: string): void => {
+  const spawn = (id: string, sproutType: SproutTypeId, mood: MoodId, podId: string): void => {
     void podId;
     if (visuals.has(id)) return;
     const nurseryWorld = tileToWorld(NURSERY_TILE);
@@ -691,6 +719,7 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     const visual: SproutVisual = {
       id,
       sproutType,
+      mood,
       mesh,
       material,
       state: 'reveal',
@@ -703,6 +732,21 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     };
     mesh.metadata = { kind: 'sprout', sproutId: id };
     visuals.set(id, visual);
+
+    // Mood badge: a small additive shape parented to the sprite, child of
+    // `mesh` so it billboards and moves with it for free — disposed
+    // automatically when `mesh` is (Babylon disposes children recursively).
+    // Shape (not colour alone) carries the distinction: sunny is a small
+    // sphere, sleepy a small box.
+    const badgeMaterial = moodBadgeMaterialFor(mood);
+    const badge =
+      mood === 'sunny'
+        ? MeshBuilder.CreateSphere(`terrarium.sprout.${id}.moodBadge`, { diameter: MOOD_BADGE_SIZE, segments: 8 }, scene)
+        : MeshBuilder.CreateBox(`terrarium.sprout.${id}.moodBadge`, { size: MOOD_BADGE_SIZE }, scene);
+    badge.parent = mesh;
+    badge.isPickable = false;
+    badge.material = badgeMaterial;
+    badge.position.set(SPROUT_SPRITE_SIZE * 0.32, SPROUT_SPRITE_SIZE * 0.32, -0.01);
 
     // Emitted from the mound's top face, not the tile centre: the burst adds
     // its own +0.3 internally, so a tile-centre y of 0 put the whole reveal
@@ -837,7 +881,7 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
   };
 
   const unsubscribers = [
-    bus.subscribe('sprout:spawned', (e) => spawn(e.sproutId, e.sproutType, e.podId)),
+    bus.subscribe('sprout:spawned', (e) => spawn(e.sproutId, e.sproutType, e.mood, e.podId)),
     bus.subscribe('sprout:pickedUp', (e) => {
       const visual = visuals.get(e.sproutId);
       if (!visual) return;
@@ -940,7 +984,7 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
       habitatCapacityLevel = e.snapshot.upgradeLevels?.habitatCapacity ?? 0;
       for (const restored of e.snapshot.sprouts ?? []) {
         if (visuals.get(restored.id)) continue;
-        spawn(restored.id, restored.sproutType, 'restored');
+        spawn(restored.id, restored.sproutType, restored.mood, 'restored');
         const visual = visuals.get(restored.id);
         if (!visual) continue;
         visual.mesh.scaling.set(1, 1, 1); // skip the reveal pop-in
@@ -1128,6 +1172,8 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
     for (const id of Array.from(visuals.keys())) remove(id);
     for (const material of sharedSproutMaterials.values()) material.dispose();
     sharedSproutMaterials.clear();
+    for (const material of sharedMoodBadgeMaterials.values()) material.dispose();
+    sharedMoodBadgeMaterials.clear();
     signs.dispose();
   };
 

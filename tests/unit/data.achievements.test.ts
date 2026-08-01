@@ -53,8 +53,8 @@ describe('achievement trigger events map to the GameEvent union', () => {
 
 describe('achievement conditions', () => {
   it('firstRareSprout only fires for a Star Sprout, not the common types', () => {
-    const starEvent: GameEvent = { type: 'sprout:spawned', sproutId: 's1', sproutType: 'star', podId: 'p1' };
-    const emberEvent: GameEvent = { type: 'sprout:spawned', sproutId: 's2', sproutType: 'ember', podId: 'p1' };
+    const starEvent: GameEvent = { type: 'sprout:spawned', sproutId: 's1', sproutType: 'star', mood: 'sunny', podId: 'p1' };
+    const emberEvent: GameEvent = { type: 'sprout:spawned', sproutId: 's2', sproutType: 'ember', mood: 'sunny', podId: 'p1' };
 
     expect(ACHIEVEMENTS.firstRareSprout.condition(starEvent)).toBe(true);
     expect(ACHIEVEMENTS.firstRareSprout.condition(emberEvent)).toBe(false);

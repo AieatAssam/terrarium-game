@@ -6,18 +6,18 @@
 // next tick, and owns load/autosave. This module — not src/render or
 // src/ui — is the only place SimState is mutated.
 
-import type { AutomationId, HabitatId, SproutTypeId, UpgradeId } from '../core/ids';
+import type { AutomationId, HabitatId, MoodId, SproutTypeId, UpgradeId } from '../core/ids';
 import { isDev } from '../core/env';
 import { getEffectiveHabitatCapacity } from '../data/habitats';
 import type { EventBus } from '../events/bus';
 import type { GameEvent } from '../events/types';
 import { computeOfflineProgress } from '../data/offlineProgress';
-import { getNurseryRhythm } from '../data/spawning';
+import { getNurseryRhythm, pickMood } from '../data/spawning';
 import { clearSave, loadGame, saveGame } from '../persistence';
 import { habitatAtTile, NURSERY_TILE, type ColourGateLane, type ColourGateLanes } from './layout';
 import { advanceClock, createSimClock } from './loop';
 import { createInitialSimState, type SimState } from './state';
-import { colourGateLockReason } from '../data/unlocks';
+import { colourGateLockReason, moodBellLockReason } from '../data/unlocks';
 import {
   adjudicateAutomationDrop,
   adjudicatePlacement,
@@ -25,8 +25,10 @@ import {
   colourGateBehavioralState,
   colourGateLaneNote,
   countWaitingSprouts,
+  moodBellBehavioralState,
   purchaseUpgrade as purchaseUpgradeSystem,
   setColourGateLane as setColourGateLaneSystem,
+  setMoodBellRule as setMoodBellRuleSystem,
   TICK_SYSTEMS,
 } from './systems';
 import { runTick } from './tick';
@@ -54,6 +56,13 @@ export interface SimRuntime {
    */
   getColourGateRule: () => { lanes: ColourGateLanes; notes: Record<ColourGateLane, string | null> };
   setColourGateLane: (lane: ColourGateLane, sproutType: SproutTypeId | null) => void;
+  /**
+   * The Mood Bell's control surface, same reasoning as the Colour Gate's
+   * above. Simpler than the Gate's: a single toggle, always deliverable by
+   * construction, so there is no per-choice mismatch note to expose.
+   */
+  getMoodBellRule: () => MoodId;
+  setMoodBellRule: (mood: MoodId) => void;
   resetSave: () => Promise<void>;
   getState: () => SimState;
   dispose: () => void;
@@ -149,6 +158,7 @@ export async function startSimRuntime(
         sprouts: state.sprouts.map((s) => ({
           id: s.id,
           sproutType: s.sproutType,
+          mood: s.mood,
           tile: s.tile,
           settled: s.state === 'settled',
           // SproutInstance has no explicit "which home" field — a settled
@@ -156,6 +166,7 @@ export async function startSimRuntime(
           habitatId: s.state === 'settled' ? (habitatAtTile(s.tile) ?? undefined) : undefined,
         })),
         colourGateLanes: { ...state.colourGateLanes },
+        moodBellRule: state.moodBellRule,
         // Recomputed here rather than read from `nurseryWaitingCount` (which is
         // the last-ANNOUNCED figure, deliberately reset by the v2→v3 migration)
         // so a returning garden's note is accurate from the first frame.
@@ -256,7 +267,11 @@ export async function startSimRuntime(
       state = commit(emit, result.state, result.events);
     },
     getUpgradeLockReason: (upgradeId) =>
-      upgradeId === 'colourGateUnlock' ? colourGateLockReason(colourGateBehavioralState(state)) : null,
+      upgradeId === 'colourGateUnlock'
+        ? colourGateLockReason(colourGateBehavioralState(state))
+        : upgradeId === 'moodBellUnlock'
+          ? moodBellLockReason(moodBellBehavioralState(state))
+          : null,
     getColourGateRule: () => ({
       lanes: { ...state.colourGateLanes },
       notes: {
@@ -266,6 +281,11 @@ export async function startSimRuntime(
     }),
     setColourGateLane: (lane, sproutType) => {
       const result = setColourGateLaneSystem(state, lane, sproutType);
+      state = commit(emit, result.state, result.events);
+    },
+    getMoodBellRule: () => state.moodBellRule,
+    setMoodBellRule: (mood) => {
+      const result = setMoodBellRuleSystem(state, mood);
       state = commit(emit, result.state, result.events);
     },
     resetSave: async () => {
@@ -286,9 +306,20 @@ export async function startSimRuntime(
     debug: {
       spawnSprout: (sproutType) => {
         if (!isDev) return;
-        const sprout = { id: `debug-sprout-${state.tickCount}-${state.sprouts.length}`, sproutType, tile: NURSERY_TILE, state: 'idle' as const };
+        // Debug-only: not part of the deterministic tick stream (this whole
+        // hook already mutates `state` imperatively, outside runTick), so a
+        // plain Math.random() draw for mood is fine here — unlike
+        // spawnSystem's own pickMood call, which MUST use the seeded RNG.
+        const mood = pickMood(Math.random());
+        const sprout = {
+          id: `debug-sprout-${state.tickCount}-${state.sprouts.length}`,
+          sproutType,
+          mood,
+          tile: NURSERY_TILE,
+          state: 'idle' as const,
+        };
         state = { ...state, sprouts: [...state.sprouts, sprout] };
-        const event: GameEvent = { type: 'sprout:spawned', sproutId: sprout.id, sproutType, podId: 'debug' };
+        const event: GameEvent = { type: 'sprout:spawned', sproutId: sprout.id, sproutType, mood, podId: 'debug' };
         state = commit(emit, state, [event]);
       },
       grantDewdrops: (amount) => {

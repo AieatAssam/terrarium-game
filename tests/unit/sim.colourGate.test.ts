@@ -65,7 +65,7 @@ function withGate(overrides: Partial<SimState> = {}): SimState {
 }
 
 function withSprout(state: SimState, sproutType: SproutTypeId, id = 'test-sprout', tile = NURSERY_TILE): SimState {
-  return { ...state, sprouts: [...state.sprouts, { id, sproutType, tile, state: 'idle' as const }] };
+  return { ...state, sprouts: [...state.sprouts, { id, sproutType, mood: 'sunny' as const, tile, state: 'idle' as const }] };
 }
 
 /** Runs the automation system until nothing more happens, collecting every event. */

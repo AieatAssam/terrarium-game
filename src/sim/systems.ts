@@ -5,7 +5,7 @@
 // intent: a drop, a purchase) from src/sim/runtime.ts, the one module
 // allowed to hold live mutable state and talk to the event bus.
 
-import type { AchievementId, AutomationId, HabitatId, SproutTypeId, UpgradeId } from '../core/ids';
+import type { AchievementId, AutomationId, HabitatId, MoodId, SproutTypeId, UpgradeId } from '../core/ids';
 import type { GameEvent } from '../events/types';
 import { ACHIEVEMENT_LIST } from '../data/achievements';
 import { sproutMatchesHabitat, SPROUT_TYPES } from '../data/sproutTypes';
@@ -15,9 +15,16 @@ import {
   getNurseryPaceMultiplier,
   getNurseryRhythm,
   getPodSpawnIntervalMs,
+  pickMood,
   pickSproutType,
 } from '../data/spawning';
-import { isColourGateUnlocked, isGardenSlideUnlocked, type ColourGateUnlockState } from '../data/unlocks';
+import {
+  isColourGateUnlocked,
+  isGardenSlideUnlocked,
+  isMoodBellUnlocked,
+  type ColourGateUnlockState,
+  type MoodBellUnlockState,
+} from '../data/unlocks';
 import { nextRandom } from './rng';
 import { TICK_MS } from './loop';
 import type { TileCoord } from './grid';
@@ -28,6 +35,7 @@ import {
   defaultColourGateLanes,
   habitatAtTile,
   HABITAT_TILES,
+  MOOD_BELL_TILE,
   NURSERY_TILE,
   sameTile,
   tileDistance,
@@ -116,23 +124,31 @@ export function spawnSystem(state: SimState): TickResult {
     return { state: { ...state, spawnAccumulatorMs: accumulated, nurseryRhythm: rhythm, nurseryWaitingCount: waitingCount }, events };
   }
 
-  const { value, nextSeed } = nextRandom(state.rngSeed);
-  const sproutType = pickSproutType(value);
+  // Two INDEPENDENT draws — type and mood are deliberately orthogonal
+  // attributes (Mood Bell feature, 2026-08-01). Reusing one draw for both
+  // would make mood a pure function of type (e.g. ember always sunny),
+  // silently collapsing the entire point of a second attribute — see
+  // src/data/spawning.ts's pickMood doc comment.
+  const typeRoll = nextRandom(state.rngSeed);
+  const sproutType = pickSproutType(typeRoll.value);
+  const moodRoll = nextRandom(typeRoll.nextSeed);
+  const mood = pickMood(moodRoll.value);
   const sprout: SproutInstance = {
     id: makeSproutId(state),
     sproutType,
+    mood,
     tile: NURSERY_TILE,
     state: 'idle',
   };
 
-  events.push({ type: 'sprout:spawned', sproutId: sprout.id, sproutType, podId: 'nursery' });
+  events.push({ type: 'sprout:spawned', sproutId: sprout.id, sproutType, mood, podId: 'nursery' });
   return {
     state: {
       ...state,
       spawnAccumulatorMs: accumulated - interval,
       nurseryRhythm: rhythm,
       nurseryWaitingCount: waitingCount,
-      rngSeed: nextSeed,
+      rngSeed: moodRoll.nextSeed,
       sprouts: [...state.sprouts, sprout],
     },
     events,
@@ -294,6 +310,51 @@ function habitatIsFull(state: SimState, habitatId: HabitatId): boolean {
   return (state.habitats[habitatId]?.count ?? 0) >= capacity;
 }
 
+// ---------------------------------------------------------------------------
+// Mood Bell routing (GameRules §9.5/§7.3/§9.6 stage 4) — a second, orthogonal
+// Sprout attribute ("mood") and a third automation that routes on it.
+// ---------------------------------------------------------------------------
+// Unlike the Colour Gate (one fixed lane -> one fixed habitat), the Bell has
+// no per-lane habitat map: it carries a Sprout of the mood it currently
+// welcomes to THAT SPROUT'S OWN correct habitat, computed from its type —
+// the destination varies per ride, the Slide's never does.
+
+/**
+ * The one habitat this Sprout type belongs in, or null (Star — no single
+ * correct habitat, same reason the Colour Gate never offers it as a lane
+ * choice). Pure and exported so the UI can explain the Bell without
+ * duplicating this lookup.
+ */
+export function moodBellDestination(sproutType: SproutTypeId): HabitatId | null {
+  return SPROUT_TYPES[sproutType].habitatId;
+}
+
+/**
+ * True when a Sprout is "claimed" by the Mood Bell — i.e. matches its
+ * current rule AND the Bell actually exists. This is the traffic-partition
+ * fix: without it, the Garden Slide and Colour Gate (checked earlier in
+ * automationSystem's per-tick dispatch loop, by build order) would keep
+ * taking any Sprout they're independently eligible for, and the Bell — which
+ * is ALWAYS checked after them below — would never see a matching Sprout
+ * before they did. A newly-built Bell would then visibly do nothing for its
+ * cost. Both the Garden Slide branch and the Colour Gate's leg-1 (fresh
+ * Nursery pickup) branch of `planRide` exclude any Sprout this returns true
+ * for, so building the Bell genuinely reassigns one whole mood's worth of
+ * traffic away from them — a real partition, not a priority race. False
+ * whenever the Bell doesn't exist yet, so the Slide/Gate are completely
+ * unaffected until the player actually builds it.
+ *
+ * "Exists" is checked via `state.automations` (an actual instance present),
+ * not `unlockedAutomations` — the same idiom `colourGateBehavioralState`
+ * already uses for "is the Slide built". In real play the two are always in
+ * sync (`purchaseUpgrade` adds to both atomically), but keying off the
+ * concrete instance is the structurally correct signal, consistent with how
+ * the rest of this file answers "does this automation concretely exist".
+ */
+function isMoodBellClaimed(state: SimState, sprout: SproutInstance): boolean {
+  return sprout.mood === state.moodBellRule && state.automations.some((a) => a.automationId === 'moodBell');
+}
+
 /** One journey an automation is about to start. */
 interface RidePlan {
   sprout: SproutInstance;
@@ -319,11 +380,25 @@ function planRide(
   sprouts: SproutInstance[],
   justArrived: ReadonlySet<string>,
 ): RidePlan | null {
+  if (instance.automationId === 'moodBell') {
+    const sprout = findIdleAt(sprouts, NURSERY_TILE, (s) => {
+      if (s.mood !== state.moodBellRule) return false;
+      const dest = moodBellDestination(s.sproutType);
+      return dest !== null && !habitatIsFull(state, dest);
+    });
+    if (!sprout) return null;
+    const dest = moodBellDestination(sprout.sproutType) as HabitatId;
+    return { sprout, fromTile: NURSERY_TILE, toTile: HABITAT_TILES[dest] };
+  }
+
   if (instance.automationId === 'gardenSlide') {
     const dest = instance.targetHabitatId;
     if (!dest || habitatIsFull(state, dest)) return null; // target full — wait rather than force a rejected delivery
     const wantType = HABITATS[dest].matchSproutType;
-    const sprout = findIdleAt(sprouts, NURSERY_TILE, (s) => s.sproutType === wantType);
+    // Excludes a Sprout the Mood Bell has claimed (see isMoodBellClaimed) —
+    // once the Bell exists, a Sprout of its current mood is the Bell's, even
+    // if it also matches the Slide's fixed target type.
+    const sprout = findIdleAt(sprouts, NURSERY_TILE, (s) => s.sproutType === wantType && !isMoodBellClaimed(state, s));
     return sprout ? { sprout, fromTile: NURSERY_TILE, toTile: HABITAT_TILES[dest] } : null;
   }
 
@@ -342,6 +417,11 @@ function planRide(
   // thing this redesign exists to fix (GameRules §9.4). One tick is enough to
   // separate them, and it costs nothing: leg 1 (8 ticks) plus this beat plus
   // leg 2 (25 ticks) is 34 ticks, the same as the old direct ride.
+  //
+  // Deliberately NOT excluded by isMoodBellClaimed: a Sprout already standing
+  // at the signpost started this journey before (or independent of) the
+  // Bell's claim on its mood, and must be allowed to finish it — only a FRESH
+  // Nursery pickup (leg 1, below) is partitioned away from the Bell.
   const atGate = findIdleAt(sprouts, COLOUR_GATE_TILE, (s) => !justArrived.has(s.id) && canGoOn(s) !== null);
   if (atGate) {
     return { sprout: atGate, fromTile: COLOUR_GATE_TILE, toTile: HABITAT_TILES[canGoOn(atGate) as HabitatId] };
@@ -349,7 +429,8 @@ function planRide(
 
   // Leg 1: call one forward from the Nursery — but only one the Gate can
   // actually place, so nobody is invited to a journey that ends nowhere.
-  const atNursery = findIdleAt(sprouts, NURSERY_TILE, (s) => canGoOn(s) !== null);
+  // Also excludes a Sprout the Mood Bell has claimed (see isMoodBellClaimed).
+  const atNursery = findIdleAt(sprouts, NURSERY_TILE, (s) => canGoOn(s) !== null && !isMoodBellClaimed(state, s));
   return atNursery ? { sprout: atNursery, fromTile: NURSERY_TILE, toTile: COLOUR_GATE_TILE } : null;
 }
 
@@ -569,6 +650,21 @@ export function setColourGateLane(state: SimState, lane: ColourGateLane, sproutT
   };
 }
 
+/**
+ * Sets the Mood Bell's rule: which mood it currently welcomes. Mirrors
+ * `setColourGateLane`'s no-op-if-unchanged shape — a single toggle rather
+ * than a 2-lane map, so there is no "nobody yet"/null case to clear.
+ *
+ * No-ops (no event) when nothing would change, so the UI can call it freely.
+ */
+export function setMoodBellRule(state: SimState, mood: MoodId): TickResult {
+  if (state.moodBellRule === mood) return { state, events: [] };
+  return {
+    state: { ...state, moodBellRule: mood },
+    events: [{ type: 'automation:moodBellRuleChanged', mood }],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Immediate (non-tick) reactions to player intent — called directly from
 // src/sim/runtime.ts, not part of the runTick systems array.
@@ -641,6 +737,12 @@ export function adjudicateAutomationDrop(state: SimState, sproutId: string, auto
     if (sprout.sproutType !== HABITATS[dest].matchSproutType) return decline('wrongKind');
     if (habitatIsFull(state, dest)) return decline('destinationFull');
     toTile = HABITAT_TILES[dest];
+  } else if (automationId === 'moodBell') {
+    if (sprout.mood !== state.moodBellRule) return decline('wrongKind');
+    const dest = moodBellDestination(sprout.sproutType);
+    if (!dest) return decline('wrongKind'); // Star: no single correct habitat
+    if (habitatIsFull(state, dest)) return decline('destinationFull');
+    toTile = HABITAT_TILES[dest]; // single leg, no "which leg" split unlike the Gate
   } else {
     const dest = colourGateDestination(state.colourGateLanes, sprout.sproutType);
     if (!dest) return decline('wrongKind');
@@ -673,6 +775,14 @@ export function colourGateBehavioralState(state: SimState): ColourGateUnlockStat
   };
 }
 
+/** Behavioral gate for purchasing moodBellUnlock — both prior automations already built. Exported so the UI can explain the gate (see moodBellLockReason). */
+export function moodBellBehavioralState(state: SimState): MoodBellUnlockState {
+  return {
+    gardenSlideBuilt: state.unlockedAutomations.includes('gardenSlide'),
+    colourGateBuilt: state.unlockedAutomations.includes('colourGate'),
+  };
+}
+
 /** Purchases an upgrade: applies the effect and, for colourGateUnlock specifically, auto-builds the Colour Gate — but only once its behavioral unlock condition (docs/GAME_DESIGN.md) is actually met. Silently no-ops (no charge) if unaffordable, maxed, or (colourGateUnlock only) not yet behaviorally unlocked. */
 export function purchaseUpgrade(state: SimState, upgradeId: UpgradeId): TickResult {
   const def = UPGRADES[upgradeId];
@@ -680,6 +790,9 @@ export function purchaseUpgrade(state: SimState, upgradeId: UpgradeId): TickResu
   if (level >= def.maxLevel) return { state, events: [] };
 
   if (upgradeId === 'colourGateUnlock' && !isColourGateUnlocked(colourGateBehavioralState(state))) {
+    return { state, events: [] };
+  }
+  if (upgradeId === 'moodBellUnlock' && !isMoodBellUnlocked(moodBellBehavioralState(state))) {
     return { state, events: [] };
   }
 
@@ -696,6 +809,7 @@ export function purchaseUpgrade(state: SimState, upgradeId: UpgradeId): TickResu
   let automations = state.automations;
   let unlockedAutomations = state.unlockedAutomations;
   let colourGateLanes = state.colourGateLanes;
+  let moodBellRule = state.moodBellRule;
   if (upgradeId === 'colourGateUnlock') {
     const instanceId = 'colourGate-1';
     const instance: AutomationInstance = {
@@ -716,6 +830,25 @@ export function purchaseUpgrade(state: SimState, upgradeId: UpgradeId): TickResu
     events.push({ type: 'automation:built', automationId: 'colourGate', instanceId });
     events.push({ type: 'automation:colourGateRuleChanged', lanes: { ...colourGateLanes } });
   }
+  if (upgradeId === 'moodBellUnlock') {
+    const instanceId = 'moodBell-1';
+    const instance: AutomationInstance = {
+      id: instanceId,
+      automationId: 'moodBell',
+      fromTile: NURSERY_TILE,
+      toTile: MOOD_BELL_TILE,
+      builtAtTick: state.tickCount,
+      carryingSproutId: null,
+      completesAtTick: null,
+    };
+    automations = [...automations, instance];
+    unlockedAutomations = [...unlockedAutomations, 'moodBell'];
+    // Safe default (GameRules §9.1), same reasoning as the Gate's own default rule.
+    moodBellRule = 'sunny';
+    events.push({ type: 'automation:unlocked', automationId: 'moodBell' });
+    events.push({ type: 'automation:built', automationId: 'moodBell', instanceId });
+    events.push({ type: 'automation:moodBellRuleChanged', mood: moodBellRule });
+  }
 
   return {
     state: {
@@ -725,6 +858,7 @@ export function purchaseUpgrade(state: SimState, upgradeId: UpgradeId): TickResu
       automations,
       unlockedAutomations,
       colourGateLanes,
+      moodBellRule,
     },
     events,
   };

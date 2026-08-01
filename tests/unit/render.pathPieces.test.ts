@@ -67,15 +67,18 @@ describe('GARDEN_PATH_PIECES', () => {
     const counts = new Map<string, number>();
     for (const { piece } of GARDEN_PATH_PIECES) counts.set(piece, (counts.get(piece) ?? 0) + 1);
     // Layout: a trunk north out of the Nursery (8,8) to the Colour Gate (8,6),
-    // which forks west to (4,4) and east to (12,4), plus the untouched southern
-    // run to (8,13) — one junction at the Gate, two corners where the lanes
-    // turn north, three dead ends at the habitats, straights everywhere else.
-    // No cross piece is used by this network (the cross art exists for future
+    // which forks west to (4,4) and east to (12,4), the southern run to
+    // (8,13), and (2026-08-01) a short decorative spur east to the Mood Bell
+    // (9,8) — TWO junctions now (the Gate's fork, and the Nursery itself,
+    // which became a 3-way tee the moment the Bell's spur gave it a third
+    // arm), two corners where the lanes turn north, FOUR dead ends (three
+    // habitats plus the Bell's own spur tip), straights everywhere else. No
+    // cross piece is used by this network (the cross art exists for future
     // layouts).
-    expect(counts.get('tee')).toBe(1);
+    expect(counts.get('tee')).toBe(2);
     expect(counts.get('corner')).toBe(2);
-    expect(counts.get('end')).toBe(3);
-    expect(counts.get('straight')).toBe(GARDEN_PATH_TILES.length - 6);
+    expect(counts.get('end')).toBe(4);
+    expect(counts.get('straight')).toBe(GARDEN_PATH_TILES.length - 8);
     expect(counts.get('cross')).toBeUndefined();
   });
 
@@ -101,9 +104,10 @@ describe('GARDEN_PATH_PIECES', () => {
     // used to sit in open grass.
     expect(at(GARDEN_SLIDE_TILE.x, GARDEN_SLIDE_TILE.z)).toBeDefined();
     expect(at(COLOUR_GATE_TILE.x, COLOUR_GATE_TILE.z)).toBeDefined();
-    // The Nursery is a plain straight now: the trunk leaves north, the Meadow
-    // run leaves south, and nothing else touches it.
-    expect(at(NURSERY_TILE.x, NURSERY_TILE.z)?.piece).toBe('straight');
+    // The Nursery is a 3-way tee (2026-08-01): the trunk leaves north, the
+    // Meadow run leaves south, and the Mood Bell's decorative spur leaves
+    // east — it used to be a plain straight before the Bell's spur existed.
+    expect(at(NURSERY_TILE.x, NURSERY_TILE.z)?.piece).toBe('tee');
     for (const tile of Object.values(HABITAT_TILES)) {
       expect(at(tile.x, tile.z)?.piece).toBe('end');
     }
@@ -170,16 +174,17 @@ describe('conveyor flow direction', () => {
     // neighbour and instead keeps heading outward into the habitat.
     const distance = pathDistancesFromNursery();
     const key = (x: number, z: number) => `${x},${z}`;
-    const habitatKeys = new Set(Object.values(HABITAT_TILES).map((t) => key(t.x, t.z)));
-    for (const { tile, flowDirection } of GARDEN_PATH_PIECES) {
+    for (const { tile, piece, flowDirection } of GARDEN_PATH_PIECES) {
       if (key(tile.x, tile.z) === key(NURSERY_TILE.x, NURSERY_TILE.z)) continue; // fan-out junction
       const here = distance.get(key(tile.x, tile.z));
       expect(here, `tile ${tile.x},${tile.z} unreachable`).toBeDefined();
       const step = DIRECTIONS[flowDirection];
       const there = distance.get(key(tile.x + step.x, tile.z + step.z));
-      if (habitatKeys.has(key(tile.x, tile.z))) {
-        // Dead end: the flow target is off the path network entirely, i.e. it
-        // continues outward rather than doubling back onto a nearer tile.
+      // Dead end (piece === 'end', not just a habitat — the Mood Bell's own
+      // spur tip at (9,8) is one too, 2026-08-01): the flow target is off
+      // the path network entirely, i.e. it continues outward rather than
+      // doubling back onto a nearer tile.
+      if (piece === 'end') {
         expect(there, `dead end ${tile.x},${tile.z} turned back`).toBeUndefined();
       } else {
         expect(there, `tile ${tile.x},${tile.z}`).toBe((here as number) + 1);

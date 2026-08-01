@@ -9,7 +9,7 @@
 //  - Owns and creates its own AudioSystem (src/audio) unless one is injected
 //    (tests, or a future integrator wiring point).
 
-import type { SproutTypeId, UpgradeId } from '../core/ids';
+import type { MoodId, SproutTypeId, UpgradeId } from '../core/ids';
 import { isDev } from '../core/env';
 import type { EventBus } from '../events';
 import { createAudioSystem, type AudioSystem } from '../audio';
@@ -22,6 +22,7 @@ import { createNurseryNote } from './components/nurseryNote';
 import { createDebugPanel, type DebugPanelHooks } from './components/debugPanel';
 import { createHud } from './components/hud';
 import { createJournalPanel } from './components/journal';
+import { createMoodBellPanel } from './components/moodBell';
 import { createNav } from './components/nav';
 import { createOnboarding } from './components/onboarding';
 import { createReturnDialog } from './components/returnDialog';
@@ -41,6 +42,8 @@ export interface MountUIOptions extends BuildMenuHooks {
   getUpgradeLockReason?: (upgradeId: UpgradeId) => string | null;
   /** Sets one of the Colour Gate's two lane cards; null means "nobody for now". */
   onSetColourGateLane?: (lane: ColourGateLane, sproutType: SproutTypeId | null) => void;
+  /** Sets the Mood Bell's single rule. */
+  onSetMoodBellRule?: (mood: MoodId) => void;
   /** Dev-only debug controls — only rendered when isDev is true AND this is provided. */
   debug?: DebugPanelHooks;
 }
@@ -96,6 +99,7 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
   });
   const achievementsPanel = createAchievementsPanel(store);
   const colourGatePanel = createColourGatePanel(store, { onSetColourGateLane: options.onSetColourGateLane });
+  const moodBellPanel = createMoodBellPanel(store, { onSetMoodBellRule: options.onSetMoodBellRule });
   const settingsPanel = createSettingsPanel(audio);
   const creditsPanel = createCreditsPanel();
   const returnDialog = createReturnDialog(bus);
@@ -105,7 +109,7 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
   // GameRules §9.7 wants the recommendation, not just the diagnosis.
   const nurseryNote = createNurseryNote(store, { onOpenUpgrades: (trigger) => upgradesPanel.open(trigger) });
 
-  preloadManifestIcons(['ui.icon.journal', 'ui.icon.settings', 'ui.icon.credits', 'ui.icon.colourGate']);
+  preloadManifestIcons(['ui.icon.journal', 'ui.icon.settings', 'ui.icon.credits', 'ui.icon.colourGate', 'ui.icon.moodBell']);
 
   const nav = createNav([
     {
@@ -139,6 +143,15 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
       isAvailable: colourGatePanel.isAvailable,
     },
     {
+      key: 'moodBell',
+      label: 'Mood Bell',
+      iconHtml: () => iconHtml('ui.icon.moodBell', icons.moodBell),
+      isOpen: moodBellPanel.isOpen,
+      open: moodBellPanel.open,
+      // Hidden until the player actually owns a Bell.
+      isAvailable: moodBellPanel.isAvailable,
+    },
+    {
       key: 'settings',
       label: 'Settings',
       iconHtml: () => iconHtml('ui.icon.settings', icons.settings),
@@ -165,6 +178,7 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
     upgradesPanel.overlay,
     achievementsPanel.overlay,
     colourGatePanel.overlay,
+    moodBellPanel.overlay,
     settingsPanel.overlay,
     creditsPanel.overlay,
     returnDialog.overlay,
@@ -184,6 +198,7 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
       upgradesPanel.dispose();
       achievementsPanel.dispose();
       colourGatePanel.dispose();
+      moodBellPanel.dispose();
       nurseryNote.dispose();
       settingsPanel.dispose();
       returnDialog.dispose();

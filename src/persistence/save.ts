@@ -7,7 +7,7 @@ import { defaultColourGateLanes } from '../sim/layout';
 import { createInitialSimState, type SimState } from '../sim/state';
 import { idbDelete, idbGet, idbSet } from './db';
 
-export const CURRENT_SAVE_VERSION = 3;
+export const CURRENT_SAVE_VERSION = 4;
 
 const SAVE_KEY = 'default';
 
@@ -122,7 +122,33 @@ function migrateEnvelope(envelope: SaveEnvelope): SaveEnvelope {
       };
       return migrateEnvelope({ ...envelope, version: 3, sim: migratedSim });
     }
-    case 3:
+    case 3: {
+      // v3 predates the Mood Bell feature: SproutInstance had no `mood`
+      // field and SimState had no `moodBellRule`. Backfill both and fall
+      // through.
+      //
+      // IMPORTANT: normaliseEnvelope (below) only backfills MISSING
+      // TOP-LEVEL SimState keys — it never reaches into `sprouts[]`. It
+      // covers a missing `moodBellRule` for free (a top-level key), but
+      // this case is the SOLE mechanism backfilling `mood` on individual
+      // sprouts. If this case is ever skipped or wrong, a loaded sprout's
+      // `mood` silently becomes `undefined`, not a default.
+      const sim = envelope.sim as unknown as Omit<SimState, 'sprouts'> &
+        Partial<Pick<SimState, 'moodBellRule'>> & {
+          sprouts: Array<Omit<SimState['sprouts'][number], 'mood'> & Partial<Pick<SimState['sprouts'][number], 'mood'>>>;
+        };
+      const migratedSim: SimState = {
+        ...sim,
+        shapeVersion: 4,
+        moodBellRule: sim.moodBellRule ?? 'sunny',
+        // Deterministic default — migration is pure and cannot re-roll with
+        // RNG, so every pre-existing sprout becomes 'sunny'. A one-time
+        // visual quirk for saves that predate mood, not a gameplay concern.
+        sprouts: sim.sprouts.map((s) => ({ mood: 'sunny', ...s })) as SimState['sprouts'],
+      };
+      return migrateEnvelope({ ...envelope, version: 4, sim: migratedSim });
+    }
+    case 4:
       return envelope;
     default:
       // Unknown version (older pre-migration save, or a newer one this build

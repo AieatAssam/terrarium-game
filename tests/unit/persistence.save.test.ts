@@ -11,7 +11,7 @@ function buildSampleState(): SimState {
     ...state,
     tickCount: 42,
     dewdrops: 13,
-    sprouts: [{ id: 'sprout-1', sproutType: 'ember', tile: { x: 2, z: 3 }, state: 'settled' }],
+    sprouts: [{ id: 'sprout-1', sproutType: 'ember', mood: 'sleepy', tile: { x: 2, z: 3 }, state: 'settled' }],
     habitats: { emberNook: { id: 'emberNook', count: 1, capacity: 4 } },
     unlockedAutomations: ['gardenSlide'],
     upgradeLevels: { podRhythm: 2 },
@@ -61,31 +61,51 @@ describe('migration into v3 (Colour Gate rule + Nursery rhythm)', () => {
 
   /** A v2 envelope: everything a v2 build wrote, and nothing v3 added. */
   function v2Envelope(): unknown {
+    const sample = buildSampleState();
     const {
       colourGateLanes: _lanes,
       nurseryRhythm: _rhythm,
       nurseryWaitingCount: _count,
-      ...v2Sim
-    } = { ...buildSampleState(), shapeVersion: 2 };
+      moodBellRule: _rule,
+      ...v2SimWithoutRule
+    } = { ...sample, shapeVersion: 2 };
+    // A genuine v2 save also predates `mood` (added in v4) — strip it from
+    // every sprout so this fixture is faithful to what a real v2 envelope
+    // actually looked like.
+    const v2Sim = { ...v2SimWithoutRule, sprouts: sample.sprouts.map(({ mood: _mood, ...rest }) => rest) };
     return { version: 2, sim: v2Sim, meta: { lastSavedAt: 1_700_000_000_000 } };
   }
 
   it('gives a returning v2 garden the safe recommended lane rule', async () => {
+    // A v2 save now migrates all the way to the CURRENT version (4, via the
+    // v3 Mood Bell step added 2026-08-01) — v3 is no longer terminal.
     await idbSet('default', v2Envelope());
     const loaded = await loadGame();
-    expect(loaded?.version).toBe(3);
-    expect(loaded?.sim.shapeVersion).toBe(3);
+    expect(loaded?.version).toBe(4);
+    expect(loaded?.sim.shapeVersion).toBe(4);
     expect(loaded?.sim.colourGateLanes).toEqual(defaultColourGateLanes());
+  });
+
+  it('a v2 garden also picks up the v3->v4 Mood Bell backfill along the way', async () => {
+    await idbSet('default', v2Envelope());
+    const loaded = await loadGame();
+    expect(loaded?.sim.moodBellRule).toBe('sunny');
+    for (const sprout of loaded?.sim.sprouts ?? []) {
+      expect(sprout.mood).toBe('sunny');
+    }
   });
 
   it('keeps every pre-existing field of a v2 garden untouched', async () => {
     // The migration must add, never rewrite: a returning player's Dewdrops,
-    // Sprouts, homes and progress are exactly as they left them.
+    // Sprouts, homes and progress are exactly as they left them. `mood` is
+    // the one exception — a genuine v2 save never had it (added in v4), so
+    // it is legitimately BACKFILLED (to 'sunny'), not preserved; every OTHER
+    // sprout field must still match exactly.
     const original = buildSampleState();
     await idbSet('default', v2Envelope());
     const loaded = await loadGame();
     expect(loaded?.sim.dewdrops).toBe(original.dewdrops);
-    expect(loaded?.sim.sprouts).toEqual(original.sprouts);
+    expect(loaded?.sim.sprouts).toEqual(original.sprouts.map((s) => ({ ...s, mood: 'sunny' })));
     expect(loaded?.sim.habitats).toEqual(original.habitats);
     expect(loaded?.sim.upgradeLevels).toEqual(original.upgradeLevels);
     expect(loaded?.sim.journalDiscovered).toEqual(original.journalDiscovered);
@@ -122,5 +142,64 @@ describe('migration into v3 (Colour Gate rule + Nursery rhythm)', () => {
     await saveGame(state, 1);
     const loaded = await loadGame();
     expect(loaded?.sim.colourGateLanes).toEqual({ west: 'sun', east: null });
+  });
+});
+
+describe('migration into v4 (Mood Bell: per-sprout mood + moodBellRule)', () => {
+  beforeEach(async () => {
+    await clearSave();
+  });
+
+  /** A v3 envelope: everything a v3 build wrote, and nothing v4 (mood) added. */
+  function v3Envelope(): unknown {
+    const sample = buildSampleState();
+    const { moodBellRule: _rule, ...v3SimWithoutRule } = { ...sample, shapeVersion: 3 };
+    const v3Sim = {
+      ...v3SimWithoutRule,
+      sprouts: sample.sprouts.map(({ mood: _mood, ...rest }) => rest),
+    };
+    return { version: 3, sim: v3Sim, meta: { lastSavedAt: 1_700_000_000_000 } };
+  }
+
+  it('backfills mood on every pre-existing sprout, defaulting to sunny', async () => {
+    await idbSet('default', v3Envelope());
+    const loaded = await loadGame();
+    expect(loaded?.version).toBe(4);
+    expect(loaded?.sim.shapeVersion).toBe(4);
+    expect(loaded?.sim.sprouts).toHaveLength(1);
+    for (const sprout of loaded?.sim.sprouts ?? []) {
+      expect(sprout.mood).toBe('sunny');
+    }
+  });
+
+  it('backfills moodBellRule, defaulting to sunny', async () => {
+    await idbSet('default', v3Envelope());
+    const loaded = await loadGame();
+    expect(loaded?.sim.moodBellRule).toBe('sunny');
+  });
+
+  it('keeps every pre-existing field of a v3 garden untouched', async () => {
+    const original = buildSampleState();
+    await idbSet('default', v3Envelope());
+    const loaded = await loadGame();
+    expect(loaded?.sim.dewdrops).toBe(original.dewdrops);
+    expect(loaded?.sim.habitats).toEqual(original.habitats);
+    expect(loaded?.sim.upgradeLevels).toEqual(original.upgradeLevels);
+    expect(loaded?.sim.colourGateLanes).toEqual(original.colourGateLanes);
+    // Every OTHER sprout field survives; only `mood` was ever missing.
+    expect(loaded?.sim.sprouts?.[0]).toMatchObject({
+      id: original.sprouts[0].id,
+      sproutType: original.sprouts[0].sproutType,
+      tile: original.sprouts[0].tile,
+      state: original.sprouts[0].state,
+    });
+  });
+
+  it('never overwrites a mood the save genuinely carries', async () => {
+    const state: SimState = { ...buildSampleState(), moodBellRule: 'sleepy' };
+    await saveGame(state, 1);
+    const loaded = await loadGame();
+    expect(loaded?.sim.moodBellRule).toBe('sleepy');
+    expect(loaded?.sim.sprouts[0].mood).toBe('sleepy'); // buildSampleState's own sprout is genuinely 'sleepy'
   });
 });

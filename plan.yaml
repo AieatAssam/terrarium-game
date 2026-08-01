@@ -1,0 +1,1066 @@
+# plan.yaml — Mood Bell (Phase 2's first feature)
+#
+# AUTHORITATIVE, DETAILED implementation plan. Written so an agent with no
+# prior context on this feature — and less capable than the one who wrote
+# this file — can execute it correctly without guessing. Every phase names
+# exact files, exact signatures, exact constants, and exact verification
+# commands. Where a decision was made (not derived), the "why" is included
+# so a reader can judge whether an edge case the plan didn't anticipate
+# should follow the same reasoning.
+#
+# Relationship to other files:
+#   - work_progress.yaml: lightweight STATUS tracker (what's done, what's
+#     in flight, gotchas found along the way). Read it first to see how far
+#     execution has gotten. It points back here for the "how"; this file
+#     does not duplicate status, only the plan.
+#   - /Users/aieat/.claude/plans/foamy-brewing-liskov.md: the plan-mode
+#     artifact this file was expanded from (outside the repo, not
+#     committed, may not persist across machines — this file is the
+#     durable, in-repo copy of record).
+#   - CLAUDE.md (repo root): the standing project rules this plan complies
+#     with — verification standard (typecheck && lint && test && build),
+#     the sim/render/ui/audio/input architecture boundary, propDims.ts as
+#     the single source of prop dimensions.
+#   - docs/_scratch/GameRules.md: canonical design spec. Section references
+#     below (§9.5, §9.6, §7.3, §16, §9.1, §9.7) are load-bearing — if an
+#     implementation choice would contradict one, STOP and surface it
+#     rather than silently resolving it either direction (CLAUDE.md's
+#     authority rule).
+#
+# GLOBAL INVARIANTS — true in every phase, repeated here because violating
+# any one of them breaks something non-obvious later:
+#   1. Mood is SEPARATE from sproutType. It NEVER changes which habitat is
+#      correct for a Sprout. `sproutMatchesHabitat` (src/data/sproutTypes.ts)
+#      is NOT touched by this feature at all.
+#   2. Mood is assigned via its OWN independent RNG draw, never derived from
+#      the sproutType roll. If you make mood a function of type (e.g. by
+#      reusing the same `random01`/`nextSeed` from `pickSproutType`), ember
+#      would always be the same mood — this silently defeats the entire
+#      point of a second, orthogonal attribute. See Phase 3.
+#   3. Before Mood Bell is built (`unlockedAutomations` does not contain
+#      'moodBell'), the Garden Slide and Colour Gate must behave EXACTLY as
+#      they do today, byte-for-byte. Every exclusion/partition rule below is
+#      conditional on the Bell already existing.
+#   4. Once Mood Bell IS built, it must not be able to visibly do nothing.
+#      A Sprout matching the Bell's current mood must be UNAVAILABLE to the
+#      Garden Slide and Colour Gate's own Nursery-pickup eligibility checks
+#      (see Phase 5's "traffic partition" — this is the single most
+#      important correctness property of this whole feature; a naive
+#      implementation without it is a P0 gameplay bug, not a style nit).
+#   5. TypeScript enforces most of the mechanical completeness for you:
+#      every `Record<AutomationId, X>` in the codebase will fail to compile
+#      until you add a `moodBell` entry. Treat every such compiler error as
+#      a checklist item, not a nuisance — `npm run typecheck` after each
+#      phase is how you find files this plan's author may not have listed.
+#      (Discovered during Phase 1: `src/ui/components/buildMenu.ts` has
+#      THREE such records — `AUTOMATION_LABEL`, `AUTOMATION_ICON`,
+#      `AUTOMATION_MANIFEST_KEY` — not originally listed in the plan-mode
+#      artifact. This file corrects that omission; see Phase 6.)
+
+meta:
+  feature: "Mood Bell — third automation, second Sprout attribute"
+  requested_by: "user, via AskUserQuestion during this session"
+  design_authority: "docs/_scratch/GameRules.md §9.5 (names 'Mood Bell' explicitly), §7.3 (names 'mood' as a future trait), §9.6 stage 4 ('multi-attribute routes'), §16 (Phase 1 Definition of Done, whose closing line anticipates a Phase 2)"
+  scope_lift_already_recorded: "work_progress.yaml decisions: 'Stay inside Phase 1's declared scope, or lift...' — RESOLVED, lifted. This is NOT a GameRules §17 revision (GameRules.md itself never forbade Phase 2 content); confirm this reasoning still holds before touching GameRules.md itself — you should not need to."
+  advisor_review: "This plan was reviewed by an advisor before implementation began. Four issues were found and are folded into the phases below, most importantly the traffic-partition design hole in Phase 5 — do not skip it."
+
+phases:
+  - id: 1
+    name: "Core types + docs/CONTRACTS.md"
+    status: "DONE — see work_progress.yaml for confirmation"
+    goal: "Establish the new string-literal ids everything else depends on, and update the canonical contracts doc that src/core/ids.ts is copied from."
+    files:
+      - src/core/ids.ts
+      - docs/CONTRACTS.md
+    steps:
+      - "In src/core/ids.ts: add `export type MoodId = 'sunny' | 'sleepy';` near SproutTypeId. Add 'moodBell' to the AutomationId union: `'gardenSlide' | 'colourGate' | 'moodBell'`. Add 'moodBellUnlock' to the UpgradeId union (append after 'colourGateUnlock')."
+      - "In docs/CONTRACTS.md: mirror the exact same three type changes in the 'Core string ids' code block."
+      - "In docs/CONTRACTS.md: add `mood: MoodId;` to the `sprout:spawned` event member in the GameEvent union code block, immediately after `sproutType: SproutTypeId;`."
+      - "In docs/CONTRACTS.md: add a new union member `{ type: 'automation:moodBellRuleChanged'; mood: MoodId }` immediately after `automation:colourGateRuleChanged`."
+      - "In docs/CONTRACTS.md: add `moodBellRule?: MoodId;` to the SaveLoadedSnapshot interface, immediately after `colourGateLanes?: ...`."
+      - "In docs/CONTRACTS.md: add a new '### Members added for the Mood Bell' subsection after the existing 'Members added so a player can hand a Sprout to a helper directly' subsection, explaining the three new/changed event fields and why (mirror the existing subsections' style — reason, not just what)."
+      - "In docs/CONTRACTS.md: bump 'Current version is **3**' to **4**, and add one sentence describing what v3→v4 backfills (mood per-sprout, defaulting 'sunny'; moodBellRule, defaulting 'sunny')."
+      - "In docs/CONTRACTS.md: add `moods.ts` to the 'Data-driven definitions' bullet list, one line, same shape as the `sproutTypes.ts` line above it."
+      - "In docs/CONTRACTS.md: fix the topology paragraph under 'World grid' — it currently (pre-this-feature) says 'an untouched southern run... hand-carried fallback route', which was ALREADY STALE before this feature (the Garden Slide has ridden that run automatically since 2026-07-31, per work_progress.yaml). Correct it AND add one clause about the new Mood Bell spur tile (9,8), decorative-only, in the same edit."
+    constraints:
+      - "Do not add a fourth member to SproutTypeId. Mood is a SEPARATE type, not a type variant."
+      - "docs/CONTRACTS.md's own header says it is authoritative and other files are 'copied verbatim' from it — in practice edit src/core/ids.ts and docs/CONTRACTS.md together in the same step, not one then the other later, so they cannot drift even temporarily."
+    verification:
+      - "npm run typecheck — WILL fail after this phase alone (every Record<AutomationId, X> elsewhere in the codebase is now incomplete). This is EXPECTED and does not mean phase 1 is wrong — read the error list, it is your checklist of every file phases 2–7 must touch. Do not attempt to make typecheck pass by reverting phase 1; fix it forward through the later phases instead."
+    reasoning: >
+      Every other phase imports these three types. Getting this wrong (e.g.
+      typo'ing 'moodbell' vs 'moodBell') means every subsequent phase's code
+      fails to compile against the wrong string literal, and the failures
+      will look unrelated to the actual typo. Do this phase first, alone,
+      and let the typecheck errors on this file specifically pass before
+      moving on.
+
+  - id: 2
+    name: "Data layer: moods.ts, spawning.ts, upgrades.ts, unlocks.ts"
+    status: "DONE — typecheck/lint clean on src/data/ alone"
+    goal: "Add the data tables and pure functions the rest of the feature reads from — no sim STATE changes yet (that's phase 3), no dispatch logic yet (phase 5)."
+    files:
+      - src/data/moods.ts (NEW)
+      - src/data/spawning.ts
+      - src/data/upgrades.ts
+      - src/data/unlocks.ts
+    steps:
+      - >
+        Create src/data/moods.ts. Mirror src/data/sproutTypes.ts's exact
+        structure: an interface `MoodDefinition { id: MoodId; displayName:
+        string; primaryColor: string; silhouetteKey: string }`, a
+        `Record<MoodId, MoodDefinition>` constant named `MOODS` with two
+        entries, and `export const MOOD_LIST: MoodDefinition[] =
+        Object.values(MOODS);`. Suggested values (adjust art keys once
+        actual manifest assets exist, per Phase 6):
+          sunny:  { displayName: 'Sunny',  primaryColor: '#FFD54F', silhouetteKey: 'mood.sunny.badge' }
+          sleepy: { displayName: 'Sleepy', primaryColor: '#7986CB', silhouetteKey: 'mood.sleepy.badge' }
+        Do NOT add a habitatId-style field or an "any"-sentinel — mood has
+        no correctness dimension, unlike sproutType's Star exception.
+      - >
+        In src/data/spawning.ts, add `export function pickMood(random01:
+        number): MoodId { return random01 < 0.5 ? 'sunny' : 'sleepy'; }`
+        directly below `pickSproutType`. Add a one-line doc comment stating
+        it MUST be called with its own independent `nextRandom` draw, never
+        the same `random01` used for `pickSproutType` — see Phase 3's
+        spawnSystem change for why.
+      - >
+        In src/data/upgrades.ts, add to the `UPGRADES` record (after
+        `colourGateUnlock`):
+          moodBellUnlock: {
+            id: 'moodBellUnlock',
+            displayName: 'Mood Bell',
+            description: 'Builds the Mood Bell: a helper that reads whether a Sprout is Sunny or Sleepy and carries a whole mood''s worth of them straight home — of any colour. Only purchasable once your Garden Slide and Colour Gate are both already built.',
+            maxLevel: 1,
+            effect: { kind: 'automationUnlock', magnitudePerLevel: 1 },
+            costForLevel: flatCost(1500),
+          },
+        The cost (1500) is a first-pass estimate — roughly 2x colourGateUnlock's
+        700, continuing the existing escalating-unlock pattern. Flag it in
+        a code comment as needing a playtest check, exactly like the
+        original balance values' own comments do.
+      - >
+        In src/data/unlocks.ts: widen the `UnlockThreshold` interface with
+        one new optional field: `requiresColourGateBuilt?: boolean;` (mirrors
+        `requiresGardenSlideBuilt` exactly). Add a new
+        `MoodBellUnlockState { gardenSlideBuilt: boolean; colourGateBuilt:
+        boolean }` interface. Add to `UNLOCK_THRESHOLDS`:
+          moodBell: {
+            automationId: 'moodBell',
+            requiredCorrectPlacements: 0,
+            requiresGardenSlideBuilt: true,
+            requiresColourGateBuilt: true,
+          },
+        Add `export function isMoodBellUnlocked(state: MoodBellUnlockState):
+        boolean { return state.gardenSlideBuilt && state.colourGateBuilt; }`.
+        Add `export function moodBellLockReason(state: MoodBellUnlockState):
+        string | null` mirroring `colourGateLockReason`'s cheapest-to-satisfy-
+        first structure: if `!gardenSlideBuilt` return a sentence about the
+        Slide; else if `!colourGateBuilt` return a sentence about the Gate;
+        else return null. Keep the copy in garden language, no "requires
+        X=true" phrasing (GameRules §11).
+    constraints:
+      - "pickMood must be a pure function of its single random01 argument — no Date.now(), no Math.random(), matching every other pick* function in this codebase (docs/CONTRACTS.md's determinism rule)."
+      - "moodBellLockReason must never mention colourGateUnlock's own price or ticks — those are the Gate's own unlock condition, irrelevant to the Bell's (which only cares whether the Gate automation instance exists, not how it was obtained)."
+    verification:
+      - "npm run typecheck — src/data/*.ts should now be internally consistent (Record<UpgradeId,...>/Record<AutomationId,...> completeness for anything scoped to src/data/). Errors from src/sim/, src/render/, src/ui/ are still expected until later phases."
+      - "npm run lint"
+    reasoning: >
+      This phase is pure data + pure functions, zero sim STATE and zero
+      dispatch logic — it cannot break anything at runtime yet because
+      nothing calls pickMood or reads UNLOCK_THRESHOLDS.moodBell until later
+      phases wire them in. Getting the data shapes right here, mirroring
+      the two existing precedents (sproutTypes.ts, colourGate's unlock
+      shape) exactly, is what makes phases 3–5 mechanical rather than
+      creative.
+
+  - id: 3
+    name: "Sim state + persistence migration v3→v4"
+    status: "DONE — typecheck clean; migration tests pass in Phase 4/5's run below"
+    goal: "Add the two new fields to the save format (SproutInstance.mood, SimState.moodBellRule) and the migration that backfills them for existing saves."
+    files:
+      - src/sim/state.ts
+      - src/persistence/save.ts
+    steps:
+      - "In src/sim/state.ts's SproutInstance interface, add `mood: MoodId;` (import MoodId from '../core/ids' alongside the other id imports already there)."
+      - "In SimState interface, add `moodBellRule: MoodId;` immediately after `colourGateLanes: ColourGateLanes;`, with a doc comment mirroring colourGateLanes' own doc comment style: it is always populated (unlike colourGateLanes it has no 'nobody yet' null state — the Bell always has SOME rule, even before it's built, where the value is simply inert)."
+      - "Bump `export const SIM_SHAPE_VERSION = 3;` to `= 4;`."
+      - "In `createInitialSimState`, add `moodBellRule: 'sunny',` to the returned object, immediately after `colourGateLanes: defaultColourGateLanes(),`."
+      - >
+        In src/persistence/save.ts: bump `export const CURRENT_SAVE_VERSION
+        = 3;` to `= 4;`.
+      - >
+        Rename the existing `case 3: return envelope;` terminal case — it
+        is about to stop being terminal. Insert a NEW `case 3: { ... }`
+        block BEFORE it (i.e. the new case 3 upgrades a v3 envelope to v4;
+        the old terminal case becomes `case 4: return envelope;`). Mirror
+        the exact structure of the existing `case 2` block (variable named
+        `sim`, cast pattern, `migratedSim` object, recursive
+        `migrateEnvelope({ ...envelope, version: 4, sim: migratedSim })`
+        call at the end). The new case's body:
+          const sim = envelope.sim as unknown as Omit<SimState, 'sprouts'> &
+            Partial<Pick<SimState, 'moodBellRule'>> & {
+              sprouts: Array<Omit<SimState['sprouts'][number], 'mood'> & Partial<Pick<SimState['sprouts'][number], 'mood'>>>;
+            };
+          const migratedSim: SimState = {
+            ...sim,
+            shapeVersion: 4,
+            moodBellRule: sim.moodBellRule ?? 'sunny',
+            sprouts: sim.sprouts.map((s) => ({ mood: 'sunny', ...s })) as SimState['sprouts'],
+          };
+          return migrateEnvelope({ ...envelope, version: 4, sim: migratedSim });
+      - >
+        Add a doc-comment note directly above this new case 3, stating
+        PLAINLY: `normaliseEnvelope` (the function below `migrateEnvelope`
+        in this same file) only backfills MISSING TOP-LEVEL SimState keys —
+        it iterates `Object.keys(createInitialSimState(...))`, which never
+        reaches into `sprouts[]`. It covers a missing `moodBellRule` for
+        free (top-level key) but NOT a missing per-sprout `mood` — THIS
+        migration case is the sole mechanism backfilling `mood` on old
+        sprouts. If this case is ever wrong or skipped, a loaded sprout's
+        `mood` silently becomes `undefined`, not a default — this is why
+        Phase 4's persistence test must check per-sprout mood explicitly,
+        not just that loading doesn't throw.
+    constraints:
+      - "Do NOT use Math.random() or any RNG inside the migration — it must be a pure function of the input envelope, same as every other migration case."
+      - "Do not skip renumbering the old terminal case from `case 3` to `case 4` — leaving both a mutating `case 3` and the old no-op `case 3` in the same switch is a duplicate-case TypeScript/runtime bug, not just a style issue."
+    verification:
+      - "npm run typecheck — src/sim/state.ts and src/persistence/save.ts should compile cleanly on their own now (other files will still show errors from Record<AutomationId,...> completeness until phase 6)."
+      - "Do not run the full test suite expecting green yet — tests/unit/persistence.save.test.ts still needs a new v3→v4 case (phase 4) before it will pass; existing v1→v2/v2→v3 migration tests should still pass unmodified."
+    reasoning: >
+      This is the highest-risk phase to get wrong silently: a save-format
+      migration bug does not show up in normal dev-server testing (a fresh
+      save always starts at the current version) — it only surfaces when
+      someone loads an OLD save, which may not happen again until a real
+      player's browser does it. This is why the "sole mechanism" note above
+      is written directly into the code, not just this plan file — so a
+      future reader touching normaliseEnvelope doesn't assume it already
+      covers per-sprout fields.
+
+  - id: 4
+    name: "Sim-layer unit tests: write the failing tests BEFORE the dispatch logic that makes them pass"
+    status: "DONE — all tests written, confirmed red (missing-export errors) before Phase 5 began"
+    goal: "Lock in the exact behavior Phase 5 must implement, including the traffic-partition property, as executable tests — before writing the implementation, so Phase 5 has a concrete definition of done rather than the author's own judgment of 'looks right'."
+    files:
+      - tests/unit/data.moods.test.ts (NEW)
+      - tests/unit/data.spawning.test.ts (extend)
+      - tests/unit/sim.moodBell.test.ts (NEW)
+      - tests/unit/data.unlocks.test.ts (extend)
+      - tests/unit/persistence.save.test.ts (extend)
+    steps:
+      - >
+        tests/unit/data.moods.test.ts — mirror tests/unit/data.sproutTypes.test.ts's
+        structure exactly (it is short, read it first): assert MOOD_LIST has
+        exactly 2 entries, assert every MoodDefinition has a non-empty
+        displayName/primaryColor/silhouetteKey, assert MOODS keys match
+        MoodId's two literal values exhaustively.
+      - >
+        tests/unit/data.spawning.test.ts — add a describe block for
+        pickMood: assert pickMood(0) === 'sunny', pickMood(0.999) ===
+        'sleepy', boundary at 0.5. THEN add the uncorrelation test the
+        advisor review specifically asked for: seed a small deterministic
+        loop (reuse this file's existing RNG-seeding pattern if one exists,
+        else `nextRandom` from src/sim/rng.ts directly) calling
+        pickSproutType and pickMood with TWO INDEPENDENT successive
+        nextRandom draws per iteration (not the same draw for both) across
+        e.g. 200 iterations, and assert the resulting (type, mood) pair
+        counts are NOT collapsed to a single mood per type (e.g. assert
+        that 'ember' appears with BOTH 'sunny' and 'sleepy' at least once
+        in the sample — a weak but sufficient regression guard against the
+        exact bug the advisor flagged: reusing one RNG draw for both rolls).
+      - >
+        tests/unit/sim.moodBell.test.ts — mirror
+        tests/unit/sim.colourGate.test.ts's six describe-block structure
+        (topology, pure destination function, rule-mutation events,
+        end-to-end tick-driven dispatch, fallback/edge cases), adapted for
+        Mood Bell's single-leg shape. Required cases, be exhaustive:
+          - moodBellDestination('ember') === 'emberNook', ('star') === null.
+          - setMoodBellRule: no-op (no event) when unchanged; emits
+            automation:moodBellRuleChanged with the new mood when changed.
+          - Tick-driven: a 'sunny' Sprout at the Nursery boards the Bell
+            (built, rule='sunny') and settles at ITS OWN habitat — run this
+            for at least two DIFFERENT sproutTypes in the same test to prove
+            the destination is genuinely computed per-sprout, not fixed at
+            build time (this is the property that most distinguishes Mood
+            Bell from Garden Slide).
+          - A 'sleepy' Sprout is left idle when the Bell's rule is 'sunny'.
+          - A Star Sprout of the matching mood is NEVER boarded by the Bell
+            (moodBellDestination returns null for it).
+          - The Bell waits (does not dispatch) when its boarded Sprout's own
+            habitat is already full — mirrors the Slide's own
+            habitatIsFull check.
+          - THE PARTITION TEST (do not skip — this is the test that would
+            have caught the advisor's design hole): with all three
+            automations built, a Sprout whose mood matches
+            state.moodBellRule and whose type matches the Colour Gate's
+            OWN currently-configured lane is dispatched by the BELL, not
+            the Gate — assert the resulting sprout:transportStarted event's
+            automationId === 'moodBell', not 'colourGate'. Do the same for
+            the Garden Slide (a Sprout whose mood matches the Bell AND
+            whose type is the Slide's fixed target goes to the Bell, not
+            the Slide). A THIRD case: a Sprout whose mood does NOT match
+            the Bell's rule still goes to the Gate/Slide exactly as before
+            (proves the partition doesn't over-exclude).
+      - >
+        tests/unit/data.unlocks.test.ts — extend for the new threshold
+        shape: isMoodBellUnlocked(false,false)===false,
+        (true,false)===false, (true,true)===true. moodBellLockReason
+        returns non-null in the first two cases, null in the third, and the
+        returned strings never contain the literal substrings
+        'colourGateUnlock' or 'gardenSlide' (garden-language check, mirrors
+        how colourGateLockReason is likely already tested — check that
+        file's existing style first and match it).
+      - >
+        tests/unit/persistence.save.test.ts — extend with a v3-shaped
+        envelope fixture (a sim object missing `mood` on its sprouts and
+        missing `moodBellRule` entirely, `version: 3`), load it through
+        migrateEnvelope, and assert BOTH: (a) every sprout in the result has
+        `mood === 'sunny'`, and (b) `sim.moodBellRule === 'sunny'`. This is
+        the test Phase 3's migration case must satisfy — write it to fail
+        against Phase 3's code if Phase 3 is wrong, not to describe an
+        aspiration.
+    constraints:
+      - "These tests are EXPECTED TO FAIL after this phase (Phase 5's dispatch logic doesn't exist yet) — that is the point. Do not weaken an assertion to make it pass early; if a test seems wrong, fix the test's own reasoning against this plan's Phase 5 spec, not by loosening it."
+      - "Every new test must import real constants (UNLOCK_THRESHOLDS.moodBell.requiredCorrectPlacements, UPGRADES.moodBellUnlock.costForLevel(1), etc.) rather than hardcoding literals — this codebase's own stated convention (see upgrades.ts's cost-curve comment, unlocks.ts's capacity-coupling comment) and the reason a prior balance rebalance didn't silently break assertions elsewhere in this repo."
+    verification:
+      - "npm test — new/extended test files should FAIL at this point (moodBell dispatch logic doesn't exist until Phase 5) with clear, specific assertion failures, not import errors or type errors. If you see import/type errors here, go back to Phases 2–3 — something's shape is wrong."
+      - "npm run typecheck && npm run lint should still pass — test files must compile even though their assertions fail."
+    reasoning: >
+      Writing the partition test BEFORE the partition implementation is the
+      single most important sequencing decision in this whole plan. The
+      advisor review found the traffic-domination bug by READING the
+      dispatch loop's iteration order, not by running anything — a plan
+      that goes straight to "implement planRide's moodBell branch" risks a
+      future implementer doing exactly what the naive first draft of this
+      plan did (add a branch, forget the exclusion) and shipping something
+      that typechecks, has a green build, and is silently broken in actual
+      play. A red test for the partition property, written now, makes that
+      impossible to miss in Phase 5.
+
+  - id: 5
+    name: "Sim logic: dispatch + the traffic partition (the core of the feature)"
+    status: >
+      DONE — full unit suite green (292/292, +34 from Phase 1's 258),
+      typecheck clean except the EXPECTED render/UI Record<AutomationId,...>
+      completeness errors (Phases 6-7). One real implementation fix found
+      during red->green: isMoodBellClaimed originally keyed off
+      `unlockedAutomations.includes('moodBell')`, which the partition test
+      caught as inconsistent with the rest of this file's own idiom
+      (colourGateBehavioralState keys off an actual instance in
+      `state.automations`, not unlockedAutomations) — switched to
+      `state.automations.some(a => a.automationId === 'moodBell')` to match.
+      Also: adding MOOD_BELL_TILE to AUTOMATION_SITE_TILES perturbed
+      tests/unit/render.procgen.test.ts's pinned scenery-scatter
+      tally/length/digest (a new reserved-clearance zone shifts the
+      deterministic scatter sequence, same category of change as when the
+      Colour Gate fork was first added — see that test's own comment,
+      updated in place). Values regenerated via vite-node, not hand-guessed.
+    goal: "Make Phase 4's tests pass. This is where the feature actually becomes real."
+    files:
+      - src/sim/layout.ts
+      - src/sim/systems.ts
+      - src/sim/runtime.ts
+      - src/events/types.ts
+    steps:
+      - >
+        src/events/types.ts: add `mood: MoodId;` to the `sprout:spawned`
+        member (import MoodId). Add
+        `| { type: 'automation:moodBellRuleChanged'; mood: MoodId }`
+        immediately after the `automation:colourGateRuleChanged` member.
+        Add `moodBellRule?: MoodId;` to the save:loaded snapshot interface,
+        after `colourGateLanes?: ...`. (This mirrors docs/CONTRACTS.md's
+        Phase 1 edits exactly — that doc is the spec, this file is the
+        implementation; keep them identical.)
+      - >
+        src/sim/layout.ts: add `export const MOOD_BELL_TILE: TileCoord = {
+        x: 9, z: 8 };` near GARDEN_SLIDE_TILE/COLOUR_GATE_TILE. Add
+        `moodBell: MOOD_BELL_TILE,` to `AUTOMATION_SITE_TILES`. Find the
+        IIFE that builds GARDEN_PATH_TILES (constructs it as a union of
+        Manhattan runs via a helper — read the existing 4-run construction
+        first) and add a 5th short run: `pathBetween(NURSERY_TILE,
+        MOOD_BELL_TILE)`. Update this file's own topology ASCII-diagram
+        comment block to show the new spur (mirror how the diagram already
+        shows the Slide's own spur north of the Nursery).
+      - >
+        src/sim/systems.ts — add `moodBellDestination`:
+          export function moodBellDestination(sproutType: SproutTypeId): HabitatId | null {
+            return SPROUT_TYPES[sproutType].habitatId;
+          }
+        Place it near colourGateDestination, with a doc comment explaining
+        it deliberately reuses the same field colourGateDestination checks
+        via sproutMatchesHabitat, just returning the habitat directly since
+        there's no lane to validate against (naturally null for Star,
+        same reason the Gate excludes it).
+      - >
+        src/sim/systems.ts — add the partition predicate, placed near
+        planRide (it is used BY planRide, define it just above):
+          function isMoodBellClaimed(state: SimState, sprout: SproutInstance): boolean {
+            return state.unlockedAutomations.includes('moodBell') && sprout.mood === state.moodBellRule;
+          }
+        Doc comment: this is Phase 5's core correctness property — read
+        this plan's Phase 4/5 reasoning before changing it. False before
+        the Bell exists (checked via unlockedAutomations, not merely
+        whether an AutomationInstance object exists in state.automations,
+        so a Bell that's unlocked-but-somehow-not-yet-instantiated still
+        counts as claiming — should not be reachable in practice since
+        purchaseUpgrade builds the instance atomically with the unlock, but
+        keying off unlockedAutomations is the same pattern colourGate's own
+        checks already use, for consistency).
+      - >
+        src/sim/systems.ts — modify planRide's EXISTING gardenSlide branch:
+        find the line
+          `const sprout = findIdleAt(sprouts, NURSERY_TILE, (s) => s.sproutType === wantType);`
+        and change the predicate to
+          `(s) => s.sproutType === wantType && !isMoodBellClaimed(state, s)`.
+      - >
+        src/sim/systems.ts — modify planRide's EXISTING colourGate `canGoOn`
+        closure (used by BOTH leg 1 and leg 2 today) — this needs care: the
+        exclusion must apply to LEG 1 (atNursery, a fresh pickup) but NOT
+        leg 2 (atGate, someone already mid-journey at the signpost). Do NOT
+        just add the exclusion inside `canGoOn` itself, since that function
+        is shared by both legs and would wrongly strand someone already at
+        the Gate. Instead, add the exclusion at the LEG 1 call site only:
+        find
+          `const atNursery = findIdleAt(sprouts, NURSERY_TILE, (s) => canGoOn(s) !== null);`
+        and change it to
+          `const atNursery = findIdleAt(sprouts, NURSERY_TILE, (s) => canGoOn(s) !== null && !isMoodBellClaimed(state, s));`
+        Leave the `atGate` (leg 2) line completely untouched.
+      - >
+        src/sim/systems.ts — add planRide's new moodBell branch. Place it
+        as a new top-level `if` before the existing gardenSlide/colourGate
+        branches (order in the function body doesn't affect dispatch
+        priority — that's controlled by automationSystem's iteration over
+        `state.automations`, untouched by this plan — but for readability
+        add moodBell's branch first since it's now this file's newest and
+        simplest case):
+          if (instance.automationId === 'moodBell') {
+            const sprout = findIdleAt(sprouts, NURSERY_TILE, (s) => {
+              if (s.mood !== state.moodBellRule) return false;
+              const dest = moodBellDestination(s.sproutType);
+              return dest !== null && !habitatIsFull(state, dest);
+            });
+            if (!sprout) return null;
+            const dest = moodBellDestination(sprout.sproutType) as HabitatId;
+            return { sprout, fromTile: NURSERY_TILE, toTile: HABITAT_TILES[dest] };
+          }
+        This is a SINGLE LEG (Nursery straight to habitat) — no
+        justArrived/pause beat, unlike the Gate's two-leg shape. Do not add
+        one; automationSystem's generic Phase-1 completion already handles
+        "ends on a habitat tile" via habitatAtTile(instance.toTile) with no
+        changes needed (verify this claim yourself by reading
+        automationSystem before assuming it — Phase 5's file-by-file list
+        says explicitly it needs no changes; if you find it does, that
+        contradicts this plan and should be treated as a stop-and-check
+        moment, not silently patched around).
+      - >
+        src/sim/systems.ts — add `setMoodBellRule`, mirroring
+        `setColourGateLane`'s exact no-op-if-unchanged shape:
+          export function setMoodBellRule(state: SimState, mood: MoodId): TickResult {
+            if (state.moodBellRule === mood) return { state, events: [] };
+            return {
+              state: { ...state, moodBellRule: mood },
+              events: [{ type: 'automation:moodBellRuleChanged', mood }],
+            };
+          }
+      - >
+        src/sim/systems.ts — add `moodBellBehavioralState`, mirroring
+        `colourGateBehavioralState`'s shape (much simpler — no ticks/pile to
+        compute):
+          export function moodBellBehavioralState(state: SimState): MoodBellUnlockState {
+            return {
+              gardenSlideBuilt: state.unlockedAutomations.includes('gardenSlide'),
+              colourGateBuilt: state.unlockedAutomations.includes('colourGate'),
+            };
+          }
+        (import MoodBellUnlockState from '../data/unlocks')
+      - >
+        src/sim/systems.ts — extend `purchaseUpgrade`'s existing
+        `if (upgradeId === 'colourGateUnlock') { ... }` block: add a
+        parallel `if (upgradeId === 'moodBellUnlock') { ... }` block (NOT
+        an else-if chain with the Gate's — keep them as separate sibling
+        `if` statements exactly like the existing code does, so a future
+        third automation follows the same copy-paste-friendly pattern).
+        Inside: gate on `isMoodBellUnlocked(moodBellBehavioralState(state))`
+        the same way the Gate's block gates on `isColourGateUnlocked(...)`
+        — this check happens EARLIER in purchaseUpgrade (near the top,
+        shared cost/level checks) so read the existing colourGateUnlock
+        gate's exact location and mirror it precisely, don't reimplement
+        the gating flow inline in the new block. Build the AutomationInstance:
+          {
+            id: 'moodBell-1',
+            automationId: 'moodBell',
+            fromTile: NURSERY_TILE,
+            toTile: MOOD_BELL_TILE,
+            builtAtTick: state.tickCount,
+            carryingSproutId: null,
+            completesAtTick: null,
+          }
+        (no targetHabitatId — matches colourGate's own instance shape, since
+        Mood Bell's destination varies per ride, same reason the Gate has
+        none). Set `moodBellRule: 'sunny'` on the returned state (the safe
+        default, GameRules §9.1 — mirrors colourGateLanes being reset to
+        defaultColourGateLanes() in this same block). Emit, in order:
+        automation:unlocked, automation:built, automation:moodBellRuleChanged
+        — same event ORDER the colourGate block already uses for its three
+        events, for consistency (a listener that expects unlocked-before-
+        built should see the same ordering for both automations).
+      - >
+        src/sim/systems.ts — extend `adjudicateAutomationDrop`'s existing
+        `if (automationId === 'gardenSlide') { ... } else { ...colourGate
+        logic... }` shape into a proper 3-way branch (gardenSlide /
+        moodBell / colourGate-else), OR keep it as gardenSlide-if /
+        moodBell-else-if / colourGate-final-else — match whichever the
+        existing code's actual structure supports with the smallest diff
+        (read the function fully before choosing). The moodBell case:
+          check sprout.mood === state.moodBellRule -> if not, decline('wrongKind');
+          check moodBellDestination(sprout.sproutType) -> if null, decline('wrongKind');
+          check habitatIsFull(state, dest) -> if full, decline('destinationFull');
+          else beginRide(..., toTile: HABITAT_TILES[dest]) — single leg, no
+          "which leg is this sprout on" branching (unlike the Gate's
+          same-tile check), since Mood Bell only ever has one leg.
+      - >
+        src/sim/runtime.ts — extend the `getUpgradeLockReason` hook. It is
+        currently a single ternary:
+          `upgradeId === 'colourGateUnlock' ? colourGateLockReason(colourGateBehavioralState(state)) : null`
+        Change it to check both ids (a small if/else chain or two ternaries
+        — match the file's existing style):
+          upgradeId === 'colourGateUnlock'
+            ? colourGateLockReason(colourGateBehavioralState(state))
+            : upgradeId === 'moodBellUnlock'
+              ? moodBellLockReason(moodBellBehavioralState(state))
+              : null
+    constraints:
+      - "The partition exclusion (isMoodBellClaimed) must be added to BOTH the gardenSlide branch AND the colourGate leg-1 branch. Missing either one leaves that automation still able to steal the Bell's traffic — Phase 4's partition test covers both automations specifically because of this."
+      - "Do not add the exclusion to colourGate's leg 2 (atGate) — a Sprout already standing at the signpost keeps going even if it happens to match the Bell's current mood; only NEW Nursery pickups are partitioned."
+      - "moodBellDestination must never special-case Star inline — it falls out naturally from SPROUT_TYPES.star.habitatId being null. If you find yourself writing `if (sproutType === 'star') return null;` explicitly, delete it — that's a sign you're not calling SPROUT_TYPES correctly."
+    verification:
+      - "npm run typecheck — src/sim/, src/events/ should be fully clean now. src/render/, src/ui/ still have expected Record<AutomationId,...> completeness errors until Phases 6–7."
+      - "npm test tests/unit/sim.moodBell.test.ts tests/unit/data.moods.test.ts tests/unit/data.spawning.test.ts tests/unit/data.unlocks.test.ts tests/unit/persistence.save.test.ts tests/unit/sim.systems.test.ts tests/unit/sim.determinism.test.ts — ALL must pass, especially the partition test from Phase 4. If the partition test fails, re-read this phase's colourGate/gardenSlide branch edits — this is the most likely place for a subtle miss (e.g. editing canGoOn instead of the leg-1 call site, which would wrongly also exclude leg-2)."
+      - "npm run lint"
+    reasoning: >
+      This phase makes every Phase 4 test pass, in the order that lets you
+      verify incrementally: destination function first (trivial, no state),
+      then rule-setting (trivial, mirrors an existing function), then the
+      unlock gate (mirrors an existing function), then the dispatch branch
+      itself, then — the part that actually matters — the two one-line
+      exclusions in the EXISTING automations' own branches. It is easy to
+      implement everything except those two lines, have every test pass
+      except the partition one, and be tempted to weaken that test instead
+      of finding the missing exclusion. Don't.
+
+  - id: 6
+    name: "Render layer"
+    status: >
+      DONE — typecheck/lint fully clean repo-wide (last Record<AutomationId,...>
+      completions were in this phase: SITE_FALLBACK_COLOR, AUTOMATION_BODIES,
+      buildMenu.ts's 3 tables + a new moodBell icon). Full unit suite green
+      (292/292), build passes. One additional test file needed fixing beyond
+      what Phase 5 anticipated: tests/unit/render.pathPieces.test.ts pinned
+      the Nursery as a plain 'straight' piece and the network's tee/end
+      counts — adding MOOD_BELL_TILE's spur made the Nursery a genuine 3-way
+      tee (2 tees now, not 1) and added a 4th dead end. Generalized the
+      conveyor-flow-direction test's dead-end check from "is this tile a
+      habitat" to "is this piece type 'end'" while fixing it — more correct
+      or the Bell's own spur tip would have needed a second hardcoded
+      exception. propDims.ts's moodBell body reuses AUTOMATION_BODY exactly
+      (same as gardenSlide/colourGate already do) rather than inventing new
+      dimensions.
+    goal: "Make the Bell visible, animated, and its mood-matching logic correct in the 3D scene — and complete the Record<AutomationId,...> tables TypeScript has been complaining about since Phase 1."
+    files:
+      - src/render/propDims.ts
+      - src/render/automation.ts
+      - src/render/sprouts.ts
+      - src/ui/components/buildMenu.ts
+    steps:
+      - >
+        src/render/propDims.ts — add a `moodBell` entry to `AUTOMATION_BODY`
+        (singular, the definition) and confirm it flows into
+        `AUTOMATION_BODIES` (the Record — check whether that's a second
+        literal object or derived from AUTOMATION_BODY; match whichever
+        this file already does for gardenSlide/colourGate). Pick dimensions
+        similar in scale to the existing two bodies (read their actual
+        numbers first, don't invent a wildly different size) — exact
+        numbers can be adjusted visually in Phase 8's browser check, this
+        step just needs SOMETHING plausible so nothing crashes or renders
+        at 0-scale.
+      - >
+        src/render/automation.ts — add `moodBell: <a plausible Color3>,` to
+        `SITE_FALLBACK_COLOR` (pick a colour distinct from the Slide's and
+        Gate's existing fallback colours — check what those are first).
+      - >
+        src/render/automation.ts — widen `matchesSprout`'s signature. It
+        currently takes `(automationId, sproutType)` — change call sites
+        and the function itself to also accept `mood: MoodId` (or restructure
+        to take a small object `{ sproutType, mood }` if that reads more
+        cleanly against the existing two branches — match the file's
+        existing parameter style). Add the new branch:
+          if (automationId === 'moodBell') {
+            return mood === currentMoodBellRule && moodBellDestination(sproutType) !== null;
+          }
+        (import moodBellDestination from '../sim/systems', same import
+        style already used for colourGateDestination in this file).
+      - >
+        src/render/automation.ts — add a `currentMoodBellRule` local
+        variable (module- or closure-scoped, matching exactly how
+        `gateLanes` is currently tracked — read that variable's declaration
+        and every place it's reassigned before adding the mood equivalent).
+        Update it in THREE places, mirroring gateLanes exactly: (a) the
+        `automation:moodBellRuleChanged` bus subscription (new — subscribe
+        alongside the existing `automation:colourGateRuleChanged`
+        subscription), (b) the `save:loaded` handler's
+        `e.snapshot.moodBellRule` restore (new — alongside the existing
+        `e.snapshot.colourGateLanes` restore), (c) confirm there is no
+        third gateLanes-update site being missed — grep the file for every
+        assignment to the `gateLanes` variable and add a parallel one for
+        each.
+      - >
+        src/render/automation.ts — extend the `sprout:transportStarted`
+        habitat-inference ternary. Find:
+          `e.automationId === 'gardenSlide' ? habitatAtTile(e.toTile) : null`
+        and change to:
+          `e.automationId === 'gardenSlide' || e.automationId === 'moodBell' ? habitatAtTile(e.toTile) : null`
+      - >
+        OPTIONAL polish, do only if time permits and do not let it block
+        Phase 8: a subtle emissive-tint shift on the Bell's own structure
+        mesh between a warm tone (rule='sunny') and cool tone
+        (rule='sleepy'), driven by `currentMoodBellRule`, so the toggle
+        reads even with the panel closed. Skip entirely if it risks scope
+        creep — it is explicitly not required for correctness.
+      - >
+        src/render/sprouts.ts — add a small additive badge child-mesh.
+        DO NOT touch `TYPE_FALLBACK_COLOR`, `textureKey`, or
+        `sharedMaterialFor`'s existing cache-key format
+        (`${sproutType}:${cacheKey}`) — those are the existing
+        (sproutType × state) system and widening them multiplies the
+        texture/material count, which the plan-mode design phase
+        deliberately rejected. Instead: when a Sprout's mesh is created
+        (find the `sprout:spawned` handler that builds the sprite mesh),
+        create a second small child mesh — billboarded, parented to the
+        sprite — using the SAME parenting pattern `automation.ts` already
+        uses for its belt beads (find that pattern in automation.ts and
+        copy its shape, not reinvent one). Texture it from
+        `MOODS[sprout.mood].silhouetteKey` via the manifest icon helpers
+        already imported elsewhere in this file (`iconHtml`/manifest
+        lookups — or if this file uses Babylon textures directly rather
+        than DOM icons, use whatever this file's OWN existing pattern for a
+        small non-billboard-sprite decoration is; there may not be a
+        perfect precedent in this exact file — automation.ts's beads are
+        the closest one, use it).
+      - >
+        src/ui/components/buildMenu.ts — complete the THREE
+        `Record<AutomationId, X>` tables discovered during Phase 1's
+        typecheck run: `AUTOMATION_LABEL` (add `moodBell: 'Mood Bell',`),
+        `AUTOMATION_ICON` (add `moodBell: 'moodBell',` — but first confirm
+        `'moodBell'` is a valid key of the `icons` import; if the icons
+        module doesn't have a moodBell icon yet, add a minimal placeholder
+        entry there too rather than leaving this uncompilable — check
+        `../icons` for how gardenSlide/colourGate's icons are registered
+        and mirror it), `AUTOMATION_MANIFEST_KEY` (add `moodBell:
+        'ui.icon.moodBell',`). This file was NOT in the original plan-mode
+        design — it was found by TypeScript during Phase 1's verification
+        and is folded in here. Per docs/GAME_DESIGN.md's own "Known
+        limitations", this build menu is currently decorative/inert (build-
+        mode selection has no consequential effect for the two existing
+        automations either) — completing these tables is a compile-
+        correctness requirement, not new interactive functionality; do not
+        scope-creep into making the build menu newly functional for any
+        automation as part of this feature.
+    constraints:
+      - "Do not widen the (sproutType, state) material/texture cache key format — the badge must be an ADDITIVE second mesh, not a multiplied cache dimension. This was an explicit design decision in plan-mode, not an oversight to 'fix' here."
+      - "Every place gateLanes is read or written in automation.ts needs a mirrored currentMoodBellRule line — grep, don't guess from memory which lines those are."
+    verification:
+      - "npm run typecheck — should be FULLY clean across the whole repo now (this is the last layer with Record<AutomationId,...> completions outstanding)."
+      - "npm run lint"
+      - "npm run build — confirms no runtime-only import issues (e.g. a missing manifest key reference that only throws at runtime, not compile time) surface as build warnings; check the build output for new warnings specifically about moodBell/mood assets."
+    reasoning: >
+      This phase is mechanical almost everywhere EXCEPT the badge mesh,
+      which is the one piece of genuinely new rendering code (everything
+      else is filling in existing generic machinery, per the plan-mode
+      exploration's own finding that the mesh/animation system is already
+      automation-agnostic). Keep the badge additive and cheap — reusing
+      automation.ts's bead-parenting pattern rather than inventing a new
+      one keeps this consistent with how the codebase already solves "small
+      decoration attached to a bigger mesh."
+
+  - id: 7
+    name: "UI layer"
+    status: >
+      DONE — new src/ui/components/moodBell.ts (mirrors colourGate.ts's
+      pattern, single toggle not 2 lanes), src/ui/moodVisuals.ts (mirrors
+      sproutVisuals.ts), 2 new icon glyphs (moodSunny/moodSleepy — circle vs
+      square, shape-first per GameRules §7.1), uiState.ts mirrors
+      moodBellRule exactly like colourGateLanes, ui/index.ts + main.ts wire
+      the nav entry and onSetMoodBellRule hook through to
+      sim.setMoodBellRule. Manually confirmed LIVE in a real browser (not
+      just typecheck): the Upgrades panel's Mood Bell row and its lock
+      reason ("Your Colour Gate needs to be built first.") render from
+      genuinely live sim state, and the Mood Bell nav panel mounts
+      correctly — see Phase 8's notes for the full manual-browser session
+      and why it stopped short of a complete organic flow.
+    goal: "Give the player a way to actually set the Bell's mood rule."
+    files:
+      - src/ui/components/moodBell.ts (NEW)
+      - src/ui/uiState.ts
+      - src/ui/index.ts
+    steps:
+      - >
+        Read src/ui/components/colourGate.ts in full first (you likely
+        already have from earlier exploration this session; re-read if not
+        fresh). Create src/ui/components/moodBell.ts as a new file mirroring
+        its panel-and-card pattern, but with ONE row of 2 choices (Sunny,
+        Sleepy) instead of 2 lanes of 3 choices each. Reuse the same
+        generic infra imports (`createPanel`, `el`, `icons`,
+        `iconHtml`/`onManifestIconsReady`/`preloadManifestIcons`). Do NOT
+        include a per-choice mismatch note (colourGate.ts's `laneNote()`
+        equivalent) — every mood choice is always deliverable by
+        construction (moodBellDestination only ever returns null for Star,
+        which isn't a mood choice at all), unlike a Gate lane the player
+        could point at the wrong habitat.
+      - >
+        The panel's hook: `onSetMoodBellRule?: (mood: MoodId) => void` (or
+        match whatever naming convention colourGate.ts's own hook uses,
+        e.g. `onSetColourGateLane` — pick the equivalent verb/noun order).
+        Gate the panel's visibility/availability on
+        `store.getState().unlockedAutomations.has('moodBell')`, exactly
+        like colourGate.ts gates on `.has('colourGate')`.
+      - >
+        src/ui/uiState.ts — mirror how `colourGateLanes` is mirrored
+        exactly (you read this file's relevant lines during plan-mode
+        exploration: the UiState interface field, the initial state value,
+        the reducer case for the rule-changed event, the save:loaded
+        snapshot restore case). Add: a `moodBellRule: MoodId` field on
+        `UiState` (initial value `'sunny'`), a reducer case for
+        `automation:moodBellRuleChanged` setting it, and a `save:loaded`
+        case restoring it from `event.snapshot.moodBellRule` (with the same
+        `?? prev.moodBellRule` fallback style colourGateLanes' restore
+        uses).
+      - >
+        src/ui/index.ts — wire the new panel: create it alongside where
+        colourGate's panel is created, pass it the `onSetMoodBellRule` hook
+        wired to `runtime.setMoodBellRule` (or whatever the sim-runtime
+        export ends up named — Phase 5 added `setMoodBellRule` to
+        systems.ts; confirm src/sim/runtime.ts re-exports or wraps it the
+        same way it exposes `setColourGateLane`, and if runtime.ts doesn't
+        already have a passthrough, add one mirroring the existing
+        colourGate passthrough exactly). Add a nav button for the new panel
+        (mirror the Colour Gate's nav button — same icon-button pattern,
+        different manifest key/label), gated the same way
+        (unlockedAutomations-driven visibility, matching the existing
+        pattern for when the Gate's own nav button appears/is enabled).
+    constraints:
+      - "src/ui/components/upgrades.ts needs NO changes (confirmed during plan-mode exploration — it's fully data-table-driven). If you find yourself editing it, stop and re-check against Phase 2's UPGRADES.moodBellUnlock entry instead — the row should already render correctly without touching this file."
+    verification:
+      - "npm run typecheck && npm run lint — should be fully clean."
+      - "npm test — full suite, no regressions in existing UI-state tests (src/ui/journalModel.test.ts and any uiState-specific unit tests, if present, should still pass unmodified aside from whatever Phase 4/this phase added)."
+    reasoning: >
+      This phase is the most copy-paste-able of all seven, because Colour
+      Gate's panel is a near-exact structural precedent minus the lane
+      complexity. The main risk is drifting from the existing hook-naming
+      and event-wiring conventions rather than getting the mechanics wrong
+      — match colourGate.ts's naming choices even where this plan uses
+      slightly different words, so the codebase stays internally
+      consistent rather than accumulating two different naming styles for
+      the same kind of thing.
+
+  - id: 8
+    name: "e2e spec + live browser verification"
+    status: >
+      PARTIAL — be honest about exactly what did and didn't get verified,
+      per this repo's own standing rule (a truthful partial beats an
+      optimistic done).
+
+      DONE: tests/e2e/moodBell.dev.spec.ts written (6 tests: build+safe-
+      default, 2 routing tests proving per-sprout destination across
+      different types, a non-matching-mood-stays-idle test, the traffic-
+      partition test, and a real-UI-toggle test that clicks the actual
+      panel buttons rather than a bus shortcut) — typechecks and lints
+      clean, follows this plan's own scope note (grantDewdrops + debug
+      speed control, not the full organic chain).
+
+      DONE, manual browser session (Claude Browser pane, real dev server,
+      not just reading code): reset/cleared the save, confirmed via direct
+      store inspection that `moodBellRule` defaults to 'sunny' before the
+      Bell is even built, opened the Upgrades panel and confirmed the Mood
+      Bell row renders with a LIVE lock reason ("Your Colour Gate needs to
+      be built first.") that changes with real sim state — proves the
+      uiState mirror, the panel component, and getMoodBellRule-adjacent
+      wiring are genuinely connected end to end, not just type-correct.
+
+      NOT DONE, and could not be completed in this session: running
+      moodBell.dev.spec.ts to a passing result, and watching a live ride
+      + partition redirect in the manual browser pane. Both blocked by
+      environment exhaustion, diagnosed concretely, not assumed:
+        - The Claude Browser pane reported `document.hidden === true`
+          mid-session, throttling/pausing its own requestAnimationFrame-
+          driven sim tick loop (dewdropTotal and the Gate's feed-tick
+          countdown both stopped advancing in real time, confirmed by
+          direct polling, even though discrete bus-driven actions like
+          debug-grant-dewdrops clicks still worked).
+        - Playwright runs of the new spec failed twice, at two different
+          severities, both squarely environmental: a full 6-test run hung
+          for 90s on a plain button click's actionability wait (element
+          resolved, click itself never completed) at the SAME step in
+          every one of the 6 independent tests; a follow-up SINGLE-test
+          isolated run (fresh worker, nothing else running) failed at the
+          identical step with "Target page, context or browser has been
+          closed" — a browser/process-level crash signature, not a JS
+          logic error. This matches the exact class of degradation this
+          session's work_progress.yaml already documented earlier today
+          (automation.dev.spec.ts's own environmental flakiness after
+          many hours of sustained heavy Playwright/Babylon/WebGL use in
+          this sandbox) — not something retrying a third time was likely
+          to fix.
+
+      Confidence this doesn't mask a real bug: the exact property the e2e
+      spec exists to catch (the traffic partition, per-sprout destination
+      computation, the toggle's live effect) is ALREADY covered — and
+      passing — in tests/unit/sim.moodBell.test.ts's 18 tests, which
+      exercise the real sim functions directly (not mocks). The e2e spec
+      adds the render/UI/event-wiring layer on top of that, which the
+      manual panel check above partially confirms independently. What's
+      missing is specifically the AUTOMATED, repeatable proof of the full
+      stack together — a real gap, named plainly rather than papered over.
+
+      NEXT SESSION, if resuming this exact gap: re-run
+      `npx playwright test --project=dev tests/e2e/moodBell.dev.spec.ts
+      --workers=1` fresh (new sandbox/session, not appended to this one's
+      already-long Playwright history) before assuming anything is broken.
+    goal: "Prove the feature works end-to-end in a real browser, not just in unit tests against sim state."
+    files:
+      - tests/e2e/moodBell.dev.spec.ts (NEW)
+    steps:
+      - >
+        Read tests/e2e/automation.dev.spec.ts's `buildGardenSlide` helper
+        and its imports (`grantUntilAffordable`, `buyUpgradeViaUI`,
+        `spawnAndDrop`, `installBusRecorder`, etc.) first — reuse them, do
+        not re-derive.
+      - >
+        Write a `buildMoodBell(page)` helper: call `buildGardenSlide(page)`
+        (existing helper — gets Slide built), then drive Colour Gate's own
+        purchase to completion (reuse whatever the existing "Colour Gate:
+        behavioral purchase gate" spec's setup does for feeding + piling,
+        or a debug-speed-multiplier shortcut like automation.dev.spec.ts's
+        own Gate-purchase test already uses to skip the 30-real-second
+        wait — do NOT wait 30 real seconds in this new spec if a debug
+        speed control exists, per this plan's Phase 8 scope note below),
+        then `grantDewdrops` enough for `UPGRADES.moodBellUnlock.costForLevel(1)`
+        and buy it via `buyUpgradeViaUI(page, 'Mood Bell')`.
+      - >
+        Test 1: build Mood Bell, spawn a Sprout of a known mood/type
+        combination via the debug panel (spawn buttons are keyed by
+        sproutType only, per this session's earlier work on
+        popLastSpawnedId — mood is NOT player-selectable at spawn time, it's
+        random; so either (a) spawn several and pick one whose recorded
+        `mood` field — now present on the sprout:spawned event per Phase 5
+        — matches the Bell's default 'sunny' rule, or (b) toggle the Bell's
+        rule via the new UI panel to match whichever mood a debug-spawned
+        Sprout actually got. Prefer (b): it also exercises the new UI panel
+        in the same test). Confirm a sprout:transportStarted event fires
+        with automationId === 'moodBell' and toTile equal to that Sprout's
+        OWN correct habitat tile.
+      - >
+        Test 2: repeat with a Sprout of a DIFFERENT sproutType than test
+        1's, same mood — confirm it ALSO gets carried by the Bell, to ITS
+        OWN (different) habitat. This is the test proving type-agnosticism,
+        matching the plan's top-level Verification section.
+      - >
+        Test 3 (the partition, mirrors Phase 4's unit test but end-to-end):
+        with Colour Gate's lane already configured for some sproutType X,
+        and the Bell's rule set to match a Sprout of type X, spawn that
+        Sprout and confirm the transportStarted event's automationId is
+        'moodBell', not 'colourGate'.
+      - >
+        Test 4: toggle the Bell's rule via the UI panel mid-session (e.g.
+        from 'sunny' to 'sleepy') and confirm a previously-idle Sprout of
+        the NEW matching mood gets picked up on the next tick, while one of
+        the OLD mood does not.
+    constraints:
+      - "SCOPE NOTE, do not violate: this spec must use grantDewdrops + debug shortcuts (debug speed multiplier for the Gate's 30-tick feed wait, direct debug-panel spawns, direct dewdrop grants) rather than the full organic unlock chain end to end. This session already observed the Playwright sandbox degrading to 90-second timeouts on tests that took 34 seconds earlier the SAME session (see work_progress.yaml's 2026-08-01 e2e entries) — a spec that re-derives Slide-unlock (20 placements) + Gate's behavioral feed + both purchases organically, THEN adds Mood Bell's own chain on top, is close to guaranteed to be slow and flaky in this environment. Reuse existing fast-path helpers aggressively."
+      - "Run this spec in ISOLATION (`npx playwright test --project=dev tests/e2e/moodBell.dev.spec.ts --workers=1`), not as part of a full-suite serial run, when verifying — this session's own work_progress.yaml documents why a full-suite run's failures are not reliable signal in this particular sandbox."
+    verification:
+      - "npx playwright test --project=dev tests/e2e/moodBell.dev.spec.ts --workers=1 — all tests pass, run in isolation."
+      - >
+        LIVE BROWSER CHECK (do this in addition to the automated spec, not
+        instead of it — CLAUDE.md: 'source reading is not sufficient
+        evidence for anything that renders'): start the dev server, use the
+        debug panel to build both prior automations and Mood Bell, open the
+        new panel and toggle Sunny/Sleepy, watch a real ride happen on
+        screen to the correct habitat, confirm the badge is visible on
+        Sprouts and reads as two distinct shapes/colours (not just a
+        colour swap — check colorblind-safety by eye, per GameRules §7.1),
+        take a screenshot as evidence.
+    reasoning: >
+      Unit tests (Phase 4) prove the SIM logic is correct against
+      SimState directly. This phase proves the whole stack — event wiring,
+      render subscriptions, UI hook wiring, the actual pixels — agrees with
+      that sim logic. A feature that passes every unit test but was never
+      seen rendering correctly in a real browser is, per this project's own
+      repeatedly-learned lesson (referenced throughout work_progress.yaml),
+      not verified.
+
+  - id: 9
+    name: "Docs: GAME_DESIGN.md, ARCHITECTURE.md (CONTRACTS.md already done in Phase 1)"
+    status: >
+      DONE. GAME_DESIGN.md: new "The Mood Bell's rule" section mirroring
+      "The Colour Gate's rule"'s structure, including the partition
+      behavior explained plainly (not left implicit); the trunk-and-fork
+      topology diagram and its "why this shape" bullets extended for the
+      Bell's spur; "Automation unlocks" extended with the Bell's own
+      (simpler) unlock timing; the upgrades table extended to seven rows;
+      the "Out of scope" scope-lift note (from the earlier balance-pass
+      session) given a one-sentence follow-up naming the Bell as the first
+      feature realizing it. ARCHITECTURE.md: the GameEvent list, the
+      systems-list sentence, the tile-ownership sentence, the src/data/
+      list, and the migration-chain sentence (v1->v2->v3->v4) all updated
+      to mention Mood Bell/mood/moodBellRuleChanged where the existing
+      prose already named the Colour Gate equivalent.
+    goal: "Make the design docs describe reality, matching this project's standing practice of never leaving a shipped mechanic undocumented or a doc describing a mechanic that no longer matches the code."
+    files:
+      - docs/GAME_DESIGN.md
+      - docs/ARCHITECTURE.md
+    steps:
+      - >
+        docs/GAME_DESIGN.md — add a new section mirroring the existing "The
+        Colour Gate's rule" section's structure and tone (quote the
+        GameRules line it fulfills, describe the control, describe the
+        journey, describe the fallback). Explicitly include the partition
+        behavior in plain language: "once built, the Mood Bell claims one
+        whole mood's worth of traffic away from the Garden Slide and Colour
+        Gate — a Sprout matching the Bell's current rule is the Bell's,
+        even if the Slide or Gate would otherwise have carried it" — this
+        is a REAL behavior change to two mechanics the player already
+        understands, and per this plan's Phase 5 reasoning, must not be a
+        silent/hidden priority rule.
+      - >
+        docs/GAME_DESIGN.md — extend the "Progression math" section with
+        the Mood Bell's own unlock timing (both prior automations built,
+        1500 Dewdrops) in the same style as the existing Colour Gate
+        timing paragraph, including the same "first-pass estimate, needs a
+        playtest check" caveat this plan's Phase 2 step used for the cost.
+      - >
+        docs/GAME_DESIGN.md — the "Out of scope for Phase 1" section
+        already has a struck-through, dated note from the earlier
+        scope-lift commit this session made ("LIFTED 2026-08-01..."). Add
+        ONE follow-up sentence there (not a rewrite) noting Mood Bell is
+        the first concrete Phase 2 feature realizing that lift, with a
+        pointer to the new section above.
+      - >
+        docs/ARCHITECTURE.md — find the sentence describing the tick-
+        composed systems list (spawnSystem, dewdropSystem, unlockSystem,
+        automationSystem) and/or wherever Colour Gate's routing is
+        mentioned in prose, and add one clause noting Mood Bell as a third
+        automation with its own partition behavior, mirroring the existing
+        level of detail (this file stays high-level/as-built, not a full
+        design writeup — that's GAME_DESIGN.md's job).
+    constraints:
+      - "Do not touch docs/_scratch/GameRules.md — nothing in this feature requires revising it (confirmed in the original plan-mode design rationale); if while writing these docs you find a genuine contradiction with GameRules, STOP and surface it rather than silently adjusting either the code or GameRules.md."
+    verification:
+      - "Read back both edited docs sections once complete and confirm they'd make sense to someone who has never seen this plan.yaml file — that's the actual bar, not just 'mentions moodBell somewhere'."
+    reasoning: >
+      This project's own history (this session alone) shows what happens
+      when docs drift from code: hours spent later re-discovering and
+      reconciling stale numbers and stale mechanic descriptions. Writing
+      these sections now, while the mechanic is fresh, is cheaper than a
+      future reconciliation pass.
+
+  - id: 10
+    name: "Final full verification, work_progress.yaml update, commit"
+    status: >
+      DONE for verification + work_progress.yaml; commit is the last
+      remaining step. typecheck/lint/test/build all pass clean from this
+      state (292 unit tests, baseline was 258 + 34 new/extended). The
+      re-run-e2e-in-isolation step (this phase's own second bullet) is
+      exactly Phase 8's already-documented environmental blocker — did not
+      re-attempt a third time in the same degraded sandbox; deferred to a
+      fresh session per Phase 8's own status field.
+    goal: "Close out the feature truthfully — only mark it done if every check actually passed."
+    files:
+      - work_progress.yaml
+    steps:
+      - "Run the full verification stack one more time from a clean state: npm run typecheck && npm run lint && npm test && npm run build. All four must pass with ZERO regressions in pre-existing tests (compare test count before/after — this session's baseline was 258 unit tests; the new suite should be 258 + (however many this feature added), never fewer)."
+      - "Re-run tests/e2e/moodBell.dev.spec.ts in isolation one more time from a clean checkout state (not immediately after a long prior run, per this session's own documented environmental-degradation finding) to confirm it's not a fluke."
+      - >
+        Update work_progress.yaml's in_flight entry for this feature (the
+        one titled 'claude session 2026-08-01 (Mood Bell — Phase 2 first
+        feature)') from status PLANNED to DONE, listing: every file
+        actually touched (compare against this plan.yaml's per-phase file
+        lists — note any divergence and why), the exact verification
+        commands run and their results, and — critically, per this file's
+        own standing rule — anything that did NOT get fully verified (e.g.
+        if the optional emissive-tint polish from Phase 6 was skipped, say
+        so plainly rather than letting silence imply it was done).
+      - >
+        If anything from this plan.yaml was deliberately NOT implemented
+        (e.g. the optional Phase 6 polish item), or implemented differently
+        than specified here (e.g. a different site tile than {9,8} because
+        of a conflict discovered during Phase 5), leave a clear note in
+        BOTH this plan.yaml (append a short 'DEVIATIONS' section at the
+        bottom) and work_progress.yaml — do not silently let this file
+        become stale/wrong for the next reader.
+      - "Commit the full changeset with a descriptive message covering the design rationale (mirror this session's earlier commit message style — 'why', not just 'what'), following this repo's git conventions (new commit, not amend, Co-Authored-By line per this session's established pattern)."
+    constraints:
+      - "Never mark this feature DONE in work_progress.yaml if any of the four verification commands failed, or if the browser check from Phase 8 was skipped — a truthful 'blocked' or 'partial' status is explicitly preferred by this project's own CLAUDE.md over an optimistic DONE."
+    verification:
+      - "npm run typecheck && npm run lint && npm test && npm run build — the actual gate for calling this done."
+    reasoning: >
+      This mirrors the exact discipline this session already followed for
+      every other change (balance pass, e2e fixes, Meadow-automation
+      decision) — verify for real, report honestly, update the durable
+      record as part of the work rather than as an afterthought that might
+      never happen if the session ends first.
+
+deviations:
+  - phase: 5
+    what: >
+      isMoodBellClaimed was implemented keying off unlockedAutomations, per
+      this plan's own original text — changed during implementation to key
+      off state.automations.some(a => a.automationId === 'moodBell')
+      instead, after the partition unit test (written per Phase 4, correctly
+      BEFORE this code) failed against a test scenario representing "Bell
+      not built" the way the rest of this codebase actually represents it
+      (an absent instance, not an absent unlockedAutomations entry).
+    why_ok: >
+      Strictly more correct, not a scope change — matches
+      colourGateBehavioralState's own existing idiom. In real play the two
+      signals are always in sync (purchaseUpgrade adds to both atomically),
+      so this has no observable gameplay effect; it only matters for
+      constructed test states.
+  - phase: 6
+    what: >
+      Two files not in this plan's original file lists needed edits, both
+      discovered via TypeScript/test-run errors rather than anticipated up
+      front: src/ui/components/buildMenu.ts (3 Record<AutomationId,...>
+      tables: AUTOMATION_LABEL, AUTOMATION_ICON, AUTOMATION_MANIFEST_KEY)
+      and tests/unit/render.pathPieces.test.ts (pinned piece-type counts
+      shifted when MOOD_BELL_TILE's spur made the Nursery a real tee).
+    why_ok: >
+      Both are mechanical completions of the same "TypeScript enforces
+      Record<AutomationId,...> completeness" pattern this plan's own Global
+      Invariant #5 already anticipated as a general class, just not these
+      two specific files by name.
+  - phase: 8
+    what: >
+      tests/e2e/moodBell.dev.spec.ts was written and verified to typecheck/
+      lint cleanly, but could not be run to a passing (or even a fully
+      diagnosable failing) result in this session — two attempts both
+      failed with environmental signatures (a 90s click-actionability
+      timeout at an identical step across all 6 tests; a browser/context-
+      closed crash on an isolated single-test retry), not a code-level
+      assertion failure.
+    why_ok: >
+      Not actually "ok" in the sense of nothing left to do — this is a real,
+      named gap, not a deviation being excused. Recorded here (and in
+      work_progress.yaml) precisely so a future session does not have to
+      rediscover that the spec exists, is believed correct, and simply
+      needs a fresh, less-exhausted sandbox to prove it. The property it
+      exists to catch is independently covered by
+      tests/unit/sim.moodBell.test.ts's 18 passing tests against the real
+      sim functions, which is why this was judged safe to stop chasing
+      rather than open-endedly retrying against the same degraded
+      environment.
+# If execution diverges from this plan (a different tile chosen, a step
+# skipped, a design decision revised mid-implementation), record it here
+# AND in work_progress.yaml, per Phase 10's own instructions. Do not delete
+# or silently rewrite earlier phase text to match what actually happened —
+# append here instead, so the history of what was planned vs. what was done
+# stays legible.

@@ -4,7 +4,7 @@
 // IMPLEMENTATION_PLAN.yaml's phase-2 B task list. See docs/GAME_DESIGN.md
 // ("Progression math", "Star Sprout rarity") for the reasoning.
 
-import type { SproutTypeId } from '../core/ids';
+import type { MoodId, SproutTypeId } from '../core/ids';
 import { UPGRADES } from './upgrades';
 
 /** Baseline time between nursery pod spawns, before the podRhythm upgrade. */
@@ -39,6 +39,22 @@ export function pickSproutType(random01: number): SproutTypeId {
   }
   // Floating point tail safety net; SPAWN_ORDER's last entry is 'star'.
   return 'star';
+}
+
+/**
+ * Picks a Sprout's mood (Mood Bell feature, 2026-08-01) from a uniform
+ * random value in [0, 1) — a simple 50/50 split, independent of type.
+ *
+ * MUST be called with its OWN `nextRandom` draw, never the same `random01`
+ * passed to `pickSproutType` for the same spawn. Mood is deliberately a
+ * second, orthogonal attribute (GameRules §7.3/§9.6 stage 4) — reusing the
+ * type roll's random value would make mood a pure function of type (e.g.
+ * ember always sunny), silently collapsing the entire point of a second
+ * attribute and leaving the Mood Bell unable to ever carry a mixed set of
+ * types.
+ */
+export function pickMood(random01: number): MoodId {
+  return random01 < 0.5 ? 'sunny' : 'sleepy';
 }
 
 /** Pod spawn interval after the podRhythm upgrade (multiplicative reduction per level). */

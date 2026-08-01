@@ -61,16 +61,17 @@ import { bodyRings, footprintRadius, halfHeight, AUTOMATION_BODIES, AUTOMATION_P
 import { HABITATS } from '../data/habitats';
 import { SPROUT_TYPES } from '../data/sproutTypes';
 import type { EventBus } from '../events/bus';
-import type { AutomationId, HabitatId, SproutTypeId } from '../core/ids';
+import type { AutomationId, HabitatId, MoodId, SproutTypeId } from '../core/ids';
 // Render is allowed to import from sim (only sim may never import render/ui/
 // audio/input) — reused here so the hover-validity preview for a manual drop
 // asks the exact same question `adjudicateAutomationDrop` will ask on the
 // real drop, rather than a second, potentially-diverging guess.
-import { colourGateDestination } from '../sim/systems';
+import { colourGateDestination, moodBellDestination } from '../sim/systems';
 
 const SITE_FALLBACK_COLOR: Record<AutomationId, Color3> = {
   gardenSlide: new Color3(0.55, 0.45, 0.7),
   colourGate: new Color3(0.4, 0.6, 0.55),
+  moodBell: new Color3(0.75, 0.55, 0.35),
 };
 
 /** Standee card bounding footprint for a site marker and its placement ghost. */
@@ -161,7 +162,12 @@ interface SiteMarker {
   carrying: boolean;
   /** Destination habitat is at capacity — exactly when automationSystem
    * declines to dispatch (src/sim/systems.ts, "target full — wait rather than
-   * force a rejected delivery"). */
+   * force a rejected delivery"). Only ever meaningful for a SINGLE fixed
+   * `targetHabitatId` (the Garden Slide). The Mood Bell's destination varies
+   * per ride, so it never gets a `targetHabitatId` here and this stays
+   * `false` for it always — a deliberate v1 simplification (it shows idle
+   * rather than blocked when its only eligible Sprout's habitat happens to
+   * be full), not a bug. */
   destinationFull: boolean;
   /** ms for one bead pass, derived from the sim's own ride duration. */
   passMs: number;
@@ -214,7 +220,7 @@ export interface AutomationManager {
    * habitat, not to gate anything. Null if the site isn't built (no site to
    * ask), true/false once it is.
    */
-  matchesSprout: (automationId: AutomationId, sproutType: SproutTypeId) => boolean | null;
+  matchesSprout: (automationId: AutomationId, sproutType: SproutTypeId, mood: MoodId) => boolean | null;
   dispose: () => void;
 }
 
@@ -427,6 +433,12 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
    * home fills or frees up without waiting for the rule itself to change. */
   let gateLanes: { west: SproutTypeId | null; east: SproutTypeId | null } = { west: null, east: null };
 
+  /** The Mood Bell's rule as last announced — mirrors `gateLanes` above,
+   * simpler shape (one mood, not a 2-lane map). No lamp system in v1: the
+   * Bell has no per-lane visual, only `matchesSprout`'s hover-validity check
+   * reads this. */
+  let moodBellRule: MoodId = 'sunny';
+
   /**
    * Lights each lane lamp for what that lane is actually DOING right now, in
    * three readable states — GameRules §9.4 wants the active rule visible, and
@@ -480,6 +492,10 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
 
     bus.subscribe('automation:colourGateRuleChanged', (e) => applyGateRule(e.lanes)),
 
+    bus.subscribe('automation:moodBellRuleChanged', (e) => {
+      moodBellRule = e.mood;
+    }),
+
     // A restored save replays no `automation:built` — runtime.ts emits only
     // `save:loaded` with a snapshot — so without this an already-built Slide
     // came back as a translucent "not yet built" ghost after every reload, and
@@ -491,12 +507,21 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       // when the player left still reads as jammed when they return.
       for (const id of e.snapshot.unlockedAutomations) markBuilt(id, targets[id] ?? null);
       if (e.snapshot.colourGateLanes) applyGateRule(e.snapshot.colourGateLanes);
+      if (e.snapshot.moodBellRule) moodBellRule = e.snapshot.moodBellRule;
     }),
 
     bus.subscribe('sprout:transportStarted', (e) => {
       const site = sites[e.automationId];
       if (!site) return;
       // A ride implies the structure is built even if we missed the event.
+      // Only the Slide gets a targetHabitatId inferred here: its destination
+      // is fixed, so `habitatAtTile(e.toTile)` is a safe stand-in for the
+      // `automation:built.targetHabitatId` we might have missed. The Mood
+      // Bell's destination varies per ride — inferring one from a single
+      // past delivery would wrongly pin its `destinationFull` tracking to
+      // whichever habitat that one ride happened to visit (see this
+      // module's own "no dedicated blocked visual for the Bell in v1" note
+      // near SITE_FALLBACK_COLOR/markBuilt), so it stays null here.
       markBuilt(e.automationId, e.automationId === 'gardenSlide' ? habitatAtTile(e.toTile) : null);
       site.carrying = true;
       // Pace straight from the sim's own ride duration, so the Garden Slide
@@ -718,11 +743,14 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     return best;
   };
 
-  const matchesSprout = (automationId: AutomationId, sproutType: SproutTypeId): boolean | null => {
+  const matchesSprout = (automationId: AutomationId, sproutType: SproutTypeId, mood: MoodId): boolean | null => {
     const site = sites[automationId];
     if (!site || !site.built) return null;
     if (automationId === 'gardenSlide') {
       return site.targetHabitatId ? HABITATS[site.targetHabitatId].matchSproutType === sproutType : false;
+    }
+    if (automationId === 'moodBell') {
+      return mood === moodBellRule && moodBellDestination(sproutType) !== null;
     }
     return colourGateDestination(gateLanes, sproutType) !== null;
   };

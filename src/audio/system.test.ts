@@ -130,7 +130,7 @@ describe('audio system', () => {
       bus.emit({ type: 'sprout:placed:incorrect', sproutId: 's1', habitatId: 'emberNook' });
       bus.emit({ type: 'habitat:dewdropTick', habitatId: 'emberNook', amount: 1 });
       bus.emit({ type: 'habitat:full', habitatId: 'emberNook' });
-      bus.emit({ type: 'sprout:spawned', sproutId: 's2', sproutType: 'star', podId: 'p1' });
+      bus.emit({ type: 'sprout:spawned', sproutId: 's2', sproutType: 'star', mood: 'sunny', podId: 'p1' });
       bus.emit({ type: 'upgrade:purchased', upgradeId: 'podRhythm', level: 1 });
       bus.emit({ type: 'achievement:unlocked', achievementId: 'firstPlacement' });
       system.playUiClick();
