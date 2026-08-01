@@ -383,39 +383,64 @@ in_flight:
       pass. Full unit suite unaffected (258/258, unchanged from before this
       session's edits — none of these are sim-code changes).
 
-      ENVIRONMENTAL FLAKINESS FINDING, NOT FIXED (separate from the 3 bugs
-      above): running the ENTIRE dev project serially in one ~6-minute
-      Playwright invocation (`--workers=1`, no parallelism) surfaces 3-5
-      failures that do NOT reproduce when the same specs run in isolation
-      seconds apart — including automation.dev.spec.ts's OWN
-      "visibly carries" test failing AGAIN in the full run even after the
-      fixes above, plus load.dev.spec.ts's pickedUp check and
-      manualDrop.dev.spec.ts's transportStarted check (both pre-existing,
-      no causal link to any change this session made — confirmed by reading
-      their failure sites, both are pointer/dispatch timing races already
-      hinted at by this file's spawnandid-pop-race entry and
-      manualDrop.dev.spec.ts's own "a parallel run once starved a page"
-      comment). Root cause for automation.dev.spec.ts's repeat failure
-      specifically: a NATURAL pod spawn (not a debug-spawned one — the
-      podId fix above only protects debug-spawned ids) landing during
-      buildGardenSlide's real-wall-clock setup can leave a stray, untouched
-      idle Sun Sprout at the Nursery that the Slide boards the instant it
-      builds — this is a DIFFERENT mechanism than the id-popping race,
-      structurally can't be fixed by id-tracking, and is now MORE likely to
-      matter than before the Meadow automation change (a stray natural Sun
-      used to be inert under the old emberNook-targeting logic; now the
-      Slide touches it). NOT YET FIXED — needs a drain-then-recount
-      approach in buildGardenSlide (settle every idle Sun via emitDropped,
-      poll until the Sunflower Meadow count stops rising, then top up to
-      exactly capacity-1 using the real post-drain count rather than a
-      hardcoded 10) rather than more probability reduction. This project's
-      own documented standard is to verify via isolated spec runs, not a
-      full serial marathon, so the 3 bugs above are still correctly counted
-      as fixed and verified; this is a distinct, known-but-open item.
-    status: DONE for the 3 named bugs (fixed, isolated-verified, typecheck/
-      lint/unit-test clean). NOT DONE: the natural-pod-stray flakiness in
-      automation.dev.spec.ts's "visibly carries" test (see above), and the
-      preview Playwright project (still never run this session).
+      FOURTH FIX, DONE: the natural-pod-stray race described in the
+      original version of this entry (a NATURAL pod spawn, not a
+      debug-spawned one, landing during buildGardenSlide's real-wall-clock
+      setup could leave a stray idle Sun Sprout the Slide boards the instant
+      it builds — structurally different from the id-popping race, the
+      podId fix above only protects debug-spawned ids) is now fixed with the
+      drain-then-recount approach flagged as needed: added
+      drainIdleSunSprouts (settles every idle Sun — ours or a stray — into
+      Sunflower Meadow, polling until the settled count stops rising, so an
+      in-flight ride finishes rather than being double-processed) and
+      topUpSunflowerMeadowToOneShort (recomputes the live count each
+      iteration rather than a precomputed loop bound, so it self-corrects if
+      a stray gets auto-carried mid-loop), both called in the "visibly
+      carries" test right after buildGardenSlide and before the idle-check.
+      buildGardenSlide's own setup still does 10 Ember + 10 Sun directly
+      (lands Sunflower Meadow at capacity-1 as a side effect in the common
+      no-stray case) so the top-up call is normally a no-op — an earlier
+      version of this fix removed Sun from the setup entirely and made the
+      top-up do all 10 placements unconditionally, which blew the test's 90s
+      budget (test.slow() triples the default 30s) once combined with the
+      environmental slowness below; reverted to the efficient version.
+      CONFIRMED WORKING: re-run twice, and in both the "an idle Slide runs
+      no belt" assertion (the actual bug) now PASSES — the idle-check no
+      longer fails, proving the fix. Something further downstream now fails
+      instead (below), unrelated to this fix.
+
+      ENVIRONMENTAL DEGRADATION FINDING, confirmed but not caused by
+      anything this session changed: repeated Playwright/Chromium launches
+      over this long session have measurably slowed the sandbox — the
+      "unlock + auto-build" test (untouched by any change this session, no
+      call to buildGardenSlide/drainIdleSunSprouts/topUp) took 34s on its
+      first run today and 1.1-1.2 MINUTES on later runs; "Colour Gate:
+      purchase succeeds..." (also untouched — it has its own independent,
+      never-edited 8/6/6 setup, doesn't call any function this session
+      added or changed) started failing on an ordinary
+      `page.click('[data-testid="debug-grant-dewdrops"]')` blowing the
+      whole-test 90s budget, then later failed with "Target page, context
+      or browser has been closed" — a resource-exhaustion signature, not a
+      logic bug. The "visibly carries" test's remaining failure in this
+      degraded state is now "should have caught the Sprout mid-ride"
+      (samples.carried.length===4, needs >4) — a sampling-density timing
+      assertion (the ride-position poll loop, 100ms per read) starved by
+      the same general slowness, not the fixed idle-check. Did not keep
+      re-running against an increasingly tired sandbox chasing this —
+      matches this project's own already-documented pattern (QA_REPORT.md's
+      "flaky under CPU contention... not an application bug",
+      manualDrop.dev.spec.ts's "a parallel run once starved a page badly
+      enough for page.evaluate to outlast the whole test timeout"). A fresh
+      environment (new session, or after the current one's browser
+      processes are reaped) should be checked before trusting a full-suite
+      run's pass/fail as evidence either way.
+    status: DONE for all 4 named bugs (fixed; the first 3 isolated-verified
+      cleanly, the 4th verified by the specific assertion it targeted now
+      passing across 2 reruns, with the environment degrading around it —
+      see above). typecheck/lint/unit-test clean throughout. NOT DONE: the
+      preview Playwright project (still never run this session) — held
+      pending a less-loaded environment rather than run now and risk a
+      false negative.
   - owner: claude session 2026-07-31 (Sunflower Meadow automation)
     files:
       [

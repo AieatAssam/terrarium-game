@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import {
   buyUpgradeViaUI,
   collectConsoleErrors,
+  emitDropped,
   getRecordedEvents,
   getUiState,
   grantDewdrops,
@@ -14,6 +15,7 @@ import {
 // header of ./helpers.ts).
 import { GARDEN_PATH_TILES } from '../../src/render/layout';
 import { UPGRADES } from '../../src/data/upgrades';
+import { getEffectiveHabitatCapacity } from '../../src/data/habitats';
 
 // Both automations auto-build the instant their conditions are met — there is
 // no manual "place it in the world" step in this build (see this session's
@@ -224,27 +226,68 @@ async function buildGardenSlide(page: Page): Promise<void> {
   await grantUntilAffordable(page, UPGRADES.habitatCapacity.costForLevel(1));
   await buyUpgradeViaUI(page, 'Habitat Capacity'); // +3 slots per habitat
   await expect.poll(async () => (await getUiState(page)).upgradeLevels.habitatCapacity).toBe(1);
-  // unlockSystem always targets sunflowerMeadow (2026-07-31). Capacity here is
-  // BASE_CAPACITY (8) + one habitatCapacity level (3) = 11 per habitat.
-  // Sunflower Meadow — the Slide's actual destination — gets 10 of the 20
-  // required correct placements, leaving it exactly one slot short of full so
-  // the very next automated ride (in the "visibly carries" spec below) tips
-  // it to habitat:full without an extra fill loop. Ember/Dew just pad the
-  // remaining 10 placements to reach the 20-placement unlock threshold;
-  // their split no longer determines the Slide's target (that used to be
-  // "whichever fed most" — now it's always Sunflower Meadow, see
-  // unlockSystem's own doc comment in src/sim/systems.ts) and their own
-  // habitats stay well under capacity, so they can't accidentally fire
-  // habitat:full first. CORRECTED 2026-08-01: this used to be 8/6/6, sized
-  // against a habitat capacity of 9 (BASE_CAPACITY was 6 before a since-
-  // superseded rebalance) — against the current capacity of 11 that left
-  // Sunflower Meadow 5 slots short of full, not 1, so the "visibly carries"
-  // spec's blocked-state check below could never actually observe
-  // habitat:full and timed out waiting for it.
-  for (let i = 0; i < 5; i += 1) await spawnAndDrop(page, 'ember', 'emberNook');
-  for (let i = 0; i < 5; i += 1) await spawnAndDrop(page, 'dew', 'dewPond');
+  // unlockSystem always targets sunflowerMeadow (2026-07-31). 10 Ember + 10
+  // Sun hits the 20-placement threshold exactly AND lands Sunflower Meadow
+  // at exactly capacity-1 (11-1=10, at habitatCapacity level 1) as a direct
+  // side effect — efficient in the common case (no separate top-up round
+  // trips needed). Callers that need this exact count GUARANTEED (not just
+  // "usually right") still call drainIdleSunSprouts +
+  // topUpSunflowerMeadowToOneShort afterward: those self-correct for a
+  // natural pod spawn racing the real wall-clock time this setup takes
+  // (work_progress.yaml, 2026-08-01) without redoing all 10 sun placements
+  // from scratch — the top-up loop only adds what's actually still missing.
+  // No Dew: unnecessary once Sun itself supplies half the threshold.
+  for (let i = 0; i < 10; i += 1) await spawnAndDrop(page, 'ember', 'emberNook');
   for (let i = 0; i < 10; i += 1) await spawnAndDrop(page, 'sun', 'sunflowerMeadow');
   await expect.poll(async () => (await getUiState(page)).unlockedAutomations, { timeout: 20_000 }).toContain('gardenSlide');
+}
+
+/** Number of Sun Sprouts recorded as `sprout:settled` into Sunflower Meadow so far (caller's installBusRecorder must include 'sprout:settled'). */
+async function sunflowerMeadowSettledCount(page: Page): Promise<number> {
+  const events = await getRecordedEvents(page);
+  return events.filter((e) => e.type === 'sprout:settled' && e.habitatId === 'sunflowerMeadow').length;
+}
+
+/**
+ * Settles every currently-idle Sun Sprout — this test's own debug spawns AND
+ * any natural pod spawn that happened to land during real wall-clock setup
+ * time — into Sunflower Meadow, then polls until the settled count stops
+ * rising (a stray that's already mid-ride via the Slide isn't idle, so
+ * `emitDropped` on it is a harmless no-op; it settles on its own, which the
+ * poll waits out rather than double-processing). Call this before relying on
+ * "Sunflower Meadow is at exactly N" or "the Slide is genuinely idle" —
+ * without it, a stray natural Sun Sprout sitting idle at the Nursery gets
+ * boarded the instant the Slide is built, silently breaking both.
+ */
+async function drainIdleSunSprouts(page: Page): Promise<void> {
+  let last = -1;
+  for (let i = 0; i < 20; i += 1) {
+    const sunIds = await page.evaluate(() =>
+      (window.__ttSpawnedIds ?? []).filter((s) => s.sproutType === 'sun').map((s) => s.id),
+    );
+    for (const id of sunIds) await emitDropped(page, id, 'sunflowerMeadow');
+    const count = await sunflowerMeadowSettledCount(page);
+    if (count === last) return;
+    last = count;
+    await page.waitForTimeout(150);
+  }
+}
+
+/**
+ * Tops Sunflower Meadow up to exactly one slot short of its current
+ * effective capacity, by manually placing Sun Sprouts one at a time and
+ * re-reading the REAL settled count before each — not a precomputed loop
+ * bound — so it self-corrects if a stray natural Sun Sprout gets auto-
+ * carried by the Slide mid-loop and increments the count out from under it.
+ * Call drainIdleSunSprouts first so there's nothing already idle for the
+ * Slide to grab unexpectedly once this leaves one slot open.
+ */
+async function topUpSunflowerMeadowToOneShort(page: Page): Promise<void> {
+  const level = (await getUiState(page)).upgradeLevels.habitatCapacity ?? 0;
+  const target = getEffectiveHabitatCapacity('sunflowerMeadow', level) - 1;
+  while ((await sunflowerMeadowSettledCount(page)) < target) {
+    await spawnAndDrop(page, 'sun', 'sunflowerMeadow');
+  }
 }
 
 /** Waits until more than `seenBefore` transports have started, then returns the one at that index. */
@@ -268,9 +311,21 @@ test.describe('Garden Slide: visibly carries Sprouts, along the path, at the upg
     const console_ = collectConsoleErrors(page);
     await page.goto('/');
     await waitForDevHooks(page);
-    await installBusRecorder(page, ['sprout:transportStarted', 'sprout:transportCompleted', 'automation:built', 'habitat:full']);
+    await installBusRecorder(page, [
+      'sprout:transportStarted',
+      'sprout:transportCompleted',
+      'sprout:settled',
+      'automation:built',
+      'habitat:full',
+    ]);
 
     await buildGardenSlide(page);
+    // Settle every idle Sun Sprout (ours or a stray natural pod spawn) into
+    // Sunflower Meadow, then bring it up to exactly one slot short of full —
+    // see drainIdleSunSprouts/topUpSunflowerMeadowToOneShort's own doc
+    // comments for why this replaced a hardcoded count in buildGardenSlide.
+    await drainIdleSunSprouts(page);
+    await topUpSunflowerMeadowToOneShort(page);
 
     // A built but idle Slide shows no load at all: both the belt procession and
     // the parked "waiting" parcel exist as meshes but are hidden.

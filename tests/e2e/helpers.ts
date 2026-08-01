@@ -33,8 +33,8 @@ declare global {
     };
     /** Test-only recording buffers installed by installBusRecorder(). */
     __ttEvents?: GameEvent[];
-    /** Every sprout:spawned since installBusRecorder(), id + podId (see popLastSpawnedId). */
-    __ttSpawnedIds?: Array<{ id: string; podId: string }>;
+    /** Every sprout:spawned since installBusRecorder(), id + podId + sproutType (see popLastSpawnedId). */
+    __ttSpawnedIds?: Array<{ id: string; podId: string; sproutType: SproutTypeKey }>;
   }
 }
 
@@ -197,12 +197,14 @@ export async function getUiState(page: Page): Promise<UiStateSnapshot> {
   });
 }
 
-/** Sets up a bus subscription (inside the page) that records every `sprout:spawned` id+podId into `window.__ttSpawnedIds`, and every event of the given types into `window.__ttEvents`. Call once per page after dev hooks are ready. */
+/** Sets up a bus subscription (inside the page) that records every `sprout:spawned` id+podId+sproutType into `window.__ttSpawnedIds`, and every event of the given types into `window.__ttEvents`. Call once per page after dev hooks are ready. */
 export async function installBusRecorder(page: Page, extraTypes: GameEventType[] = []): Promise<void> {
   await page.evaluate((types) => {
     window.__ttSpawnedIds = [];
     window.__ttEvents = [];
-    window.__terrariumUIF!.bus.subscribe('sprout:spawned', (e) => window.__ttSpawnedIds!.push({ id: e.sproutId, podId: e.podId }));
+    window.__terrariumUIF!.bus.subscribe('sprout:spawned', (e) =>
+      window.__ttSpawnedIds!.push({ id: e.sproutId, podId: e.podId, sproutType: e.sproutType }),
+    );
     for (const type of types) {
       window.__terrariumUIF!.bus.subscribe(type, (e) => window.__ttEvents!.push(e));
     }
