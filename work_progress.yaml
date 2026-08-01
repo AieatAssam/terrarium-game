@@ -1098,6 +1098,29 @@ decisions:
       full-automation baseline: the interesting manual interaction going
       forward is Star Sprouts and whatever GameRules §9.6 stage 4+ /
       §9.5 introduces, not re-litigating which habitat stays manual.
+  - q: Stay inside Phase 1's declared scope, or lift docs/GAME_DESIGN.md's
+      "no additional Sprout types, habitats, or automations" non-goal to
+      start Phase 2?
+    a: >
+      RESOLVED 2026-08-01 — user chose to LIFT it. docs/GAME_DESIGN.md's
+      "Out of scope for Phase 1" section updated (struck through, not
+      deleted, with the reasoning recorded inline): this was always a
+      Phase-1-scoped implementation-tracking non-goal in that document, not
+      a GameRules constraint, so this is NOT a GameRules §17 revision —
+      GameRules.md itself never forbade a Phase 2 (§9.5 names concrete
+      future automation families, §9.6's complexity curve has 9 stages vs
+      Phase 1's 3, §16's own required closing feeling explicitly wants
+      "...but I cannot wait to see what I can unlock and improve next").
+      Grepped tests/unit/ for anything pinning "no additional automations"
+      as a boundary — nothing does, so no test needed updating for the lift
+      itself. NOT YET DONE: docs/CONTRACTS.md's AutomationId/SproutTypeId
+      unions are untouched (still exactly gardenSlide|colourGate and
+      ember|dew|sun|star) — those get extended deliberately once a SPECIFIC
+      Phase 2 feature is chosen, not as part of this scope-lift alone. What
+      that feature actually is — a new Sprout trait/type (§7.3, §9.6 stage
+      4 "multi-attribute routes"), a new automation family (§9.5: Routing/
+      Care/Growth/Organisation helpers), or something else — has not been
+      decided yet.
 
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?

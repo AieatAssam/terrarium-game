@@ -581,9 +581,28 @@ Explicitly not built, not planned, and not implied by anything above:
   cutscenes, quests, or dialogue trees; the Garden Journal's 4 filled entries
   (ember/dew/sun/star) and 8 locked silhouettes (per CONTRACTS.md's 12-slot
   journal) are the entirety of Phase 1's "content."
-- **No additional Sprout types, habitats, or automations beyond the exact
-  ids in `docs/CONTRACTS.md`.** The 8 locked journal slots are visibly
-  Phase 2+ content, not implemented, not hinted at mechanically.
+- ~~No additional Sprout types, habitats, or automations beyond the exact
+  ids in `docs/CONTRACTS.md`.~~ **LIFTED 2026-08-01 (user decision, deliberate,
+  recorded — see work_progress.yaml's decisions).** Phase 1 (this document's
+  own scope) is complete per GameRules §16's Definition of Done — all three
+  common Sprouts, both Phase 1 automations, upgrades, achievements, Journal,
+  save/offline progress, and accessibility modes are implemented and
+  verified. GameRules itself never forbade a Phase 2: §9.5 names concrete
+  future automation families (Routing/Care/Growth/Organisation helpers),
+  §9.6's complexity curve has 9 stages and Phase 1 only reaches stage 3, §7.3
+  anticipates later Sprout traits, and §16's own required closing feeling
+  ends "...but I cannot wait to see what I can unlock and improve next" —
+  this was always a Phase-1-scoped implementation-tracking non-goal in THIS
+  document, not a GameRules constraint, so lifting it is not a GameRules §17
+  revision (nothing in GameRules.md itself needs to change). What DOES need
+  updating deliberately, not as a quiet code change, once a specific Phase 2
+  feature is chosen: `docs/CONTRACTS.md`'s `AutomationId`/`SproutTypeId`
+  unions (still exactly `'gardenSlide' | 'colourGate'` and
+  `'ember' | 'dew' | 'sun' | 'star'` as of this lift — untouched until a
+  concrete addition is chosen), this document's own scope sections, and
+  whatever tests currently assert "no additional automations" as a
+  boundary. The 8 locked Journal slots were always visibly Phase 2+ content,
+  present but not yet implemented or mechanically hinted at.
 - **No per-habitat upgrade instances.** `habitatCapacity` and
   `dewdropMultiplier` apply uniformly across all three habitats; there is no
   "upgrade Ember Nook specifically" path in Phase 1.
