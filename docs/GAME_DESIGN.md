@@ -67,15 +67,18 @@ toward.
   "capacity" is a thing the player might want to grow, just a beat later
   than a capacity-6 garden would have shown it.
 - **~4:30–5:00** — After 20 correct manual placements, Garden Slide unlocks
-  and auto-builds (`automation:unlocked` then `automation:built`), ALWAYS
-  targeting Sunflower Meadow (Sun Sprouts) — changed 2026-07-31 from
-  "whichever habitat the player has been feeding most" because the Colour
-  Gate's fork can never physically reach the Meadow (its two lanes leave from
-  the northern fork; the Meadow sits on the separate southern run out of the
-  Nursery), so the Slide is the only automation that ever will. See
-  `unlockSystem`'s own doc comment (`src/sim/systems.ts`) and
-  `docs/ARCHITECTURE.md`. `firstAutomation` achievement unlocks. See
-  "Progression math" below for why 20 lands here.
+  (`automation:unlocked`). **Superseded 2026-08-01 (manual placement,
+  GameRules §9.8):** unlocking no longer auto-builds it — the build menu
+  offers it, and the player places it on any valid path tile. Its
+  destination is computed from wherever they put it (`nearestReachableHabitat`,
+  `src/sim/layout.ts`), not hardcoded to Sunflower Meadow — see
+  `docs/ARCHITECTURE.md`'s manual-placement paragraph and `placeAutomation`'s
+  doc comment (`src/sim/systems.ts`). `firstAutomation` fires on
+  `automation:built` (the actual placement), not on unlock. See "Progression
+  math" below for why 20 lands here. **The rest of this section's minute
+  markers describe the pre-2026-08-01 auto-build flow and have not been
+  re-walked against manual placement — treat the timing as approximately
+  right and the "always Meadow" specifics as stale.**
 
 ### Arc to 15–25 minutes
 
@@ -284,29 +287,39 @@ Why this shape:
   west, Dew Pond is east, and a Sprout leaving the Gate visibly turns left or
   right. That turn *is* the Gate's decision, made legible without a single word
   of UI.
-- **The Slide's structure stands beside the Nursery, one tile north on the
-  trunk (8,7).** Its ride never actually travels through that tile for ANY
-  target — `gardenRouteBetween` BFS-searches the path network between the
-  ride's real endpoints (Nursery and the target habitat) and never
-  references the Slide's own site tile as a waypoint, for any target it has
-  ever had. That coincidentally overlapped the northern trunk when the Slide
-  used to target Ember Nook or Dew Pond; as of 2026-07-31 it always targets
-  Sunflower Meadow instead (see the beat sheet above), so its cargo now
-  visibly travels the SEPARATE southern run while the structure itself keeps
-  standing one tile north of the Nursery. Mechanically fine — §9.2 only
-  requires the site to sit on the path network, which (8,7) still does, now
-  serving the Ember/Dew trunk it stands on rather than the route its own
-  cargo rides — but it is an open visual-coherence question, not a design
-  claim: see `work_progress.yaml`'s `garden-slide-site-not-on-its-own-route`
-  entry.
+- **RESOLVED 2026-08-01 (manual placement, GameRules §9.8).** The Slide's
+  structure used to stand at a single fixed default tile (8,7), north of the
+  Nursery on the trunk, while its ride went wherever the current hardcoded
+  target happened to be — the paragraphs below described exactly the
+  resulting mismatch, which a player reported as "looks horrible and ugly."
+  The site tile is now player-chosen (`placeAutomation`,
+  `src/sim/systems.ts`), and the destination is computed FROM that site tile
+  via `nearestReachableHabitat` (`src/sim/layout.ts`) — the nearest habitat
+  reachable over the real path network from wherever the structure actually
+  stands. Placing the Slide at (8,7) today, for instance, resolves to
+  Sunflower Meadow anyway (backtracking through the Nursery and south is
+  still the shortest route from that specific tile — see
+  `tests/unit/sim.layout.test.ts`), but a player who places it further along
+  the trunk gets whichever habitat is genuinely closest from there, and the
+  visible route always matches. `work_progress.yaml`'s
+  `garden-slide-site-not-on-its-own-route` open question is closed by this.
+  The history below is kept for context, not as current behavior.
+- **(historical) The Slide's structure stood beside the Nursery, one tile
+  north on the trunk (8,7).** Its ride never actually travelled through that
+  tile for ANY target — `gardenRouteBetween` BFS-searches the path network
+  between the ride's real endpoints (Nursery and the target habitat) and
+  never references the Slide's own site tile as a waypoint. That
+  coincidentally overlapped the northern trunk when the Slide used to target
+  Ember Nook or Dew Pond; from 2026-07-31 it always targeted Sunflower
+  Meadow instead, so its cargo visibly travelled the SEPARATE southern run
+  while the structure itself kept standing one tile north of the Nursery.
 - **The southern run to Sunflower Meadow** leaves the Nursery directly and
-  never passes the Gate. As of 2026-07-31 it is the Garden Slide's route
-  (previous paragraph); a player can still drag a Sprout down it by hand
-  exactly as before. It was never the Colour Gate's actual fallback — a
-  non-matching or off-lane Sprout simply stays idle in the Nursery's own
-  waiting area (see `planRide`'s doc comment in `src/sim/systems.ts`); the
-  Meadow path was only ever narrated that way, not functionally load-bearing
-  for it.
+  never passes the Gate. It is reachable both by a placed Garden Slide (if
+  its site tile resolves there) and by hand-drag, exactly as before. It was
+  never the Colour Gate's actual fallback — a non-matching or off-lane
+  Sprout simply stays idle in the Nursery's own waiting area (see
+  `planRide`'s doc comment in `src/sim/systems.ts`); the Meadow path was
+  only ever narrated that way, not functionally load-bearing for it.
 - **The Mood Bell's structure stands on a short spur east of the Nursery
   (9,8), added 2026-08-01.** Same precedent as the Slide's own site tile: no
   ride ever travels through it. A Bell delivery rides Nursery -> whichever

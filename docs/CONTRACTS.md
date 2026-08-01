@@ -89,7 +89,7 @@ type GameEvent =
   | { type: 'currency:dewdropsChanged'; total: number; delta: number }
   | { type: 'sprout:transportStarted'; sproutId: string; automationId: AutomationId; instanceId: string; fromTile: TileCoord; toTile: TileCoord; durationMs: number }
   | { type: 'sprout:transportCompleted'; sproutId: string; automationId: AutomationId; instanceId: string }
-  | { type: 'automation:built'; automationId: AutomationId; instanceId: string; targetHabitatId?: HabitatId }
+  | { type: 'automation:built'; automationId: AutomationId; instanceId: string; siteTile: TileCoord; targetHabitatId?: HabitatId }
   | { type: 'automation:unlocked'; automationId: AutomationId }
   | { type: 'automation:colourGateRuleChanged'; lanes: { west: SproutTypeId | null; east: SproutTypeId | null } }
   | { type: 'automation:moodBellRuleChanged'; mood: MoodId }
@@ -108,6 +108,7 @@ interface SaveLoadedSnapshot {
   journalDiscovered: SproutTypeId[];
   fullHabitats?: HabitatId[];
   automationTargets?: Partial<Record<AutomationId, HabitatId>>;
+  automationSites?: Partial<Record<AutomationId, TileCoord>>;
   sprouts?: { id: string; sproutType: SproutTypeId; mood: MoodId; tile: TileCoord; settled: boolean; habitatId?: HabitatId }[];
   colourGateLanes?: { west: SproutTypeId | null; east: SproutTypeId | null };
   moodBellRule?: MoodId;
@@ -248,6 +249,47 @@ Sprout matching the Bell's current mood is excluded from their own pickup
 eligibility once the Bell exists — a real routing partition, not a race
 between automations checking in build order).
 
+### Members added for manual placement (2026-08-01 GameRules revision)
+
+Player asked for a much deeper building layer; the request conflicted with
+GameRules as it stood, was surfaced per this doc's own authority chain, and
+the user chose to revise the design (see GameRules.md's own Revision Log,
+§9.8-§9.11, §10.0). Phase 1 of that revision (plan.yaml) is: every
+automation is now player-PLACED, not auto-built the moment it unlocks.
+
+- **`automation:built.siteTile`** — where the player actually placed the
+  structure. Newly REQUIRED (not optional): under the old model every
+  automation had exactly one fixed default tile per `automationId`
+  (`AUTOMATION_SITE_TILES`), so the renderer never needed the build event to
+  say where; under manual placement there is no fixed default left to fall
+  back to, so every `automation:built` must carry it.
+- **`save:loaded.snapshot.automationSites`** — same "a restored save replays
+  no `automation:built`" reasoning as `automationTargets` above, but for
+  position instead of destination: without this the renderer would know an
+  automation is unlocked but have nowhere to draw its structure. Only
+  automations that are actually PLACED appear here — an unlocked-but-
+  unplaced automation appears in `unlockedAutomations` but not this map.
+- **`placeAutomation(automationId, tile)`** — new plain function on
+  `SimRuntime`, same "no player-intent event in the union" reasoning as
+  `purchaseUpgrade`/`setColourGateLane`. Validates via
+  `isValidAutomationSite` (`src/sim/layout.ts`: on the path network, not the
+  Nursery/a habitat/another automation's site, and — for the Colour Gate
+  only — a genuine junction) and, for a destination-having automation
+  (Garden Slide), computes it from the site tile itself via
+  `nearestReachableHabitat` — the nearest habitat reachable over the real
+  path network from wherever the player put it, replacing the old hardcoded
+  "always Sunflower Meadow" rule.
+- **`purchaseUpgrade`/`unlockSystem` no longer auto-build.** Purchasing
+  `colourGateUnlock`/`moodBellUnlock`, and reaching the Garden Slide's
+  placement threshold, now only add to `unlockedAutomations` and emit
+  `automation:unlocked` — placing the structure is a separate player action
+  via `placeAutomation`.
+- **`SIM_SHAPE_VERSION`/`CURRENT_SAVE_VERSION` 4 -> 5**: `AutomationInstance`
+  gained a required `siteTile: TileCoord` field. `src/persistence/save.ts`'s
+  v4->v5 migration backfills it from the OLD fixed `AUTOMATION_SITE_TILES`
+  default — the true historical value, since a v4 save's automations were
+  always built there.
+
 ## Simulation boundary
 
 - `src/sim/` has zero imports from `src/render`, `src/ui`, `src/audio`. Enforced by an architecture test (A writes it) that fails the build if violated (grep-based or dependency-cruiser-lite, no heavy tool needed).
@@ -295,7 +337,7 @@ Original Web Audio synthesis only (no external license risk). F implements a sma
 
 Versioned JSON object in IndexedDB, top-level `{ version: number, sim: SimState, meta: { lastSavedAt: number } }`. Any sim state shape change bumps `version`; A owns migration stub (no-op for v1).
 
-Current version is **4**. v2→v3 backfills `SimState.colourGateLanes` (the Colour
+Current version is **5**. v2→v3 backfills `SimState.colourGateLanes` (the Colour
 Gate's lane rule, defaulting to the safe recommendation) and
 `SimState.nurseryRhythm` (defaulting to `'lively'`, which the very next tick
 re-derives from how many Sprouts are actually waiting — so a returning,
@@ -304,4 +346,7 @@ backfills `SproutInstance.mood` on every already-persisted Sprout (a
 deterministic default, `'sunny'` — migration is pure and cannot re-roll with
 RNG, so this is a one-time visual quirk for saves that predate mood) and
 `SimState.moodBellRule` (defaulting to `'sunny'`, the same safe default a
-freshly-built Bell starts with).
+freshly-built Bell starts with). v4→v5 (2026-08-01, manual placement)
+backfills `AutomationInstance.siteTile` on every already-placed automation
+from the old fixed `AUTOMATION_SITE_TILES[automationId]` default — the true
+historical value, since a v4 save's automations were always built there.

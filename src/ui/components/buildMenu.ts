@@ -73,9 +73,16 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
   }
 
   function render(): void {
-    const unlocked = Array.from(store.getState().unlockedAutomations).sort();
+    const state = store.getState();
+    // Only automations unlocked but NOT YET PLACED belong here (2026-08-01,
+    // manual placement — GameRules §9.8): once built, there is nothing left
+    // to place, and offering the button again would enter a build mode that
+    // can only ever decline (one instance per automation kind).
+    const placeable = Array.from(state.unlockedAutomations)
+      .filter((id) => !state.placedAutomations.has(id))
+      .sort();
     element.replaceChildren(
-      ...unlocked.map((automationId) => {
+      ...placeable.map((automationId) => {
         const isSelected = selected === automationId;
         const button = el(
           'button',

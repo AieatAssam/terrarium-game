@@ -27,6 +27,12 @@ import type { EventBus } from '../events/bus';
 import type { RendererHandle } from '../render/index';
 import { worldToTile, type TileCoord } from '../render/coords';
 import { SPROUT_FLOAT_HEIGHT } from '../render/sprouts';
+// Render (and input) may import from sim — only sim may never import
+// render/ui/audio/input. isValidAutomationSite is pure tile-graph logic
+// (2026-08-01, manual placement — GameRules §9.8), reused here so the
+// build-mode ghost preview and the actual placement commit ask the exact
+// same question, rather than a second, potentially-diverging guess.
+import { isValidAutomationSite } from '../sim/layout';
 
 const GROUND_PLANE = new Plane(0, 1, 0, 0); // y = 0
 // The horizontal plane a dragged Sprout is moved on. This has to be EXACTLY
@@ -48,11 +54,32 @@ const PAN_SPEED = 0.0026;
 const WHEEL_ZOOM_SENSITIVITY = 0.01;
 const PINCH_ZOOM_SENSITIVITY = 1;
 
+export interface InputHooks {
+  /**
+   * Player committed a placement in build mode on a tile that passed
+   * `isValidAutomationSite` (2026-08-01, GameRules §9.8). No CONTRACTS.md
+   * event exists for player intent (docs/CONTRACTS.md's GameEvent union is
+   * sim-originated announcements only) — same "plain function the runtime
+   * exposes" pattern as onPurchaseUpgrade/onSetColourGateLane in main.ts.
+   */
+  onPlaceAutomation?: (automationId: AutomationId, tile: TileCoord) => void;
+}
+
 export interface InputHandle {
   /** Screen point -> tile, for Subagent F's build menu to track where a ghost preview should appear. Null if the ray doesn't hit the ground plane (shouldn't normally happen with this camera). */
   screenToTile: (clientX: number, clientY: number) => TileCoord | null;
   previewAutomation: (automationId: AutomationId, tile: TileCoord) => void;
   clearAutomationPreview: () => void;
+  /**
+   * Enters build mode for `automationId`: subsequent pointer movement shows
+   * the ghost preview (valid/invalid per `isValidAutomationSite`) instead of
+   * panning, and a tap/click on a valid tile commits the placement via
+   * `onPlaceAutomation` and exits build mode. Mutually exclusive with
+   * dragging a Sprout — entering build mode cancels any drag in progress.
+   */
+  enterBuildMode: (automationId: AutomationId) => void;
+  /** Exits build mode (if active) and clears the ghost preview. Safe to call when not in build mode. */
+  exitBuildMode: () => void;
   dispose: () => void;
 }
 
@@ -61,8 +88,8 @@ interface PointerState {
   y: number;
 }
 
-export function initInput(renderer: RendererHandle, bus: EventBus): InputHandle {
-  const { scene, canvas, camera, habitats, sprouts, automation, isBuildableTile } = renderer;
+export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputHooks = {}): InputHandle {
+  const { scene, canvas, camera, habitats, sprouts, automation } = renderer;
 
   canvas.style.touchAction = 'none';
 
@@ -73,6 +100,18 @@ export function initInput(renderer: RendererHandle, bus: EventBus): InputHandle 
   let pinching = false;
   let pinchStartDistance = 0;
   let pinchStartRadius = 0;
+  let buildModeAutomationId: AutomationId | null = null;
+  // Every PLACED automation's own site tile, tracked locally so build-mode
+  // hit-testing (isValidAutomationSite needs "what's already occupied")
+  // doesn't require reaching into SimState — this module only ever talks to
+  // sim over the bus/hooks, never by reading it directly.
+  const occupiedSiteTiles = new Map<AutomationId, TileCoord>();
+  bus.subscribe('automation:built', (e) => occupiedSiteTiles.set(e.automationId, e.siteTile));
+  bus.subscribe('save:loaded', (e) => {
+    for (const [id, tile] of Object.entries(e.snapshot.automationSites ?? {}) as [AutomationId, TileCoord][]) {
+      occupiedSiteTiles.set(id, tile);
+    }
+  });
 
   const canvasPoint = (event: PointerEvent): { x: number; y: number } => {
     const rect = canvas.getBoundingClientRect();
@@ -173,6 +212,25 @@ export function initInput(renderer: RendererHandle, bus: EventBus): InputHandle 
     activePointers.set(event.pointerId, { x, y });
     canvas.setPointerCapture(event.pointerId);
 
+    if (buildModeAutomationId) {
+      const ground = groundPointAt(x, y, GROUND_PLANE);
+      const tile = ground ? worldToTile(ground) : null;
+      const automationId = buildModeAutomationId;
+      const valid = tile ? isValidAutomationSite(automationId, tile, Array.from(occupiedSiteTiles.values())) : false;
+      console.debug(
+        '[terrarium/debug buildmode commit] ' +
+          JSON.stringify({ automationId, ground, tile, valid, occupied: Array.from(occupiedSiteTiles.entries()) }),
+      );
+      if (tile && valid) {
+        hooks.onPlaceAutomation?.(automationId, tile);
+        exitBuildMode();
+      }
+      // Invalid tile: stay in build mode (the red-tinted ghost preview
+      // already told the player why) rather than silently exiting — a tap
+      // that missed should be a free retry, not a lost gesture.
+      return;
+    }
+
     if (activePointers.size === 2 && dragSproutId === null) {
       const pts = Array.from(activePointers.values());
       pinching = true;
@@ -201,6 +259,17 @@ export function initInput(renderer: RendererHandle, bus: EventBus): InputHandle 
   };
 
   const handlePointerMove = (event: PointerEvent): void => {
+    if (buildModeAutomationId) {
+      // Deliberately NOT gated on activePointers.has(...): unlike a drag,
+      // build-mode preview must track a plain hover with no button held —
+      // that's how a mouse player sees the ghost before ever clicking.
+      const { x, y } = canvasPoint(event);
+      const ground = groundPointAt(x, y, GROUND_PLANE);
+      const tile = ground ? worldToTile(ground) : null;
+      if (tile) previewAutomation(buildModeAutomationId, tile);
+      return;
+    }
+
     if (!activePointers.has(event.pointerId)) return;
     const { x, y } = canvasPoint(event);
     activePointers.set(event.pointerId, { x, y });
@@ -311,7 +380,25 @@ export function initInput(renderer: RendererHandle, bus: EventBus): InputHandle 
   };
 
   const previewAutomation = (automationId: AutomationId, tile: TileCoord): void => {
-    automation.previewAt(automationId, tile, isBuildableTile(tile));
+    automation.previewAt(automationId, tile, isValidAutomationSite(automationId, tile, Array.from(occupiedSiteTiles.values())));
+  };
+
+  const enterBuildMode = (automationId: AutomationId): void => {
+    // One interaction mode at a time — same discipline pinch/drag/pan
+    // already follow in handlePointerDown below.
+    if (dragSproutId) {
+      sprouts.setDragValidity(dragSproutId, null);
+      const visual = sprouts.get(dragSproutId);
+      if (visual) visual.held = false;
+      dragSproutId = null;
+      dragPointerId = null;
+    }
+    buildModeAutomationId = automationId;
+  };
+
+  const exitBuildMode = (): void => {
+    buildModeAutomationId = null;
+    automation.clearPreview();
   };
 
   const dispose = (): void => {
@@ -322,7 +409,14 @@ export function initInput(renderer: RendererHandle, bus: EventBus): InputHandle 
     canvas.removeEventListener('wheel', handleWheel);
   };
 
-  return { screenToTile, previewAutomation, clearAutomationPreview: automation.clearPreview, dispose };
+  return {
+    screenToTile,
+    previewAutomation,
+    clearAutomationPreview: automation.clearPreview,
+    enterBuildMode,
+    exitBuildMode,
+    dispose,
+  };
 }
 
 function distanceBetween(a: PointerState, b: PointerState): number {

@@ -22,6 +22,14 @@ export interface ColourGateLaneState {
 export interface UiState {
   dewdropTotal: number;
   unlockedAutomations: Set<AutomationId>;
+  /**
+   * Automations that are actually PLACED (2026-08-01, manual placement —
+   * GameRules §9.8), a strict subset of `unlockedAutomations`. Distinct
+   * because unlocking no longer builds: an automation can sit unlocked
+   * but unplaced. The build menu (src/ui/components/buildMenu.ts) uses
+   * this to stop offering a "place me" button for something already built.
+   */
+  placedAutomations: Set<AutomationId>;
   upgradeLevels: Partial<Record<UpgradeId, number>>;
   unlockedAchievements: Set<AchievementId>;
   journalDiscovered: Set<SproutTypeId>;
@@ -49,6 +57,7 @@ function createInitialState(): UiState {
   return {
     dewdropTotal: 0,
     unlockedAutomations: new Set(),
+    placedAutomations: new Set(),
     upgradeLevels: {},
     unlockedAchievements: new Set(),
     journalDiscovered: new Set(),
@@ -90,7 +99,11 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
       ...prev,
       unlockedAutomations: new Set(prev.unlockedAutomations).add(event.automationId),
     })),
-    on('automation:built', (prev, event) => ({ ...prev, lastBuiltAutomation: event.automationId })),
+    on('automation:built', (prev, event) => ({
+      ...prev,
+      lastBuiltAutomation: event.automationId,
+      placedAutomations: new Set(prev.placedAutomations).add(event.automationId),
+    })),
     on('upgrade:purchased', (prev, event) => ({
       ...prev,
       upgradeLevels: { ...prev.upgradeLevels, [event.upgradeId]: event.level },
@@ -129,6 +142,7 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
       // on save:loaded's snapshot field).
       dewdropTotal: event.snapshot.dewdrops,
       unlockedAutomations: new Set(event.snapshot.unlockedAutomations),
+      placedAutomations: new Set(Object.keys(event.snapshot.automationSites ?? {}) as AutomationId[]),
       upgradeLevels: { ...event.snapshot.upgradeLevels },
       unlockedAchievements: new Set(event.snapshot.unlockedAchievements),
       journalDiscovered: new Set(event.snapshot.journalDiscovered),

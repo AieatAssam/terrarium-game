@@ -16,6 +16,7 @@ import { getNurseryRhythm, pickMood } from '../data/spawning';
 import { clearSave, loadGame, saveGame } from '../persistence';
 import { habitatAtTile, NURSERY_TILE, type ColourGateLane, type ColourGateLanes } from './layout';
 import { advanceClock, createSimClock } from './loop';
+import type { TileCoord } from './grid';
 import { createInitialSimState, type SimState } from './state';
 import { colourGateLockReason, moodBellLockReason } from '../data/unlocks';
 import {
@@ -26,6 +27,7 @@ import {
   colourGateLaneNote,
   countWaitingSprouts,
   moodBellBehavioralState,
+  placeAutomation as placeAutomationSystem,
   purchaseUpgrade as purchaseUpgradeSystem,
   setColourGateLane as setColourGateLaneSystem,
   setMoodBellRule as setMoodBellRuleSystem,
@@ -46,6 +48,17 @@ export interface SimRuntime {
    * SimState directly.
    */
   getUpgradeLockReason: (upgradeId: UpgradeId) => string | null;
+  /**
+   * Player commits a placement for an already-unlocked-but-not-yet-placed
+   * automation (2026-08-01, manual placement — GameRules §9.8). Same
+   * plain-function reasoning as `purchaseUpgrade`: no player-intent event
+   * in the GameEvent union, UI/input must never touch SimState directly.
+   * No-ops on an invalid request (see `placeAutomation`, src/sim/systems.ts)
+   * — src/input is expected to have already validated via
+   * `isValidAutomationSite` for the ghost preview, but this re-validates
+   * rather than trusting the caller.
+   */
+  placeAutomation: (automationId: AutomationId, tile: TileCoord) => void;
   /**
    * The Colour Gate's control surface, exposed as plain functions for exactly
    * the reason `purchaseUpgrade` is (see docs/ARCHITECTURE.md): the GameEvent
@@ -104,6 +117,20 @@ function automationTargetsOf(state: SimState): Partial<Record<AutomationId, Habi
   return targets;
 }
 
+/**
+ * Where each built automation's structure actually stands (2026-08-01,
+ * manual placement — GameRules §9.8). Same reasoning as `automationTargetsOf`
+ * above: a restored save replays no `automation:built`, and there is no
+ * longer a single fixed default tile per automationId for the renderer to
+ * fall back to, so without this a restored save's structures would have
+ * nowhere to draw themselves.
+ */
+function automationSitesOf(state: SimState): Partial<Record<AutomationId, TileCoord>> {
+  const sites: Partial<Record<AutomationId, TileCoord>> = {};
+  for (const instance of state.automations) sites[instance.automationId] = instance.siteTile;
+  return sites;
+}
+
 /** Applies a batch of events to `state` via the achievement checker, emits every event (originals + any achievement unlocks) through `emit` in order, and returns the final state. Centralizing this means achievements react identically regardless of whether the batch came from a tick or an immediate player action. */
 function commit(emit: (event: GameEvent) => void, state: SimState, events: readonly GameEvent[]): SimState {
   for (const event of events) emit(event);
@@ -155,6 +182,7 @@ export async function startSimRuntime(
         journalDiscovered: state.journalDiscovered,
         fullHabitats: fullHabitatsOf(state),
         automationTargets: automationTargetsOf(state),
+        automationSites: automationSitesOf(state),
         sprouts: state.sprouts.map((s) => ({
           id: s.id,
           sproutType: s.sproutType,
@@ -264,6 +292,10 @@ export async function startSimRuntime(
   return {
     purchaseUpgrade: (upgradeId) => {
       const result = purchaseUpgradeSystem(state, upgradeId);
+      state = commit(emit, result.state, result.events);
+    },
+    placeAutomation: (automationId, tile) => {
+      const result = placeAutomationSystem(state, automationId, tile);
       state = commit(emit, result.state, result.events);
     },
     getUpgradeLockReason: (upgradeId) =>

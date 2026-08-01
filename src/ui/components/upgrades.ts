@@ -4,7 +4,7 @@
 // advances optimistically on click, so the UI can't show progress the sim
 // hasn't confirmed.
 
-import type { UpgradeId } from '../../core/ids';
+import type { AutomationId, UpgradeId } from '../../core/ids';
 import { isDev } from '../../core/env';
 import { UPGRADE_LIST } from '../../data/upgrades';
 import { el } from '../dom';
@@ -16,6 +16,17 @@ import type { UiStateStore } from '../uiState';
 function upgradeManifestKey(id: UpgradeId): string {
   return `ui.icon.upgrade.${id}`;
 }
+
+/**
+ * Which automation an unlock upgrade actually places (2026-08-01, manual
+ * placement — GameRules §9.8). Purchasing only unlocks now; the player
+ * still has to open the build menu and place it, so the maxed-out row
+ * needs to say that plainly rather than a bare "Max" that reads as done.
+ */
+const AUTOMATION_UPGRADE: Partial<Record<UpgradeId, AutomationId>> = {
+  colourGateUnlock: 'colourGate',
+  moodBellUnlock: 'moodBell',
+};
 
 /**
  * As with build-mode selection (buildMenu.ts), there's no `upgrade:
@@ -122,15 +133,24 @@ export function createUpgradesPanel(store: UiStateStore, hooks: UpgradesPanelHoo
       const canAfford = !maxed && state.dewdropTotal >= cost;
       const lockReason = maxed ? null : (hooks.getUpgradeLockReason?.(upgrade.id) ?? null);
 
+      // "Purchased" and "placed" are different things now (2026-08-01,
+      // manual placement — GameRules §9.8): a maxed automation-unlock
+      // upgrade whose structure isn't built yet still needs the player to
+      // do something, so "Max" alone would read as more finished than it is.
+      const automationId = AUTOMATION_UPGRADE[upgrade.id];
+      const readyToPlace = maxed && automationId !== undefined && !state.placedAutomations.has(automationId);
+
       meta.textContent = `Level ${level} / ${upgrade.maxLevel}`;
-      lockNote.textContent = lockReason ?? '';
-      lockNote.hidden = lockReason === null;
+      lockNote.textContent = readyToPlace ? 'Ready to build — open the build menu below.' : (lockReason ?? '');
+      lockNote.hidden = lockReason === null && !readyToPlace;
       buyBtn.disabled = maxed || !canAfford || lockReason !== null;
       buyBtn.textContent = maxed ? 'Max' : `${Math.max(0, Math.floor(cost)).toLocaleString()}`;
       buyBtn.setAttribute(
         'aria-label',
         maxed
-          ? `${upgrade.displayName}, maximum level reached`
+          ? readyToPlace
+            ? `${upgrade.displayName}, unlocked — open the build menu to place it`
+            : `${upgrade.displayName}, maximum level reached`
           : lockReason
             ? `${upgrade.displayName}, not available yet. ${lockReason}`
             : `Buy ${upgrade.displayName} for ${cost} Dewdrops, currently level ${level} of ${upgrade.maxLevel}`,

@@ -16,10 +16,10 @@
 
 meta:
   updated: 2026-08-01
-  head: 3ada912 (plus Phase 1.2/1.3 work below, UNCOMMITTED as of this update)
+  head: fc277ba (plan.yaml Phase 1.4-1.6 below is UNCOMMITTED as of this update — commit imminent)
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
-  tests_passing: 317
+  tests_passing: 319
   check_command: npm run typecheck && npm run lint && npm test && npm run build
   note: >
     This meta block had gone stale (still read a98b552/258 tests) through
@@ -1483,16 +1483,82 @@ decisions:
       markBuilt just toggles visibility in place — this whole model needs
       to change to "create the mesh where automation:built says", a real
       render-layer restructuring, not a small tweak).
+  - q: >
+      2026-08-01 (same day, continued) — Phase 1.4-1.6 status?
+    a: >
+      ALL DONE, committed, live-verified. Phase 1 (manual placement of the
+      3 existing automations) is complete.
+      1.4: wired onEnterBuildMode/onExitBuildMode into main.ts (a mutable
+      `inputHandle` reference, same null-tolerant pattern as `simRuntime`,
+      since input doesn't exist until bootstrap()'s async chain resolves
+      but the build menu mounts synchronously). automation.ts's site
+      meshes no longer pre-position at a fixed AUTOMATION_SITE_TILES tile
+      at scene init — they start `setEnabled(false)` at the origin;
+      `markBuilt` now takes a `siteTile` and repositions+enables the mesh
+      there on first build. `nearestBuiltWithin` now reads each site's own
+      tracked `siteTile` instead of the old fixed lookup. input.ts tracks
+      `occupiedSiteTiles` locally (via `automation:built`/`save:loaded`
+      bus subscriptions, not by reading SimState directly) so
+      isValidAutomationSite hit-testing doesn't need sim access; new
+      `enterBuildMode`/`exitBuildMode`, and handlePointerMove/
+      handlePointerDown branches for hover-preview and click-to-commit
+      (mutually exclusive with Sprout drag). New `placeAutomation` plain
+      function on SimRuntime, mirroring purchaseUpgrade's shape.
+      1.5: buildMenu.ts now filters unlockedAutomations down to
+      unlocked-minus-placed (new `UiState.placedAutomations`, populated
+      from `automation:built` and `save:loaded.snapshot.automationSites`)
+      — an already-built automation's button now correctly disappears
+      instead of staying clickable forever for no effect. Upgrades panel
+      row shows "Ready to build — open the build menu below." instead of
+      bare "Max" for an unlocked-but-unplaced colourGateUnlock/
+      moodBellUnlock.
+      1.6: docs/CONTRACTS.md (siteTile fields, placeAutomation,
+      SIM_SHAPE_VERSION/CURRENT_SAVE_VERSION 5), docs/ARCHITECTURE.md
+      (manual-placement paragraph superseding the old auto-build one),
+      docs/GAME_DESIGN.md (flagged the beat-sheet's exact minute markers
+      as describing pre-2026-08-01 behavior rather than fully rewalking
+      them, and RESOLVED the garden-slide-site-not-on-its-own-route
+      discussion inline). The open_questions entry for the visual
+      incoherence is now removed (resolved, not just designed).
+      LIVE-VERIFIED in the Browser pane (not just unit tests): unlocked
+      Garden Slide via debug spawn+bus-drop x20, entered build mode via
+      the real UI button, hovered a valid tile (ghost preview correctly
+      positioned via window.__debug.meshInfo), committed via synthetic
+      pointerdown/up, confirmed a REAL structure mesh
+      (terrarium.automation.gardenSlide) appeared enabled at the exact
+      chosen tile, confirmed the build-menu button then disappeared, and
+      confirmed the placement SURVIVED a full page reload (save round-trip
+      through the real IndexedDB, not a mock). GOTCHA hit and worth
+      recording: canvas.setPointerCapture(event.pointerId) — pre-existing
+      code, not touched this session — throws for a synthetic PointerEvent
+      with no real active pointer, and nothing catches it, crashing the
+      whole app to the error boundary. Always call
+      `canvas.setPointerCapture = () => {}` (and stub hasPointerCapture
+      too) BEFORE dispatching any synthetic pointerdown in this app,
+      exactly as tests/e2e/manualDrop.dev.spec.ts already does — forgetting
+      this crashed the page mid-verification here. Also: reading DOM
+      state (aria-pressed, mesh position/enabled) in the SAME script
+      call as the click/dispatch that changes it is unreliable in this
+      Browser pane — read it back in a SEPARATE javascript_tool call after
+      the first one returns, or you'll see stale pre-update values (cost
+      real time this session, chasing a phantom "placement isn't
+      committing" bug that was actually a same-tick read timing artifact
+      plus, separately, a genuinely leftover automation instance from an
+      earlier test round's IndexedDB save).
+      colourGate/moodBell placement were NOT separately live-verified
+      (only gardenSlide was) — they share 100% of the same code path
+      (isValidAutomationSite/placeAutomation/markBuilt are all
+      automationId-parameterized, not gardenSlide-specific), and the
+      colourGate-junction-only constraint IS covered by 20 passing unit
+      tests in sim.layout.test.ts, but nobody has watched a Colour Gate
+      or Mood Bell actually get placed in a live browser yet.
+      NOT DONE (deliberately, out of scope for Phase 1): Phases 2-5 of
+      plan.yaml (buildable habitats, buildable routes, junction
+      backpressure, misroute repair) — untouched, per the plan's own
+      "refine at start of phase" notes.
 
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?
-  - Garden Slide visual incoherence (see 2026-08-01 q&a above): RESOLUTION
-    DESIGNED, not yet shipped — plan.yaml's Phase 1 makes a placed
-    automation's destination derive from its own site tile via the
-    existing gardenRouteBetween reachability, so wherever the player puts
-    the Slide is what it serves. Close this entry once Phase 1 actually
-    lands, not before. Superseded options below, kept for context only:
-    touches pinned test arithmetic in sim.layout.test.ts.
   - Should SPROUT_PICK_RADIUS/HOVER_MARGIN_TILES scale with viewport width
     or default camera zoom, given the measured ~32px/~26px mobile
     forgiveness falls under GameRules §7's "large touch targets" bar but a

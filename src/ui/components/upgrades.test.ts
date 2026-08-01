@@ -55,3 +55,40 @@ describe('upgrades panel buy button cost', () => {
     expect(buyBtn().disabled).toBe(false);
   });
 });
+
+/**
+ * 2026-08-01 manual placement (GameRules §9.8): purchasing colourGateUnlock/
+ * moodBellUnlock only unlocks the automation now, it no longer builds it —
+ * the maxed row must say the player still has something to do, not just
+ * "Max" (which reads as fully finished).
+ */
+describe('upgrades panel: unlocked-but-not-placed copy', () => {
+  const lockNoteFor = (overlay: ParentNode, displayName: string): string | undefined =>
+    overlay.querySelector<HTMLButtonElement>(`button[aria-label^="Buy ${displayName}"],button[aria-label^="${displayName}"]`)
+      ?.parentElement?.querySelector<HTMLElement>('.tt-upgrade-lock')?.textContent ?? undefined;
+
+  it('shows "Ready to build" once colourGateUnlock is maxed but the Gate is not yet placed', () => {
+    const bus = new EventBus();
+    const store = createUiStateStore(bus);
+    const panel = createUpgradesPanel(store);
+
+    bus.emit({ type: 'upgrade:purchased', upgradeId: 'colourGateUnlock', level: 1 });
+    bus.emit({ type: 'automation:unlocked', automationId: 'colourGate' });
+
+    expect(lockNoteFor(panel.overlay, 'Colour Gate')).toBe('Ready to build — open the build menu below.');
+  });
+
+  it('reverts to bare "Max" once the Gate is actually placed', () => {
+    const bus = new EventBus();
+    const store = createUiStateStore(bus);
+    const panel = createUpgradesPanel(store);
+
+    bus.emit({ type: 'upgrade:purchased', upgradeId: 'colourGateUnlock', level: 1 });
+    bus.emit({ type: 'automation:unlocked', automationId: 'colourGate' });
+    bus.emit({ type: 'automation:built', automationId: 'colourGate', instanceId: 'colourGate-1', siteTile: { x: 8, z: 6 } });
+
+    const buyBtn = panel.overlay.querySelector<HTMLButtonElement>('button[aria-label*="Colour Gate"]');
+    expect(buyBtn!.textContent).toBe('Max');
+    expect(lockNoteFor(panel.overlay, 'Colour Gate')).toBeFalsy();
+  });
+});

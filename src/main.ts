@@ -44,6 +44,13 @@ void simRuntimePromise.then((sim) => {
   simRuntime = sim;
 });
 
+// Same null-tolerant pattern as simRuntime above: input doesn't exist until
+// bootstrap()'s async chain resolves, but the build menu (mounted
+// synchronously below) can only reach it through these hooks.
+// onEnterBuildMode/onExitBuildMode become silent no-ops in the brief window
+// before it's ready — the same window nothing is buildable in yet anyway.
+let inputHandle: ReturnType<typeof initInput> | null = null;
+
 // F: onboarding/HUD/build menu/panels + the Web Audio synth system. Mounted
 // immediately, before the async bootstrap() below, on purpose.
 const ui = mountUI(document.body, bus, {
@@ -63,6 +70,11 @@ const ui = mountUI(document.body, bus, {
   onSetMoodBellRule: (mood) => {
     void simRuntimePromise.then((sim) => sim.setMoodBellRule(mood));
   },
+  // Build menu -> canvas ghost preview (2026-08-01, manual placement —
+  // GameRules §9.8). The menu owns selection state; input owns the actual
+  // pointer tracking and placement commit, so these just forward.
+  onEnterBuildMode: (automationId) => inputHandle?.enterBuildMode(automationId),
+  onExitBuildMode: () => inputHandle?.exitBuildMode(),
   debug: {
     spawnSprout: (sproutType) => {
       void simRuntimePromise.then((sim) => sim.debug.spawnSprout(sproutType));
@@ -86,7 +98,12 @@ void bootstrap(root).then((result) => {
   const canvas = scene.getEngine().getRenderingCanvas() as HTMLCanvasElement;
 
   void initRenderer({ engine, scene, canvas, bus }).then((renderer) => {
-    const input = initInput(renderer, bus);
+    const input = initInput(renderer, bus, {
+      onPlaceAutomation: (automationId, tile) => {
+        void simRuntimePromise.then((sim) => sim.placeAutomation(automationId, tile));
+      },
+    });
+    inputHandle = input;
     markRendererSubscribed();
     window.addEventListener('beforeunload', () => {
       input.dispose();

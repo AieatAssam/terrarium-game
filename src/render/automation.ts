@@ -153,6 +153,13 @@ interface SiteMarker {
   material: PBRMetallicRoughnessMaterial;
   bodyMaterial: PBRMetallicRoughnessMaterial;
   built: boolean;
+  /**
+   * Where the player actually placed this structure (2026-08-01, manual
+   * placement — GameRules §9.8). Null until `automation:built` provides one.
+   * There is no fixed default site anymore, so the mesh sits disabled at the
+   * origin until this is set.
+   */
+  siteTile: TileCoord | null;
   /** World Y the body rests at, so the working bob always returns to it. */
   baseY: number;
   /** The one habitat this instance delivers to (Garden Slide). Null for the
@@ -298,15 +305,22 @@ function activityOf(site: SiteMarker): SiteActivity {
 export function createAutomationManager(scene: Scene, bus: EventBus, shadowGenerator: ShadowGenerator): AutomationManager {
   const sites = {} as Record<AutomationId, SiteMarker>;
 
+  // 2026-08-01 (manual placement, GameRules §9.8): there is no fixed default
+  // site per automationId anymore — the player chooses where each structure
+  // stands. Every mesh starts DISABLED at the world origin; markBuilt below
+  // repositions and enables it the moment a real siteTile arrives (from
+  // `automation:built` or a restored save's `automationSites` snapshot).
+  // `AUTOMATION_SITE_TILES` still exists purely as the list of valid
+  // AutomationIds to iterate here (and as the historical-default fallback
+  // src/persistence/save.ts's v4->v5 migration uses for pre-existing saves).
   for (const id of Object.keys(AUTOMATION_SITE_TILES) as AutomationId[]) {
-    const tile = AUTOMATION_SITE_TILES[id];
-    const world = tileToWorld(tile);
     const body = AUTOMATION_BODIES[id];
     const mesh = buildAutomationMesh(scene, `terrarium.automation.${id}`, body);
-    mesh.position.set(world.x, body.centreY, world.z);
+    mesh.position.set(0, body.centreY, 0);
     mesh.isPickable = false;
+    mesh.setEnabled(false);
     const bodyMaterial = createPaintedMetalMaterial(scene, `terrarium.automation.${id}.body.mat`, SITE_FALLBACK_COLOR[id]);
-    bodyMaterial.alpha = 0.4; // "not yet built" site marker
+    bodyMaterial.alpha = 1; // opaque once built — no more translucent "not yet built" marker at a fixed default
     mesh.material = bodyMaterial;
 
     // Structure illustration standing upright as a billboarded card (see
@@ -327,7 +341,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       SITE_CAP_HEIGHT,
       halfHeight(body),
     );
-    cap.material.alpha = 0.4;
+    cap.material.alpha = 1;
 
     const beadLocalY = halfHeight(body) + BEAD_RISE;
 
@@ -373,6 +387,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       material: cap.material,
       bodyMaterial,
       built: false,
+      siteTile: null,
       baseY: body.centreY,
       targetHabitatId: null,
       carrying: false,
@@ -473,7 +488,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     refreshLaneLamps();
   };
 
-  const markBuilt = (id: AutomationId, targetHabitatId: HabitatId | null): void => {
+  const markBuilt = (id: AutomationId, siteTile: TileCoord | null, targetHabitatId: HabitatId | null): void => {
     const site = sites[id];
     if (!site) return;
     if (targetHabitatId) {
@@ -481,14 +496,22 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       site.destinationFull = fullHabitats.has(targetHabitatId);
     }
     if (site.built) return;
+    // siteTile is only absent from the sprout:transportStarted fallback path
+    // below (a ride implies the structure exists, but the event carries no
+    // placement info) — if we already missed the real automation:built,
+    // there is nothing to reposition to, so this call becomes a no-op until
+    // a real siteTile eventually arrives.
+    if (!siteTile) return;
+    site.siteTile = siteTile;
+    const world = tileToWorld(siteTile);
+    site.mesh.position.set(world.x, site.baseY, world.z);
+    site.mesh.setEnabled(true);
     site.built = true;
-    site.material.alpha = 1;
-    site.bodyMaterial.alpha = 1;
     shadowGenerator.addShadowCaster(site.mesh);
   };
 
   const unsubscribers = [
-    bus.subscribe('automation:built', (e) => markBuilt(e.automationId, e.targetHabitatId ?? null)),
+    bus.subscribe('automation:built', (e) => markBuilt(e.automationId, e.siteTile, e.targetHabitatId ?? null)),
 
     bus.subscribe('automation:colourGateRuleChanged', (e) => applyGateRule(e.lanes)),
 
@@ -498,14 +521,21 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
 
     // A restored save replays no `automation:built` — runtime.ts emits only
     // `save:loaded` with a snapshot — so without this an already-built Slide
-    // came back as a translucent "not yet built" ghost after every reload, and
-    // none of the activity states above would ever have shown.
+    // came back as a disabled, unplaced mesh after every reload, and none of
+    // the activity states above would ever have shown. Only automations that
+    // are actually PLACED appear in `automationSites` (2026-08-01, manual
+    // placement) — an unlocked-but-unplaced automation has nothing to mark
+    // built yet.
     bus.subscribe('save:loaded', (e) => {
       for (const habitatId of e.snapshot.fullHabitats ?? []) fullHabitats.add(habitatId);
       const targets = e.snapshot.automationTargets ?? {};
+      const restoredSites = e.snapshot.automationSites ?? {};
       // Targets first, then fullHabitats above, so a garden that was jammed
       // when the player left still reads as jammed when they return.
-      for (const id of e.snapshot.unlockedAutomations) markBuilt(id, targets[id] ?? null);
+      for (const id of Object.keys(restoredSites) as AutomationId[]) {
+        const siteTile = restoredSites[id];
+        if (siteTile) markBuilt(id, siteTile, targets[id] ?? null);
+      }
       if (e.snapshot.colourGateLanes) applyGateRule(e.snapshot.colourGateLanes);
       if (e.snapshot.moodBellRule) moodBellRule = e.snapshot.moodBellRule;
     }),
@@ -513,16 +543,19 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     bus.subscribe('sprout:transportStarted', (e) => {
       const site = sites[e.automationId];
       if (!site) return;
-      // A ride implies the structure is built even if we missed the event.
-      // Only the Slide gets a targetHabitatId inferred here: its destination
-      // is fixed, so `habitatAtTile(e.toTile)` is a safe stand-in for the
-      // `automation:built.targetHabitatId` we might have missed. The Mood
-      // Bell's destination varies per ride — inferring one from a single
-      // past delivery would wrongly pin its `destinationFull` tracking to
-      // whichever habitat that one ride happened to visit (see this
-      // module's own "no dedicated blocked visual for the Bell in v1" note
-      // near SITE_FALLBACK_COLOR/markBuilt), so it stays null here.
-      markBuilt(e.automationId, e.automationId === 'gardenSlide' ? habitatAtTile(e.toTile) : null);
+      // A ride implies the structure is built even if we missed the
+      // automation:built event — but we also missed its siteTile, so this is
+      // a no-op reposition-wise (see markBuilt's own guard); it only still
+      // matters for inferring targetHabitatId. Only the Slide gets one
+      // inferred here: its destination is fixed, so `habitatAtTile(e.toTile)`
+      // is a safe stand-in for the `automation:built.targetHabitatId` we
+      // might have missed. The Mood Bell's destination varies per ride —
+      // inferring one from a single past delivery would wrongly pin its
+      // `destinationFull` tracking to whichever habitat that one ride
+      // happened to visit (see this module's own "no dedicated blocked
+      // visual for the Bell in v1" note near SITE_FALLBACK_COLOR/markBuilt),
+      // so it stays null here.
+      markBuilt(e.automationId, null, e.automationId === 'gardenSlide' ? habitatAtTile(e.toTile) : null);
       site.carrying = true;
       // Pace straight from the sim's own ride duration, so the Garden Slide
       // Speed upgrade is visible on the machine as well as on its passenger.
@@ -729,8 +762,8 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     let bestDist = Infinity;
     for (const id of Object.keys(sites) as AutomationId[]) {
       const site = sites[id];
-      if (!site.built) continue;
-      const centre = tileToWorld(AUTOMATION_SITE_TILES[id]);
+      if (!site.built || !site.siteTile) continue;
+      const centre = tileToWorld(site.siteTile);
       const dx = world.x - centre.x;
       const dz = world.z - centre.z;
       const d = Math.hypot(dx, dz);
