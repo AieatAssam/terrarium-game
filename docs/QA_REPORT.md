@@ -42,8 +42,16 @@ Several of these were found by the agents who built earlier phases and left as d
 ## Known limitations (documented scope decisions, not defects)
 
 - **Both automations auto-build; there is no manual "place it in the world" step.** The brief's build-menu language and docs/GAME_DESIGN.md's "unlocks and auto-builds" language were in tension, and a full freeform-placement UI wasn't in scope for this integration pass. Garden Slide auto-builds the instant its 20-placement threshold is hit; Colour Gate auto-builds the instant its behaviorally-gated upgrade purchase succeeds. The build menu component exists and is wired but has no consequential effect when clicked — this is a real UX gap against the brief's original "intuitive build menu, ghost preview, placement" language, called out explicitly rather than silently shipped.
-- **Colour Gate routes "whichever common type Garden Slide isn't already feeding" rather than a player-selectable colour picker.** A simplification of the brief's "player selects a colour through obvious pictorial controls" — the underlying routing/unlock logic is real and tested, but there's no colour-selection UI.
 - **Ground/terrain is a flat solid colour**, not an illustrated texture (not in Subagent C's original asset scope).
+
+> **SUPERSEDED 2026-08-01**: this section used to list "Colour Gate routes
+> whichever common type Garden Slide isn't feeding, no colour-selection UI"
+> as a known limitation. That's no longer true — `src/ui/components/
+> colourGate.ts` is a real two-lane pictorial picker (per GAME_DESIGN.md's
+> "The Colour Gate's rule"), and the Garden Slide always targets Sunflower
+> Meadow (2026-07-31), not "whichever type the Gate isn't." Left as a dated
+> note rather than silently deleted, since this whole report is a point-in-
+> time integration snapshot — see the addendum below for what's current.
 
 ## Screenshots
 

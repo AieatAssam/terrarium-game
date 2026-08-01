@@ -12,7 +12,7 @@ import {
 // Safe to import: src/render/layout.ts pulls in only src/sim/grid + src/sim/layout,
 // no Babylon deep specifiers (which Playwright's loader cannot resolve — see the
 // header of ./helpers.ts).
-import { GARDEN_PATH_TILES, HABITAT_TILES, NURSERY_TILE } from '../../src/render/layout';
+import { GARDEN_PATH_TILES } from '../../src/render/layout';
 import { UPGRADES } from '../../src/data/upgrades';
 
 // Both automations auto-build the instant their conditions are met — there is
@@ -204,13 +204,6 @@ async function meshProbe(page: Page, name: string): Promise<{ pos: number[]; ena
   }, name);
 }
 
-/** Perpendicular distance from an XZ point to the straight line a→b. */
-function distanceToStraightLine(x: number, z: number, a: { x: number; z: number }, b: { x: number; z: number }): number {
-  const dx = b.x - a.x;
-  const dz = b.z - a.z;
-  return Math.abs(dz * (x - a.x) - dx * (z - a.z)) / Math.hypot(dx, dz);
-}
-
 /**
  * Clicks the debug grant button until the player can afford `target`, rather
  * than hardcoding a click count against a specific price. Upgrade costs and
@@ -231,16 +224,26 @@ async function buildGardenSlide(page: Page): Promise<void> {
   await grantUntilAffordable(page, UPGRADES.habitatCapacity.costForLevel(1));
   await buyUpgradeViaUI(page, 'Habitat Capacity'); // +3 slots per habitat
   await expect.poll(async () => (await getUiState(page)).upgradeLevels.habitatCapacity).toBe(1);
-  // unlockSystem always targets sunflowerMeadow (2026-07-31). baseCapacity is
-  // uniform across habitats, so the 6 sun drops below leave the Slide's real
-  // destination exactly one slot short of full, same as the old emberNook-
-  // targeting setup did — the ember/dew drops now only serve the "idle Slide"
-  // assertion below (a stray natural Sprout of the Slide's own cargo type
-  // could, in principle, race the idle-mesh check; ember/dew can't, since
-  // the Slide never touches those habitats).
-  for (let i = 0; i < 8; i += 1) await spawnAndDrop(page, 'ember', 'emberNook');
-  for (let i = 0; i < 6; i += 1) await spawnAndDrop(page, 'dew', 'dewPond');
-  for (let i = 0; i < 6; i += 1) await spawnAndDrop(page, 'sun', 'sunflowerMeadow');
+  // unlockSystem always targets sunflowerMeadow (2026-07-31). Capacity here is
+  // BASE_CAPACITY (8) + one habitatCapacity level (3) = 11 per habitat.
+  // Sunflower Meadow — the Slide's actual destination — gets 10 of the 20
+  // required correct placements, leaving it exactly one slot short of full so
+  // the very next automated ride (in the "visibly carries" spec below) tips
+  // it to habitat:full without an extra fill loop. Ember/Dew just pad the
+  // remaining 10 placements to reach the 20-placement unlock threshold;
+  // their split no longer determines the Slide's target (that used to be
+  // "whichever fed most" — now it's always Sunflower Meadow, see
+  // unlockSystem's own doc comment in src/sim/systems.ts) and their own
+  // habitats stay well under capacity, so they can't accidentally fire
+  // habitat:full first. CORRECTED 2026-08-01: this used to be 8/6/6, sized
+  // against a habitat capacity of 9 (BASE_CAPACITY was 6 before a since-
+  // superseded rebalance) — against the current capacity of 11 that left
+  // Sunflower Meadow 5 slots short of full, not 1, so the "visibly carries"
+  // spec's blocked-state check below could never actually observe
+  // habitat:full and timed out waiting for it.
+  for (let i = 0; i < 5; i += 1) await spawnAndDrop(page, 'ember', 'emberNook');
+  for (let i = 0; i < 5; i += 1) await spawnAndDrop(page, 'dew', 'dewPond');
+  for (let i = 0; i < 10; i += 1) await spawnAndDrop(page, 'sun', 'sunflowerMeadow');
   await expect.poll(async () => (await getUiState(page)).unlockedAutomations, { timeout: 20_000 }).toContain('gardenSlide');
 }
 
@@ -278,8 +281,11 @@ test.describe('Garden Slide: visibly carries Sprouts, along the path, at the upg
     expect(idleBead?.enabled, 'an idle Slide runs no belt').toBe(false);
     expect(idleWait?.enabled, 'an idle Slide is not showing a blockage').toBe(false);
 
-    // --- Ride 1, un-upgraded -------------------------------------------------
-    await page.click('[data-testid="debug-spawn-ember"]');
+    // --- Ride 1, un-upgraded ---------------------------------------------
+    // Sun, not Ember: the Slide only ever carries the type it targets
+    // (Sunflower Meadow's Sun Sprouts) — an Ember spawn would just sit idle,
+    // uncarried, and waitForNextTransport would time out.
+    await page.click('[data-testid="debug-spawn-sun"]');
     const ride1 = await waitForNextTransport(page, 0);
     expect(ride1.durationMs, 'sim must supply the ride duration').toBeGreaterThan(0);
 
@@ -320,42 +326,51 @@ test.describe('Garden Slide: visibly carries Sprouts, along the path, at the upg
       );
     }
 
-    // 3) It is NOT the old straight diagonal: the routed ride swings well clear
-    //    of the Nursery→Ember Nook line it used to cut across.
-    const maxDeviation = Math.max(
-      ...samples.carried.map(([x, z]) => distanceToStraightLine(x, z, NURSERY_TILE, HABITAT_TILES.emberNook)),
-    );
-    expect(maxDeviation, 'the route departs from the old straight lerp').toBeGreaterThan(1);
+    // 3) SKIPPED for this route (was: assert the ride departs from the old
+    //    naive diagonal lerp by >1 tile, regression protection for the
+    //    corner-cutting bug the Garden Slide pass fixed). Nursery(8,8) ->
+    //    Sunflower Meadow(8,13) is a straight south run with no fork or
+    //    corner (src/sim/layout.ts) — unlike the old Nursery -> Ember/Dew
+    //    routes, which bend through the Colour Gate, this leg's straight-line
+    //    distance IS the real path, so a >1-tile-deviation assertion would
+    //    fail on a perfectly correct ride. Checks 1/2/4 still cover motion,
+    //    on-path-ness, and the Slide's own animation; there's no corner left
+    //    to prove this route doesn't cut.
 
     // 4) The Slide structure itself shows a load, and that load moves.
     expect(samples.bead.length).toBeGreaterThan(4);
     const beadTravel = Math.max(...samples.bead.map(([x, z]) => Math.hypot(x - samples.bead[0][0], z - samples.bead[0][1])));
     expect(beadTravel, 'the Slide animates while it is carrying').toBeGreaterThan(0.05);
 
-    // --- Blocked -------------------------------------------------------------
-    // That delivery took the Ember Nook's last free slot, so automationSystem
+    // --- Blocked -----------------------------------------------------------
+    // That delivery took Sunflower Meadow's last free slot, so automationSystem
     // now declines to dispatch — and the Slide has to SHOW that, not just idle.
+    // (src/render/automation.ts's activityOf: blocked purely from `!carrying
+    // && destinationFull`, driven by `habitat:full` — no idle Sprout is
+    // required to observe it, but spawning one more of the Slide's own type
+    // demonstrates it now waits rather than being force-carried.)
     await expect
-      .poll(async () => (await getRecordedEvents(page)).some((e) => e.type === 'habitat:full' && e.habitatId === 'emberNook'), {
-        timeout: 15_000,
-      })
+      .poll(
+        async () => (await getRecordedEvents(page)).some((e) => e.type === 'habitat:full' && e.habitatId === 'sunflowerMeadow'),
+        { timeout: 15_000 },
+      )
       .toBe(true);
-    await page.click('[data-testid="debug-spawn-ember"]');
+    await page.click('[data-testid="debug-spawn-sun"]');
     await page.waitForTimeout(900); // let the carry→blocked cross-fade settle
     const blockedWait = await meshProbe(page, SLIDE_WAIT_MESH);
     const blockedBelt = await meshProbe(page, SLIDE_BEAD_MESH);
     expect(blockedWait?.enabled, 'a blocked Slide shows a parcel it cannot deliver').toBe(true);
     expect(blockedBelt?.enabled, 'a blocked Slide is not still running its belt').toBe(false);
 
-    // --- Ride 2, with Garden Slide Speed -------------------------------------
+    // --- Ride 2, with Garden Slide Speed ------------------------------------
     await grantUntilAffordable(page, UPGRADES.habitatCapacity.costForLevel(2) + UPGRADES.gardenSlideSpeed.costForLevel(1));
-    await buyUpgradeViaUI(page, 'Habitat Capacity'); // reopens the Ember Nook
+    await buyUpgradeViaUI(page, 'Habitat Capacity'); // reopens Sunflower Meadow
     await expect.poll(async () => (await getUiState(page)).upgradeLevels.habitatCapacity).toBe(2);
     await buyUpgradeViaUI(page, 'Garden Slide Speed');
     await expect.poll(async () => (await getUiState(page)).upgradeLevels.gardenSlideSpeed).toBe(1);
 
     const seen = await page.evaluate(() => (window.__ttEvents ?? []).filter((e) => e.type === 'sprout:transportStarted').length);
-    await page.click('[data-testid="debug-spawn-ember"]');
+    await page.click('[data-testid="debug-spawn-sun"]');
     const ride2 = await waitForNextTransport(page, seen);
 
     // The whole point of GAP 2: one level of Garden Slide Speed is a 20%

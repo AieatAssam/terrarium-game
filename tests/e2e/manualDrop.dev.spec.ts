@@ -187,7 +187,7 @@ async function buyHabitatCapacityTo(page: Page, level: 1 | 2 | 3): Promise<void>
   }
 }
 
-/** spawnAndDrop via the prefix-filtered debug spawn: helpers.ts's popLastSpawnedId pops the LAST spawned id, which a natural pod spawn can steal mid-setup — silently dropping the wrong Sprout and leaving correctPlacementCount short of the unlock. */
+/** spawnAndDrop via this file's own prefix-filtered debug spawn (predates helpers.ts's popLastSpawnedId being fixed 2026-08-01 to filter on podId==='debug' instead of blindly popping the last recorded id — either approach is now race-safe against a natural pod spawn landing mid-setup). */
 async function debugSpawnAndDrop(page: Page, sproutType: SproutTypeId, habitat: 'emberNook' | 'dewPond' | 'sunflowerMeadow'): Promise<void> {
   const id = await debugSpawnViaDom(page, sproutType);
   await emitDropped(page, id, habitat);

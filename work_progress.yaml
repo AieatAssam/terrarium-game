@@ -298,6 +298,124 @@ completed:
 # In flight — uncommitted work in the tree RIGHT NOW
 # ---------------------------------------------------------------------------
 in_flight:
+  - owner: claude session 2026-08-01 (e2e verification pass, unblocked queue)
+    files:
+      [
+        tests/e2e/helpers.ts,
+        tests/e2e/automation.dev.spec.ts,
+        tests/e2e/manualDrop.dev.spec.ts,
+        tests/e2e/placement.dev.spec.ts,
+        docs/QA_REPORT.md,
+        docs/_scratch/*.mjs (deleted, 19 files),
+        work_progress.yaml,
+      ]
+    task: >
+      Ran every e2e spec never run this session (advisor-recommended, after
+      the balance pass). Found and fixed THREE real, distinct bugs, all
+      verified via isolated spec runs (this project's own documented
+      standard — a full serial 6-minute run of the whole dev project surfaces
+      unrelated environmental flakiness that proves nothing about a specific
+      fix, confirmed empirically below):
+
+      1. buyUpgradeViaUI's button regex (`^Buy X for`) could never match a
+      LOCKED upgrade's aria-label (`"X, not available yet. reason"` —
+      src/ui/components/upgrades.ts render()), so any test exercising a
+      declined/locked purchase attempt timed out finding zero elements. Fixed
+      the regex to match all three aria-label shapes (unlocked/locked/maxed)
+      and added `{ force: true }` to the click, since a genuinely-disabled
+      HTML button can never satisfy Playwright's default "wait until
+      enabled" actionability check — the click handler's own
+      `if (buyBtn.disabled) return` guard makes a forced click safe. Fixes
+      "Colour Gate: behavioral purchase gate"'s first test (was timing out
+      100% of the time, not a flake).
+
+      2. popLastSpawnedId popped the LAST recorded sprout:spawned id with no
+      regard for WHICH spawn produced it — a natural pod spawn (podId:
+      'nursery') landing during the real wall-clock time a test spends
+      clicking a debug-spawn button + awaiting the pop can steal the pop,
+      silently stranding the just-clicked debug Sprout idle at the Nursery
+      forever (this file's own documented spawnandid-pop-race gotcha).
+      Fixed by recording podId alongside id and filtering for
+      podId==='debug' specifically — deterministic, not probabilistic.
+
+      3. automation.dev.spec.ts's "visibly carries Sprouts... at the
+      upgraded speed" test never got updated when Sunflower Meadow
+      automation landed (commit d3523f1, 2026-07-31) — it still spawned
+      'ember' and expected the GARDEN SLIDE to carry it, checked
+      habitat:full against 'emberNook', and asserted route deviation against
+      a Nursery->EmberNook line, none of which apply now that the Slide
+      only ever carries Sun to Sunflower Meadow. Also, buildGardenSlide's
+      8/6/6 fed-count setup was calibrated against a habitat capacity of 9
+      (BASE_CAPACITY was 6 before an even earlier, separate rebalance) — at
+      the CURRENT capacity of 11, the old counts left every habitat several
+      slots short of full, so the test's "one more delivery triggers
+      habitat:full" assumption could never fire regardless of which habitat
+      was checked. Rewrote the whole test: spawns/checks target Sun ->
+      Sunflower Meadow throughout, buildGardenSlide's setup now puts exactly
+      10 correct Sun placements into Sunflower Meadow (capacity-1 at
+      habitatCapacity level 1), and removed the route-deviation assertion
+      entirely for this leg — Nursery->Meadow is a straight run with no fork
+      (src/sim/layout.ts), so "departs from the straight lerp by >1 tile"
+      would fail on a perfectly correct ride; that protection only ever
+      applied to the old Ember/Dew routes, which bend through the Colour
+      Gate.
+
+      Also fixed placement.dev.spec.ts's already-documented (e2e-not-rerun
+      open_issue) 5s Dewdrop-timeout-vs-12.5s-real-time mismatch (raised to
+      15s), and corrected two other stale docs found along the way: a
+      "colourGateUnlock costs 450" comment in src/data/offlineProgress.ts
+      (already fixed in the earlier balance-pass commit, not re-touched
+      here) and docs/QA_REPORT.md's "Colour Gate has no colour-selection
+      UI" known-limitation bullet, which is simply false now
+      (src/ui/components/colourGate.ts is a real two-lane pictorial picker)
+      — marked SUPERSEDED rather than silently deleted, consistent with how
+      this report treats its own history elsewhere.
+
+      Deleted all 19 docs/_scratch/*.mjs diagnostic probes (untracked,
+      one-off bug-specific Playwright scripts whose findings are already
+      fully captured in this file's prose; none were general-purpose
+      reusable tooling) — a clean tree for handoff, per the last four
+      commits already implicitly excluding them.
+
+      VERIFIED (isolated spec runs, each independently, NOT part of a full
+      serial run — see below for why): automation.dev.spec.ts 4/4 pass
+      (twice), starSprout.dev.spec.ts 4/4 pass, placement.dev.spec.ts 2/2
+      pass. Full unit suite unaffected (258/258, unchanged from before this
+      session's edits — none of these are sim-code changes).
+
+      ENVIRONMENTAL FLAKINESS FINDING, NOT FIXED (separate from the 3 bugs
+      above): running the ENTIRE dev project serially in one ~6-minute
+      Playwright invocation (`--workers=1`, no parallelism) surfaces 3-5
+      failures that do NOT reproduce when the same specs run in isolation
+      seconds apart — including automation.dev.spec.ts's OWN
+      "visibly carries" test failing AGAIN in the full run even after the
+      fixes above, plus load.dev.spec.ts's pickedUp check and
+      manualDrop.dev.spec.ts's transportStarted check (both pre-existing,
+      no causal link to any change this session made — confirmed by reading
+      their failure sites, both are pointer/dispatch timing races already
+      hinted at by this file's spawnandid-pop-race entry and
+      manualDrop.dev.spec.ts's own "a parallel run once starved a page"
+      comment). Root cause for automation.dev.spec.ts's repeat failure
+      specifically: a NATURAL pod spawn (not a debug-spawned one — the
+      podId fix above only protects debug-spawned ids) landing during
+      buildGardenSlide's real-wall-clock setup can leave a stray, untouched
+      idle Sun Sprout at the Nursery that the Slide boards the instant it
+      builds — this is a DIFFERENT mechanism than the id-popping race,
+      structurally can't be fixed by id-tracking, and is now MORE likely to
+      matter than before the Meadow automation change (a stray natural Sun
+      used to be inert under the old emberNook-targeting logic; now the
+      Slide touches it). NOT YET FIXED — needs a drain-then-recount
+      approach in buildGardenSlide (settle every idle Sun via emitDropped,
+      poll until the Sunflower Meadow count stops rising, then top up to
+      exactly capacity-1 using the real post-drain count rather than a
+      hardcoded 10) rather than more probability reduction. This project's
+      own documented standard is to verify via isolated spec runs, not a
+      full serial marathon, so the 3 bugs above are still correctly counted
+      as fixed and verified; this is a distinct, known-but-open item.
+    status: DONE for the 3 named bugs (fixed, isolated-verified, typecheck/
+      lint/unit-test clean). NOT DONE: the natural-pod-stray flakiness in
+      automation.dev.spec.ts's "visibly carries" test (see above), and the
+      preview Playwright project (still never run this session).
   - owner: claude session 2026-07-31 (Sunflower Meadow automation)
     files:
       [

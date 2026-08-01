@@ -33,7 +33,8 @@ declare global {
     };
     /** Test-only recording buffers installed by installBusRecorder(). */
     __ttEvents?: GameEvent[];
-    __ttSpawnedIds?: string[];
+    /** Every sprout:spawned since installBusRecorder(), id + podId (see popLastSpawnedId). */
+    __ttSpawnedIds?: Array<{ id: string; podId: string }>;
   }
 }
 
@@ -196,12 +197,12 @@ export async function getUiState(page: Page): Promise<UiStateSnapshot> {
   });
 }
 
-/** Sets up a bus subscription (inside the page) that records every `sprout:spawned` id into `window.__ttSpawnedIds`, and every event of the given types into `window.__ttEvents`. Call once per page after dev hooks are ready. */
+/** Sets up a bus subscription (inside the page) that records every `sprout:spawned` id+podId into `window.__ttSpawnedIds`, and every event of the given types into `window.__ttEvents`. Call once per page after dev hooks are ready. */
 export async function installBusRecorder(page: Page, extraTypes: GameEventType[] = []): Promise<void> {
   await page.evaluate((types) => {
     window.__ttSpawnedIds = [];
     window.__ttEvents = [];
-    window.__terrariumUIF!.bus.subscribe('sprout:spawned', (e) => window.__ttSpawnedIds!.push(e.sproutId));
+    window.__terrariumUIF!.bus.subscribe('sprout:spawned', (e) => window.__ttSpawnedIds!.push({ id: e.sproutId, podId: e.podId }));
     for (const type of types) {
       window.__terrariumUIF!.bus.subscribe(type, (e) => window.__ttEvents!.push(e));
     }
@@ -213,10 +214,34 @@ export async function getRecordedEvents(page: Page): Promise<GameEvent[]> {
   return page.evaluate(() => window.__ttEvents ?? []);
 }
 
-/** Pops the most recently recorded `sprout:spawned` id (installBusRecorder must have been called first). */
+/**
+ * Pops the most recently recorded DEBUG `sprout:spawned` id (installBusRecorder
+ * must have been called first) — specifically `podId === 'debug'`
+ * (src/sim/runtime.ts's `debug.spawnSprout`), never a natural pod spawn
+ * (`podId: 'nursery'`, src/sim/systems.ts's `spawnSystem`). The naive
+ * "just pop the last recorded id" this replaced was a real race (this file's
+ * spawnandid-pop-race gotcha): the Nursery's own pod keeps spawning on its
+ * normal cadence for the whole real-wall-clock duration a caller spends
+ * clicking + awaiting a debug-spawn button, so a natural pod spawn landing in
+ * that window could win the pop, silently stranding the just-clicked debug
+ * Sprout idle at the Nursery forever (never dropped, never counted) —
+ * confirmed live 2026-08-01 as the cause of automation.dev.spec.ts's "an idle
+ * Slide runs no belt" flake failing 3/3 runs once the Slide started targeting
+ * Sun specifically. Filtering on `podId` fixes it deterministically instead
+ * of just making it less likely.
+ */
 export async function popLastSpawnedId(page: Page): Promise<string> {
-  const id = await page.evaluate(() => window.__ttSpawnedIds?.pop());
-  if (!id) throw new Error('No spawned sprout id recorded — did installBusRecorder run, and did a spawn actually happen?');
+  const id = await page.evaluate(() => {
+    const list = window.__ttSpawnedIds ?? [];
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      if (list[i].podId === 'debug') {
+        const [entry] = list.splice(i, 1);
+        return entry.id;
+      }
+    }
+    return undefined;
+  });
+  if (!id) throw new Error('No debug-spawned sprout id recorded — did installBusRecorder run, and did a debug spawn actually happen?');
   return id;
 }
 
@@ -267,8 +292,20 @@ export async function grantDewdrops(page: Page, times: number): Promise<void> {
  */
 export async function buyUpgradeViaUI(page: Page, displayNameSubstring: string): Promise<void> {
   await page.getByRole('button', { name: 'Upgrades' }).click();
-  const buyButton = page.getByRole('button', { name: new RegExp(`^Buy ${displayNameSubstring} for`) });
-  await buyButton.click();
+  // Aria-label depends on state (src/ui/components/upgrades.ts render()):
+  // unlocked reads "Buy X for N Dewdrops...", locked reads "X, not available
+  // yet. ...", maxed reads "X, maximum level reached" — all three start with
+  // the upgrade's own display name, optionally preceded by "Buy ". The old
+  // `^Buy X for` anchor could never match a locked/maxed button, which made
+  // this helper unusable for "attempt a purchase that should be rejected"
+  // scenarios (it just timed out finding zero matching elements).
+  const buyButton = page.getByRole('button', { name: new RegExp(`^(Buy )?${displayNameSubstring}`) });
+  // force: true — a locked/maxed button is genuinely `disabled`, and
+  // Playwright's default actionability wait blocks on "becomes enabled" for a
+  // button that structurally never will. The click handler itself already
+  // no-ops on `buyBtn.disabled`, so a forced click on a disabled button is
+  // exactly the "silently rejected" case callers want to exercise.
+  await buyButton.click({ force: true });
   await page.getByRole('button', { name: 'Close Upgrades' }).click();
 }
 

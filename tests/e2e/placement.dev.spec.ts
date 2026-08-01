@@ -28,8 +28,14 @@ test.describe('manual placement via real pointer drag', () => {
     await page.waitForFunction(() => window.__terrariumUIF!.store.getState().journalDiscovered.has('ember'), undefined, {
       timeout: 5_000,
     });
+    // 1 settled base-rate Sprout needs ~12.5s to cross a whole Dewdrop
+    // (BASE_DEWDROP_RATE 0.008/tick x 10 ticks/sec = 0.08/sec, 1/0.08 = 12.5s
+    // — src/data/habitats.ts). This used to be 5s, sized against a stale
+    // 0.02 rate (see work_progress.yaml's e2e-not-rerun entry); fixed
+    // 2026-08-01 rather than granting a rate-boosting upgrade first, since
+    // this test is specifically about the base, unupgraded path.
     await page.waitForFunction(() => window.__terrariumUIF!.store.getState().dewdropTotal > 0, undefined, {
-      timeout: 5_000,
+      timeout: 15_000,
     });
 
     const events = await getRecordedEvents(page);
