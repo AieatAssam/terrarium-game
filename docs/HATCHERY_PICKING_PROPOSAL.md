@@ -1,6 +1,15 @@
 # Hatchery Picking Proposal — how should the player pick Sprouts out of the Nursery?
 
 **Status:** Design investigation, not yet approved or scheduled.
+**SUPERSEDED 2026-08-01 (partial):** this doc's recommendation to keep
+Sunflower Meadow permanently hand-carried "as a feature" (see the
+"Recommendation" section below) was overridden by the 2026-07-31 Meadow
+automation change (`src/sim/systems.ts`'s `unlockSystem`) and the user has
+since confirmed keeping that automation (`work_progress.yaml` decisions:
+"Keep the 2026-07-31 Sunflower Meadow automation..."). The picking-problem
+analysis (Problem A/B split, the individual-waiting-slots requirement) is
+still live and unaffected by this — only the Meadow-stays-manual conclusion
+is no longer current.
 **Scope note:** This document proposes gameplay, not code. It touches no
 source file. If the "If/when this is built" sketch below is ever adopted,
 it needs `docs/CONTRACTS.md`'s `AutomationId` union extended and

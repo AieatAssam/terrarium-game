@@ -624,39 +624,6 @@ in_flight:
 # Known open issues
 # ---------------------------------------------------------------------------
 open_issues:
-  - id: meadow-automation-contradicts-prior-proposal
-    severity: high
-    note: >
-      NEW 2026-08-01, found during a balance/engagement analysis pass (user
-      request: "analyse the game code, ensure it is balanced and engaging,
-      prepare for next phase"). docs/HATCHERY_PICKING_PROPOSAL.md (committed
-      1a8c462, same day as but BEFORE the Meadow automation change) argued
-      explicitly to KEEP Sunflower Meadow permanently hand-carried, calling
-      it "arguably a feature... keeps at least one habitat inside the core
-      Notice -> Guide -> Settle loop for the ENTIRE game" and warning that
-      full automation of every common type "would hollow out the caretaking
-      fantasy §1 is built on." The very next change that session (commit
-      d3523f1, this repo's automate-the-Meadow work) did exactly the thing
-      that proposal argued against, without reconciling it — CLAUDE.md's
-      "surface the conflict, don't resolve by silence" rule applies here and
-      was missed at the time.
-      CONSEQUENCE, verified by reading src/sim/systems.ts and
-      src/data/spawning.ts: with the Garden Slide always feeding Sun ->
-      Meadow and the Colour Gate's two lanes covering Ember/Dew, all 3
-      common Sprout types (93.7% of spawns) are now fully automatable end to
-      end. Only the Star Sprout (6.3% of spawns) still requires a manual
-      drag once both automations are built. That is a real, large shift in
-      what "the core loop" is for a player who has been playing 15+ minutes.
-      NOT reverted — this is a decision for the user, not something to
-      silently re-decide either direction. Two live options: (a) leave the
-      Meadow automation as shipped (current state) and treat "the manual
-      loop mostly disappears once both automations exist" as intended
-      end-of-Phase-1 texture (arguably matches §9.6 stage 3's own framing:
-      once the complexity curve reaches "two destinations and fallback",
-      full coverage of the 3 common types is the natural conclusion, not a
-      hollowing-out); or (b) partially or fully revert the 2026-07-31 Meadow
-      change so at least one habitat stays hand-carried for the whole game,
-      per the proposal's original reasoning. Flagged, not actioned.
   - id: nursery-crowd-masks-real-progress
     severity: medium
     note: >
@@ -971,6 +938,23 @@ decisions:
       (Colour-Gate-parked idle Sprout) is still open — an attempted fix was
       written and then reverted, unverified and with a known flaw; see the
       ground-dropped-sprouts open_issue for what's left to do there.
+  - q: Keep the 2026-07-31 Sunflower Meadow automation, given
+      docs/HATCHERY_PICKING_PROPOSAL.md argued explicitly to keep it
+      hand-carried forever (see the now-closed
+      meadow-automation-contradicts-prior-proposal open_issue)?
+    a: >
+      RESOLVED 2026-08-01 — user chose option (a): keep the automation as
+      shipped. All 3 common Sprout types are now fully automatable once
+      both Garden Slide and Colour Gate are built; only Star Sprouts (6.3%
+      of spawns) still require a manual drag at that point. Consequence
+      accepted, not revisited. docs/HATCHERY_PICKING_PROPOSAL.md's
+      "keep Meadow hand-carried as a feature" recommendation is SUPERSEDED
+      by this decision — the doc itself should get a status note pointing
+      here rather than being deleted (it's still useful context for why the
+      question existed). "Next phase" work should build on the
+      full-automation baseline: the interesting manual interaction going
+      forward is Star Sprouts and whatever GameRules §9.6 stage 4+ /
+      §9.5 introduces, not re-litigating which habitat stays manual.
 
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?
