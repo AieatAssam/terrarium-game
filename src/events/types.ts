@@ -4,7 +4,8 @@
 
 import type { AchievementId, AutomationId, HabitatId, MoodId, SproutTypeId, TransitArtifactKind, UpgradeId } from '../core/ids';
 import type { TileCoord } from '../sim/grid';
-import type { ConveyorSegment, Port, RouteState, SlideInstance } from '../sim/state';
+import type { ConveyorSegment, RouteState, SlideInstance } from '../sim/state';
+import type { Port } from '../sim/ports';
 
 export type GameEvent =
   | { type: 'sprout:spawned'; sproutId: string; sproutType: SproutTypeId; mood: MoodId; podId: string }

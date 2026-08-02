@@ -1588,7 +1588,7 @@ steps:
 steps:
   - phase: "7.1"
     title: Audit the Slide, Gate, route, placement, currency and save systems before changing them
-    status: planned
+    status: completed
     why: >
       Garden Transit replaces the automation domain model, and the existing
       one is load-bearing for shipped features the player already has. An
@@ -1642,7 +1642,7 @@ steps:
 
   - phase: "7.2"
     title: Migrate existing saves and the legacy single Slide into the transit model
-    status: planned
+    status: completed
     why: >
       Players have gardens with a placed Garden Slide. That Slide must survive
       the redesign as a real, owned, configured Transit Slide — not vanish,
@@ -1816,7 +1816,7 @@ steps:
 
   - phase: "7.5"
     title: Define the port and anchor contract for Nursery, Slides, Conveyors, Gates and habitats
-    status: planned
+    status: completed
     why: >
       GameRules §9.13 forbids connection by mesh overlap — the exact defect
       that makes today's Slide float, clip and terminate ambiguously. Ports

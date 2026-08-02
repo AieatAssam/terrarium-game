@@ -12,7 +12,7 @@ export const GRID_SIZE = 16;
 
 // World units per tile edge. Kept as a named constant (not a magic number) so
 // the renderer's camera/zoom math and this mapping can only ever agree.
-const TILE_WORLD_SIZE = 1;
+export const TILE_WORLD_SIZE = 1;
 
 export function tileToWorld(tile: TileCoord): { x: number; y: number; z: number } {
   return {

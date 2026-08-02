@@ -9,6 +9,25 @@ import type { AchievementId, AutomationId, HabitatId, MoodId, SproutTypeId, Upgr
 import { INITIAL_SPAWN_ACCUMULATOR_MS, type NurseryRhythm } from '../data/spawning';
 import type { TileCoord } from './grid';
 import { defaultColourGateLanes, HABITAT_TILES, type ColourGateLanes } from './layout';
+export {
+  getConveyorPorts,
+  getSlidePorts,
+  getColourGatePorts,
+  getHabitatPorts,
+  getNurseryPorts,
+  hasTransitTileClearance,
+  oppositePortFacing,
+  portsCompatible,
+  portsJoined,
+  TRANSIT_PORT_KINDS,
+} from './ports';
+export type {
+  Port,
+  TransitPortCompatibility,
+  TransitPortDirection,
+  TransitPortFacing,
+  TransitPortKind,
+} from './ports';
 
 export type SproutInstanceState = 'idle' | 'walking' | 'transporting' | 'settled';
 
@@ -84,19 +103,6 @@ export interface AutomationInstance {
 /** The §9.14 accepted-kind filter: one Sprout kind, or `'any'` (the safe default). */
 export type TransitAcceptedKind = SproutTypeId | 'any';
 
-/** Serializable port vocabulary shared by every Garden Transit artifact. */
-export type TransitPortKind = 'entry' | 'exit' | 'dock' | 'lane';
-export type TransitPortDirection = 'north' | 'east' | 'south' | 'west';
-export type TransitPortCompatibility = 'transit' | 'nursery' | 'habitat' | 'junction';
-
-/** A named attachment point; compatibility is data, never mesh overlap. */
-export interface Port {
-  ownerId: string;
-  kind: TransitPortKind;
-  direction: TransitPortDirection;
-  compatibility: TransitPortCompatibility;
-}
-
 /**
  * One owned, placed Garden Slide. Copied from the HabitatInstance pattern
  * (kind on the instance, tile on the instance, no per-instance price —
@@ -113,9 +119,6 @@ export interface SlideInstance {
   destination: HabitatId;
   /** §9.14: a disabled Slide is visibly dormant and holds nothing. */
   enabled: boolean;
-  /** Explicit connections. Optional for v7 saves; `getSlidePorts` supplies a deterministic legacy shape. */
-  entryPort?: Port;
-  exitPort?: Port;
   /** Tick this Slide was built — a migrated legacy Slide keeps its historical value. */
   builtAtTick: number;
 }
@@ -131,28 +134,11 @@ export interface ConveyorSegment {
   id: string;
   /** The tile this segment occupies. */
   tile: TileCoord;
-  /** Explicit connections. Optional for v7 saves; `getConveyorPorts` supplies a deterministic legacy shape. */
-  entryPort?: Port;
-  exitPort?: Port;
   /** Optional simple routing rules; configuration and routing behaviour arrive in later phases. */
   filter?: TransitAcceptedKind;
   destination?: HabitatId;
   /** Tick this segment was built — the migrated fixed network is pre-existing garden infrastructure (0). */
   builtAtTick: number;
-}
-
-export function getSlidePorts(slide: SlideInstance): { entryPort: Port; exitPort: Port } {
-  return {
-    entryPort: slide.entryPort ?? { ownerId: slide.id, kind: 'entry', direction: 'south', compatibility: 'transit' },
-    exitPort: slide.exitPort ?? { ownerId: slide.id, kind: 'exit', direction: 'north', compatibility: 'transit' },
-  };
-}
-
-export function getConveyorPorts(segment: ConveyorSegment): { entryPort: Port; exitPort: Port } {
-  return {
-    entryPort: segment.entryPort ?? { ownerId: segment.id, kind: 'entry', direction: 'south', compatibility: 'transit' },
-    exitPort: segment.exitPort ?? { ownerId: segment.id, kind: 'exit', direction: 'north', compatibility: 'transit' },
-  };
 }
 
 /** A transit artifact's legible state, matching GameRules §9.15 exactly. Derived, never stored. */

@@ -16,10 +16,10 @@
 
 meta:
   updated: 2026-08-02
-  head: latest Phase 7.4 transit-economy commit (main; 52a0c98 = Phase 2 buildable habitats; 67bea9b = dependent-doc reconciliation, fecefe8 = Garden Transit rules+plan revision)
+  head: latest Phase 7.5 transit-port-contract commit (main; 52a0c98 = Phase 2 buildable habitats; 67bea9b = dependent-doc reconciliation, fecefe8 = Garden Transit rules+plan revision)
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
-  tests_passing: "358 unit tests / 33 files (re-verified 2026-08-02 via `npm test` — all green)"
+  tests_passing: "362 unit tests / 35 files (re-verified 2026-08-02 via `npm test` — all green)"
   check_command: npm run typecheck && npm run lint && npm test && npm run build
   note: >
     This meta block had gone stale twice (read a98b552/258 tests through
@@ -541,6 +541,22 @@ in_flight:
       and focused pricing/economy tests. Verification passed: typecheck, lint,
       358 unit tests, and production build. No browser buy/remove scenario was
       run because 7.4 has no UI or renderer wiring; that belongs to 7.6/7.12.
+      7.5 INTENT (2026-08-02): replace the provisional direction-only port
+      fallback with one shared, derived port contract. Add tile/facing data,
+      explicit Nursery/Slide/Conveyor/Gate/habitat port sets, an exhaustive
+      ordered compatibility matrix, adjacency/clearance helpers, and render
+      anchor positions derived from propDims. Ports remain derived and absent
+      from saved artifact state. No placement UI or new artifact rendering.
+      7.5 DONE (2026-08-02): added sim/ports.ts with the complete Port shape,
+      explicit port sets for Nursery, Slide, Conveyor, Colour Gate and habitat
+      objects, a 4x4 ordered kind matrix, role compatibility, joined-port
+      adjacency/facing checks, and tile clearance. Moved Slide/Conveyor ports
+      out of saved SimState; events derive them at build time. Added the pure
+      propDims portWorldPosition adapter: adjacent opposite ports land on one
+      exact tile seam at a body-derived ground height, with a stated tolerance.
+      Added exhaustive matrix, contract, save-shape and anchor tests. Full
+      browser joint inspection is deferred because no current renderer/UI path
+      consumes these anchors; 7.6/7.7 will validate the real joined meshes.
   - owner: claude session 2026-08-02 (Phase 2 — buildable habitats, instance model)
     files: >
       PLAN: src/core/ids.ts (docs only), src/sim/state.ts, src/sim/systems.ts,

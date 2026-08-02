@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { UNLOCK_THRESHOLDS } from '../../src/data/unlocks';
-import { createInitialSimState, getConveyorPorts, getSlidePorts, type SimState } from '../../src/sim/state';
+import { createInitialSimState, type SimState } from '../../src/sim/state';
 import {
   deriveTransitRouteState,
   deriveTransitRouteStates,
@@ -25,11 +25,11 @@ function transitFixture(): SimState {
       enabled: true,
       builtAtTick: index,
     };
-    return { ...slide, ...getSlidePorts(slide) };
+    return slide;
   });
   const conveyors = GARDEN_PATH_TILES.slice(0, 10).map((tile, index) => {
     const segment = { id: `conveyor-${index + 1}`, tile, builtAtTick: 0 };
-    return { ...segment, ...getConveyorPorts(segment) };
+    return segment;
   });
   return { ...state, slides, conveyors };
 }

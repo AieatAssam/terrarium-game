@@ -54,7 +54,8 @@ import {
   type ColourGateLane,
   type ColourGateLanes,
 } from './layout';
-import { getConveyorPorts, getSlidePorts, type AutomationInstance, type ConveyorSegment, type HabitatInstance, type RouteState, type SimState, type SlideInstance, type SproutInstance, type TransitAcceptedKind } from './state';
+import { type AutomationInstance, type ConveyorSegment, type HabitatInstance, type RouteState, type SimState, type SlideInstance, type SproutInstance, type TransitAcceptedKind } from './state';
+import { getConveyorPorts, getSlidePorts } from './ports';
 import type { TickResult } from './tick';
 
 // ---------------------------------------------------------------------------

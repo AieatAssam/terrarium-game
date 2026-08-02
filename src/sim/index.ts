@@ -1,6 +1,20 @@
 export { GRID_SIZE, isWithinGrid, tileToWorld } from './grid';
 export type { TileCoord } from './grid';
 export { AUTOMATION_SITE_TILES, HABITAT_TILES, NURSERY_TILE, tileDistance } from './layout';
+export {
+  getColourGatePorts,
+  getConveyorPorts,
+  getHabitatPorts,
+  getNurseryPorts,
+  getSlidePorts,
+  hasTransitTileClearance,
+  oppositePortFacing,
+  PORT_KIND_COMPATIBILITY,
+  portsCompatible,
+  portsJoined,
+  TRANSIT_PORT_KINDS,
+} from './ports';
+export type { Port, TransitPortCompatibility, TransitPortDirection, TransitPortFacing, TransitPortKind } from './ports';
 export { advanceClock, createSimClock, TICK_MS } from './loop';
 export type { AdvanceClockResult, SimClock } from './loop';
 export { nextRandom } from './rng';

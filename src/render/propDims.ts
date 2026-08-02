@@ -27,6 +27,8 @@
 
 import { drumProfile, type DrumProfileOptions, type PrismRing } from './geometry';
 import type { AutomationId, HabitatId } from '../core/ids';
+import { TILE_WORLD_SIZE, tileToWorld } from '../sim/grid';
+import type { Port, TransitPortFacing } from '../sim/ports';
 
 /**
  * A bevelled volume: where its pivot sits in world space, how big it is, and
@@ -63,6 +65,47 @@ export function halfHeight(body: PropBody): number {
  */
 export function footprintRadius(body: PropBody): number {
   return body.halfWidth + (body.profile.foot?.outset ?? 0);
+}
+
+export interface PortWorldPosition {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Maximum numerical drift allowed when a mesh declares the same port anchor. */
+export const PORT_ANCHOR_TOLERANCE = 0.001;
+
+/** Ground-level attachment height derived from the owning body's dimensions. */
+export function portBaseY(body: PropBody): number {
+  return body.centreY - halfHeight(body);
+}
+
+const FACING_VECTOR: Record<TransitPortFacing, { x: number; z: number }> = {
+  north: { x: 0, z: -1 },
+  east: { x: 1, z: 0 },
+  south: { x: 0, z: 1 },
+  west: { x: -1, z: 0 },
+};
+
+/**
+ * Resolve a logical port to the tile seam used by its future mesh socket.
+ * `body` supplies the base height and the body/socket split; the final point
+ * stays on the shared half-tile seam, so opposite ports on adjacent tiles are
+ * exactly coincident rather than separated by a guessed prop radius.
+ */
+export function portWorldPosition(port: Port, body: PropBody): PortWorldPosition {
+  const world = tileToWorld(port.tile);
+  const halfTile = TILE_WORLD_SIZE / 2;
+  const bodyReach = Math.min(halfTile, footprintRadius(body));
+  const socketDepth = halfTile - bodyReach;
+  const edgeOffset = bodyReach + socketDepth;
+  const facing = FACING_VECTOR[port.facing];
+  return {
+    x: world.x + facing.x * edgeOffset,
+    y: portBaseY(body),
+    z: world.z + facing.z * edgeOffset,
+  };
 }
 
 export function bodyRings(body: PropBody): PrismRing[] {

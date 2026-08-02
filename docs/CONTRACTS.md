@@ -2,7 +2,7 @@
 
 Authoritative shared interfaces. Any agent needing a change here must report it back for integration, not silently redefine it elsewhere.
 
-> **PENDING CONTRACT CHANGE — Garden Transit (GameRules 2026-08-02 revision).**
+> **INCREMENTAL CONTRACT CHANGE — Garden Transit (GameRules 2026-08-02 revision).**
 > Every interface below describes the **shipped** code and is accurate as such.
 > GameRules §9.3 and §9.12–§9.17 now specify a replacement automation model —
 > multiple Garden Slides with per-Slide Sprout-kind filters, buildable Sprout
@@ -10,13 +10,10 @@ Authoritative shared interfaces. Any agent needing a change here must report it 
 > `AutomationId`, `AutomationInstance`, the `automation:*` events, the save
 > shape, and the fixed trunk topology described under "Grid and layout".
 >
-> Those changes are **deliberately not written here yet**: this file documents
-> interfaces that exist, and inventing the new ones before they are built would
-> make it a work of fiction rather than a contract. `plan.yaml` task **7.3**
-> defines the new domain model and task **7.16** updates this file to match
-> what actually ships. Until then, treat the automation sections below as
-> "current truth, scheduled for replacement" and read GameRules §9.3 for the
-> design intent.
+> Phase 7 is landing incrementally. The port contract below is current as of
+> task **7.5**; the remaining automation, save and fixed-topology sections are
+> still reconciled by task **7.16**. Read GameRules §9.3 for the full design
+> intent.
 
 ## Project layout (file ownership)
 
@@ -67,6 +64,47 @@ disagree. `tileDistance(Nursery, Gate) + tileDistance(Gate, home)` equals
 `tileDistance(Nursery, home)` for both northern homes, so travelling *through*
 the Gate costs a Sprout nothing.
 
+### Garden Transit ports (Phase 7.5)
+
+Ports are derived attachment points, never saved fields and never inferred from
+mesh overlap. The sim contract is:
+
+```ts
+type TransitPortKind = 'entry' | 'exit' | 'dock' | 'lane';
+type TransitPortFacing = 'north' | 'east' | 'south' | 'west';
+type TransitPortCompatibility = 'transit' | 'nursery' | 'habitat' | 'junction';
+interface Port {
+  ownerId: string;
+  kind: TransitPortKind;
+  tile: TileCoord;
+  facing: TransitPortFacing;
+  compatibility: TransitPortCompatibility;
+}
+```
+
+`src/sim/ports.ts` declares the port sets: the Nursery has one north-facing
+outbound dock; each Slide and Conveyor has south-facing entry and north-facing
+exit ports; the Colour Gate has a south-facing inbound dock plus west/east lane
+outputs; each habitat has one approach dock facing its serving route. The
+ordered kind matrix is exhaustive:
+
+```ts
+const PORT_KIND_COMPATIBILITY = {
+  entry: { entry: false, exit: true, dock: true, lane: true },
+  exit:  { entry: true, exit: false, dock: true, lane: false },
+  dock:  { entry: true, exit: true, dock: false, lane: true },
+  lane:  { entry: true, exit: false, dock: true, lane: false },
+};
+```
+
+`portsCompatible` additionally requires distinct owners and matching
+compatibility roles. `portsJoined` adds opposite facings and orthogonally
+adjacent tiles. `hasTransitTileClearance` rejects occupied tiles; physical
+footprints and anchor height remain renderer-owned. `src/render/propDims.ts`
+resolves a port through `portWorldPosition(port, body)`: the body dimensions
+derive its ground-level height and socket inset, while opposite adjacent ports
+share the exact half-tile seam within `PORT_ANCHOR_TOLERANCE`.
+
 ## Core string ids (do not rename)
 
 ```ts
@@ -75,10 +113,7 @@ type HabitatId = 'emberNook' | 'dewPond' | 'sunflowerMeadow';
 /** A second, orthogonal Sprout attribute (GameRules §7.3) — never affects which habitat is correct for a Sprout. */
 type MoodId = 'sunny' | 'sleepy';
 type AutomationId = 'gardenSlide' | 'colourGate' | 'moodBell';
-// 2026-08-02: Garden Transit (GameRules §9.3) will split this into a KIND
-// ('gardenSlide' | 'sproutConveyor' | 'colourGate' | 'moodBell') plus
-// N-instance collections for Slides and Conveyors. Not yet implemented —
-// plan.yaml 7.3. Do not add ids here ahead of that task.
+type TransitArtifactKind = 'gardenSlide' | 'sproutConveyor' | 'colourGate' | 'moodBell';
 type UpgradeId =
   | 'podRhythm'
   | 'habitatCapacity'
