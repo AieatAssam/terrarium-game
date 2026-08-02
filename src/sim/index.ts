@@ -22,11 +22,17 @@ export {
   dewdropSystem,
   habitatInstanceAtTile,
   nearestReachableHabitatInstance,
+  placeConveyor,
   placeHabitat,
+  placeSlide,
   purchaseUpgrade,
+  removeConveyor,
+  removeSlide,
   spawnSystem,
   TICK_SYSTEMS,
+  transitPlacementLockReason,
   unlockSystem,
 } from './systems';
+export type { SlidePlacement } from './systems';
 export { runTick } from './tick';
 export type { SimSystem, TickResult } from './tick';

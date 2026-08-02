@@ -16,10 +16,10 @@
 
 meta:
   updated: 2026-08-02
-  head: latest Phase 7.2 transit-migration commit (main; 52a0c98 = Phase 2 buildable habitats; 67bea9b = dependent-doc reconciliation, fecefe8 = Garden Transit rules+plan revision)
+  head: latest Phase 7.4 transit-economy commit (main; 52a0c98 = Phase 2 buildable habitats; 67bea9b = dependent-doc reconciliation, fecefe8 = Garden Transit rules+plan revision)
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
-  tests_passing: "350 unit tests / 32 files (re-verified 2026-08-02 via `npm test` — all green)"
+  tests_passing: "358 unit tests / 33 files (re-verified 2026-08-02 via `npm test` — all green)"
   check_command: npm run typecheck && npm run lint && npm test && npm run build
   note: >
     This meta block had gone stale twice (read a98b552/258 tests through
@@ -518,6 +518,29 @@ in_flight:
       Browser note: existing warning only — missing Mood Bell manifest key uses
       the renderer placeholder. No browser gameplay scenario was applicable;
       7.3 has no player-facing flow.
+      7.4 INTENT (2026-08-02): implement the §9.12 transit economy in the sim
+      domain only: shared Slide/Conveyor price and cap helpers, paid placement
+      and full-removal refunds, first-Slide milestone permission, and Conveyor
+      permission after at least one placed Slide. Preserve the legacy
+      placeAutomation path for Colour Gate/Mood Bell; do not touch renderer or
+      UI. Add focused unit coverage for the exact price sequence, affordability,
+      caps, refunds, no negative balance, unlock sequencing, and save-shaped
+      state round trips. Planned ownership: src/data/transit.ts,
+      src/data/unlocks.ts, src/sim/systems.ts, src/sim/runtime.ts,
+      tests/unit/data.transit.test.ts and related sim tests if needed.
+      7.4 DONE (2026-08-02): added src/data/transit.ts with the exact bounded
+      Slide curve (150/270/485/875/1575/2400…), flat 15-Dewdrop Conveyor
+      pricing, caps, cap copy, and full-refund helpers. Added sim-side paid
+      placeSlide/placeConveyor and removeSlide/removeConveyor operations;
+      invalid, locked, capped, or unaffordable requests return the original
+      state and never spend below zero. Slide placement requires the existing
+      manual-sorting milestone and Conveyor placement requires at least one
+      actually placed Slide. Runtime and sim exports expose the operations and
+      lock copy; the legacy singleton placeAutomation path remains untouched
+      for the later 7.6 build-mode migration. Added the transit removal event
+      and focused pricing/economy tests. Verification passed: typecheck, lint,
+      358 unit tests, and production build. No browser buy/remove scenario was
+      run because 7.4 has no UI or renderer wiring; that belongs to 7.6/7.12.
   - owner: claude session 2026-08-02 (Phase 2 — buildable habitats, instance model)
     files: >
       PLAN: src/core/ids.ts (docs only), src/sim/state.ts, src/sim/systems.ts,
@@ -576,7 +599,12 @@ in_flight:
       placeHabitat (single source of truth); UI only offers what it can see
       via events (a new habitat:buildUnlock/hint is NOT added — the build
       menu reads full habitat states from habitat:full events).
-    # checks: pending — record the real command results when green.
+    status: >
+      COMMITTED in 52a0c98 (2026-08-02). Phase 2 habitat instance model,
+      build pricing/gates, instance-aware rides, renderer/input integration,
+      persistence migration, and tests are already in this branch. No
+      uncommitted Phase 2 source files remain; the old IN PROGRESS marker was
+      stale when Phase 7.4 resumed.
 
   - owner: claude session 2026-08-02 (Garden Transit — rules + plan revision)
     files: >

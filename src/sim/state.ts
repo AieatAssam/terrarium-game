@@ -134,7 +134,7 @@ export interface ConveyorSegment {
   /** Explicit connections. Optional for v7 saves; `getConveyorPorts` supplies a deterministic legacy shape. */
   entryPort?: Port;
   exitPort?: Port;
-  /** Optional simple routing rules; pricing/configuration arrive in later phases. */
+  /** Optional simple routing rules; configuration and routing behaviour arrive in later phases. */
   filter?: TransitAcceptedKind;
   destination?: HabitatId;
   /** Tick this segment was built — the migrated fixed network is pre-existing garden infrastructure (0). */

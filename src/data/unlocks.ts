@@ -3,6 +3,7 @@
 // Colour Gate's condition is behavioral rather than a placement count.
 
 import type { AutomationId } from '../core/ids';
+import { conveyorUnlockMessage } from './transit';
 import { TICK_MS } from '../sim/loop';
 
 export interface UnlockThreshold {
@@ -80,6 +81,15 @@ export const UNLOCK_THRESHOLD_LIST: UnlockThreshold[] = Object.values(UNLOCK_THR
 /** Exact-threshold check for Garden Slide: unlocks AT the required count, not one past it. */
 export function isGardenSlideUnlocked(correctPlacements: number): boolean {
   return correctPlacements >= UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements;
+}
+
+/** Sprout Conveyors are available once at least one paid Slide is actually placed. */
+export function isConveyorUnlocked(placedSlideCount: number): boolean {
+  return placedSlideCount > 0;
+}
+
+export function conveyorLockReason(placedSlideCount: number): string | null {
+  return isConveyorUnlocked(placedSlideCount) ? null : conveyorUnlockMessage();
 }
 
 export interface ColourGateUnlockState {

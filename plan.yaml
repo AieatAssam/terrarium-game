@@ -1761,7 +1761,7 @@ steps:
 
   - phase: "7.4"
     title: Implement transit pricing, refunds, caps and unlock sequencing
-    status: planned
+    status: completed
     why: >
       GameRules §9.12 makes cost visible, escalation bounded, and refunds
       full, so experimentation stays joyful. Those properties only hold if

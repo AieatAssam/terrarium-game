@@ -126,6 +126,7 @@ export type GameEvent =
     }
   | { type: 'transit:slideBuilt'; slide: SlideInstance; entryPort: Port; exitPort: Port }
   | { type: 'transit:conveyorBuilt'; conveyor: ConveyorSegment; entryPort: Port; exitPort: Port }
+  | { type: 'transit:artifactRemoved'; artifactId: string; artifactKind: 'gardenSlide' | 'sproutConveyor'; refund: number }
   | { type: 'transit:routeStateChanged'; artifactId: string; artifactKind: TransitArtifactKind; state: RouteState }
   | { type: 'automation:unlocked'; automationId: AutomationId }
   | {

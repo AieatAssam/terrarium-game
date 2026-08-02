@@ -9,6 +9,7 @@
 import type { AutomationId, HabitatId, MoodId, SproutTypeId, UpgradeId } from '../core/ids';
 import { isDev } from '../core/env';
 import { getEffectiveHabitatCapacity } from '../data/habitats';
+import type { PricedTransitKind } from '../data/transit';
 import type { EventBus } from '../events/bus';
 import type { GameEvent } from '../events/types';
 import { computeOfflineProgress } from '../data/offlineProgress';
@@ -28,11 +29,17 @@ import {
   countWaitingSprouts,
   habitatInstanceAtTile,
   moodBellBehavioralState,
+  placeConveyor as placeConveyorSystem,
   placeAutomation as placeAutomationSystem,
   placeHabitat as placeHabitatSystem,
+  placeSlide as placeSlideSystem,
   purchaseUpgrade as purchaseUpgradeSystem,
+  removeConveyor as removeConveyorSystem,
+  removeSlide as removeSlideSystem,
   setColourGateLane as setColourGateLaneSystem,
   setMoodBellRule as setMoodBellRuleSystem,
+  transitPlacementLockReason,
+  type SlidePlacement,
   TICK_SYSTEMS,
 } from './systems';
 import { runTick } from './tick';
@@ -69,6 +76,16 @@ export interface SimRuntime {
    * src/sim/systems.ts — no-ops on any unmet gate.
    */
   placeHabitat: (habitatId: HabitatId, tile: TileCoord) => void;
+  /** Player commits a paid Garden Slide placement (GameRules §9.12). */
+  placeSlide: (placement: SlidePlacement) => void;
+  /** Player commits a paid Sprout Conveyor segment placement (GameRules §9.12). */
+  placeConveyor: (tile: TileCoord) => void;
+  /** Removes a placed Slide and applies the documented full refund. */
+  removeSlide: (slideId: string) => void;
+  /** Removes a placed Conveyor and applies its full flat refund. */
+  removeConveyor: (conveyorId: string) => void;
+  /** Permission, cap and price copy for the transit build surface. */
+  getTransitPlacementLockReason: (kind: PricedTransitKind) => string | null;
   /**
    * The Colour Gate's control surface, exposed as plain functions for exactly
    * the reason `purchaseUpgrade` is (see docs/ARCHITECTURE.md): the GameEvent
@@ -313,6 +330,23 @@ export async function startSimRuntime(
       const result = placeHabitatSystem(state, habitatId, tile);
       state = commit(emit, result.state, result.events);
     },
+    placeSlide: (placement) => {
+      const result = placeSlideSystem(state, placement);
+      state = commit(emit, result.state, result.events);
+    },
+    placeConveyor: (tile) => {
+      const result = placeConveyorSystem(state, tile);
+      state = commit(emit, result.state, result.events);
+    },
+    removeSlide: (slideId) => {
+      const result = removeSlideSystem(state, slideId);
+      state = commit(emit, result.state, result.events);
+    },
+    removeConveyor: (conveyorId) => {
+      const result = removeConveyorSystem(state, conveyorId);
+      state = commit(emit, result.state, result.events);
+    },
+    getTransitPlacementLockReason: (kind) => transitPlacementLockReason(state, kind),
     getUpgradeLockReason: (upgradeId) =>
       upgradeId === 'colourGateUnlock'
         ? colourGateLockReason(colourGateBehavioralState(state))

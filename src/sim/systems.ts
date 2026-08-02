@@ -10,6 +10,15 @@ import type { GameEvent } from '../events/types';
 import { ACHIEVEMENT_LIST } from '../data/achievements';
 import { sproutMatchesHabitat, SPROUT_TYPES } from '../data/sproutTypes';
 import { getEffectiveHabitatCapacity, habitatBuildCost, HABITATS } from '../data/habitats';
+import {
+  gardenSlideRefund,
+  conveyorUnlockMessage,
+  nextGardenSlidePrice,
+  SPROUT_CONVEYOR_COST,
+  transitCapMessage,
+  TRANSIT_CAPS,
+  type PricedTransitKind,
+} from '../data/transit';
 import { getDewdropMultiplier, UPGRADES } from '../data/upgrades';
 import {
   getNurseryPaceMultiplier,
@@ -20,6 +29,7 @@ import {
 } from '../data/spawning';
 import {
   isColourGateUnlocked,
+  isConveyorUnlocked,
   isGardenSlideUnlocked,
   isMoodBellUnlocked,
   type ColourGateUnlockState,
@@ -27,7 +37,7 @@ import {
 } from '../data/unlocks';
 import { nextRandom } from './rng';
 import { TICK_MS } from './loop';
-import type { TileCoord } from './grid';
+import { isWithinGrid, type TileCoord } from './grid';
 import {
   COLOUR_GATE_LANE_HABITATS,
   COLOUR_GATE_LANE_LIST,
@@ -44,7 +54,7 @@ import {
   type ColourGateLane,
   type ColourGateLanes,
 } from './layout';
-import type { AutomationInstance, HabitatInstance, RouteState, SimState, SproutInstance } from './state';
+import { getConveyorPorts, getSlidePorts, type AutomationInstance, type ConveyorSegment, type HabitatInstance, type RouteState, type SimState, type SlideInstance, type SproutInstance, type TransitAcceptedKind } from './state';
 import type { TickResult } from './tick';
 
 // ---------------------------------------------------------------------------
@@ -383,6 +393,143 @@ export function placeAutomation(state: SimState, automationId: AutomationId, til
   return {
     state: { ...state, automations: [...state.automations, instance], colourGateLanes, moodBellRule },
     events,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Garden Transit economy (GameRules §9.12, plan.yaml 7.4)
+// ---------------------------------------------------------------------------
+
+export interface SlidePlacement {
+  tile: TileCoord;
+  destination: HabitatId;
+  acceptedKind?: TransitAcceptedKind;
+}
+
+function occupiedTransitTiles(state: SimState): TileCoord[] {
+  return [
+    ...state.habitats.map((habitat) => habitat.tile),
+    ...state.automations.map((automation) => automation.siteTile),
+    ...state.slides.map((slide) => slide.tile),
+    ...state.conveyors.map((conveyor) => conveyor.tile),
+  ];
+}
+
+function isValidTileCoord(tile: TileCoord): boolean {
+  return Boolean(tile) && Number.isInteger(tile.x) && Number.isInteger(tile.z) && isWithinGrid(tile);
+}
+
+function nextAvailableId(prefix: string, ids: readonly string[]): string {
+  const used = new Set(ids);
+  let number = 1;
+  while (used.has(`${prefix}-${number}`)) number += 1;
+  return `${prefix}-${number}`;
+}
+
+/**
+ * Shared lock copy for the future build menu. Placement still re-checks every
+ * gate in the sim; this helper only covers permission, cap and price.
+ */
+export function transitPlacementLockReason(state: SimState, kind: PricedTransitKind): string | null {
+  if (kind === 'gardenSlide') {
+    if (!isGardenSlideUnlocked(state.correctPlacementCount) || !state.unlockedAutomations.includes('gardenSlide')) {
+      return 'Keep sorting Sprouts by hand to unlock a Garden Slide.';
+    }
+    if (state.slides.length >= TRANSIT_CAPS.gardenSlide) return transitCapMessage('gardenSlide');
+    const cost = nextGardenSlidePrice(state.slides.length);
+    return state.dewdrops >= cost ? null : `You need ${cost} Dewdrops to place this Garden Slide.`;
+  }
+
+  if (!isConveyorUnlocked(state.slides.length)) return conveyorUnlockMessage();
+  if (state.conveyors.length >= TRANSIT_CAPS.sproutConveyor) return transitCapMessage('sproutConveyor');
+  return state.dewdrops >= SPROUT_CONVEYOR_COST
+    ? null
+    : `You need ${SPROUT_CONVEYOR_COST} Dewdrops to place this Sprout Conveyor segment.`;
+}
+
+/** Places and charges one Garden Slide only after all permission and site gates pass. */
+export function placeSlide(state: SimState, placement: SlidePlacement): TickResult {
+  if (transitPlacementLockReason(state, 'gardenSlide')) return { state, events: [] };
+
+  const acceptedKind = placement.acceptedKind ?? 'any';
+  if (
+    !isValidTileCoord(placement.tile) ||
+    !Object.prototype.hasOwnProperty.call(HABITATS, placement.destination) ||
+    (acceptedKind !== 'any' && !Object.prototype.hasOwnProperty.call(SPROUT_TYPES, acceptedKind))
+  ) {
+    return { state, events: [] };
+  }
+
+  const occupied = occupiedTransitTiles(state);
+  if (!isValidAutomationSite('gardenSlide', placement.tile, occupied)) return { state, events: [] };
+
+  const cost = nextGardenSlidePrice(state.slides.length);
+  const slide: SlideInstance = {
+    id: nextAvailableId('slide', state.slides.map((item) => item.id)),
+    tile: placement.tile,
+    acceptedKind,
+    destination: placement.destination,
+    enabled: true,
+    builtAtTick: state.tickCount,
+  };
+  const ports = getSlidePorts(slide);
+  const dewdrops = state.dewdrops - cost;
+  return {
+    state: { ...state, slides: [...state.slides, slide], dewdrops },
+    events: [
+      { type: 'transit:slideBuilt', slide, ...ports },
+      { type: 'currency:dewdropsChanged', total: dewdrops, delta: -cost },
+    ],
+  };
+}
+
+/** Places and charges one Conveyor segment. Its connection/port validity is owned by 7.5/7.6. */
+export function placeConveyor(state: SimState, tile: TileCoord): TickResult {
+  if (transitPlacementLockReason(state, 'sproutConveyor')) return { state, events: [] };
+  if (!isValidTileCoord(tile) || sameTile(tile, NURSERY_TILE) || occupiedTransitTiles(state).some((occupied) => sameTile(occupied, tile))) {
+    return { state, events: [] };
+  }
+
+  const conveyor: ConveyorSegment = {
+    id: `conveyor-${tile.x}-${tile.z}`,
+    tile,
+    builtAtTick: state.tickCount,
+  };
+  const ports = getConveyorPorts(conveyor);
+  const dewdrops = state.dewdrops - SPROUT_CONVEYOR_COST;
+  return {
+    state: { ...state, conveyors: [...state.conveyors, conveyor], dewdrops },
+    events: [
+      { type: 'transit:conveyorBuilt', conveyor, ...ports },
+      { type: 'currency:dewdropsChanged', total: dewdrops, delta: -SPROUT_CONVEYOR_COST },
+    ],
+  };
+}
+
+/** Removes a Slide and refunds the price of the last-owned Slide before removal. */
+export function removeSlide(state: SimState, slideId: string): TickResult {
+  if (!state.slides.some((slide) => slide.id === slideId)) return { state, events: [] };
+  const refund = gardenSlideRefund(state.slides.length);
+  const dewdrops = state.dewdrops + refund;
+  return {
+    state: { ...state, slides: state.slides.filter((slide) => slide.id !== slideId), dewdrops },
+    events: [
+      { type: 'transit:artifactRemoved', artifactId: slideId, artifactKind: 'gardenSlide', refund },
+      { type: 'currency:dewdropsChanged', total: dewdrops, delta: refund },
+    ],
+  };
+}
+
+/** Removes a Conveyor segment and refunds its flat price. */
+export function removeConveyor(state: SimState, conveyorId: string): TickResult {
+  if (!state.conveyors.some((conveyor) => conveyor.id === conveyorId)) return { state, events: [] };
+  const dewdrops = state.dewdrops + SPROUT_CONVEYOR_COST;
+  return {
+    state: { ...state, conveyors: state.conveyors.filter((conveyor) => conveyor.id !== conveyorId), dewdrops },
+    events: [
+      { type: 'transit:artifactRemoved', artifactId: conveyorId, artifactKind: 'sproutConveyor', refund: SPROUT_CONVEYOR_COST },
+      { type: 'currency:dewdropsChanged', total: dewdrops, delta: SPROUT_CONVEYOR_COST },
+    ],
   };
 }
 
