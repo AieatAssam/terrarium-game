@@ -5,6 +5,12 @@
 
 ## Revision Log
 
+- **2026-08-02 — Garden Transit supersedes the single Garden Slide (user decision).** The player judged the shipped Slide inadequate as an automation reward: only one may exist, it does not attach cleanly to the Nursery, it cannot be configured to collect a particular Sprout kind, it has no scalable routing role, it clips, and it reads as a snake or tube on a box rather than as a slide. Rather than patch that object, the automation layer is replaced by **Garden Transit** — two purchaseable, placeable, configurable artifact families (**Garden Slides** and **Sprout Conveyors**) that the player owns in multiples and composes into routes. See the rewritten §9.3 and the new §9.12–§9.17.
+  - **What changed:** §9.3 (Garden Slide → Garden Transit, multiple ownership, colour/type filters, ports); §9.9 (route segments **renamed and specified** as Sprout Conveyors — see the naming note below); §8.2/§8.3 (Dewdrop sinks and upgrade categories); §9.4 (Colour Gate restated as a decision point *within* Transit); §9.6 (complexity curve); §14/§15 (guardrail amendments for a conveyor-shaped mechanic); §16 (Definition of Done); and new §9.12 costs/refunds, §9.13 ports and placement, §9.14 configuration, §9.15 route states and recovery, §9.16 art and readability acceptance, §9.17 the explicitly rejected prior design.
+  - **NAMING RESOLUTION (important — do not reintroduce two models):** §9.9's "Garden Route buildable segment" and the new "Sprout Conveyor" are **the same mechanic**. §9.9 introduced it as a concept on 2026-08-01; this revision names, prices, ports, and specifies it. There is exactly one buildable route substrate in this game and it is the Sprout Conveyor. `plan.yaml`'s Phase 3 tasks (3.1–3.4) are superseded accordingly.
+  - **What was deliberately preserved:** the caretaker fiction and §2.1's presentation vocabulary (a Slide is a "Garden Slide", never a "conveyor belt", in every player-facing string — note that "Sprout Conveyor" is itself a garden-craft name for a grown/carved trough, not an industrial belt, and §14's amendment below is the test for that); the no-permanent-failure rule (§2.5); manual placement remaining a first-class player choice (§5.2); §9.10 junction backpressure and §9.11 misroute stalls, which operate unchanged on whatever the route substrate is called; and all of §3–§8 and §11–§13.
+  - **Dependent updates required by this revision, and DEFERRED:** §17 requires a GameRules revision to carry updates to related design/architecture/QA documents and tests. The task that produced this revision was scoped to `GameRules.md` and `plan.yaml` only and explicitly forbade editing other documents, so those updates are **not done here** and are instead scheduled as plan tasks: `docs/CONTRACTS.md` (Transit ids, ports, events, save shape), `docs/ARCHITECTURE.md` (as-built transit domain), `docs/GAME_DESIGN.md` (progression copy), `tests/unit/sim.layout.test.ts` (its pinned Nursery→Gate→habitat distance identity assumes a fixed topology that player-placed Conveyors make dynamic), and a save migration from the single legacy `AutomationInstance`. This deferral is recorded rather than left silent, per §17 and CLAUDE.md's authority rule.
+
 - **2026-08-01 — Phase 2 pivot toward hand-built garden logistics (user decision).** The player reported the automatic-placement model (helpers appear pre-built and pre-routed) as visually incoherent and asked for a deeper, Factorio/Satisfactory-style building layer: player-placed and player-drawn routes, junctions that accumulate Sprouts until configured, misroutes that stall for manual repair rather than silently resolving, and buildable habitats paid for in Dewdrops. This directly conflicted with §1's "must never require... factory-game familiarity" and §14's production-system guardrail as they were originally written, so the conflict was surfaced rather than resolved silently (per this document's own §17). The user chose to revise the design toward the Factorio direction. This log entry, plus the amended §1, §2.1, §2.5, §9, §10, §14, §15, and §16 notes below, is that intentional revision.
   - **What changed:** automation, routes, and (new) habitats become player-placed and player-connected, constrained by tile/junction rules rather than auto-built; junctions can accumulate Sprouts under backpressure until routed; a misrouted Sprout stalls before the wrong habitat awaiting a manual fix instead of resolving invisibly.
   - **What was deliberately preserved:** the caretaker fiction and presentation vocabulary (§2.1's naming table stands — a belt is still a "Garden Slide" in every player-facing string), the no-permanent-failure-state rule (a stall is always recoverable, never a loss), all of §3–§8 and §11–§13 (Sprouts' dignity, art direction, accessibility, licensing) unchanged, and the general principle that depth stays spatial and visual rather than becoming arithmetic, code, or off-screen optimisation.
@@ -33,6 +39,7 @@ The player is a caretaker, not a production-line manager. Sprouts are living, ex
 Internally, systems can behave like factory logistics — as of the 2026-08-01 revision, quite literally: player-placed routes, junctions, backpressure, and manual misroute repair. Externally, the language and visual presentation must remain warm and intuitive. **The 2026-08-01 revision changes the mechanics, not the fiction** — this naming table still governs every player-facing string:
 
 - “Garden Slide,” never “conveyor belt”
+- **2026-08-02 tension, recorded rather than glossed:** the new artifact family is named **“Sprout Conveyor”** (§9.3.2) at the user's explicit direction, and the word sits uncomfortably beside the line above. The rule is refined, not abandoned: **“conveyor belt”, “belt”, “splitter”, “throughput” and “factory” remain forbidden in every player-facing string**, and a Sprout Conveyor must be presented as a grown or carved garden channel — a thing that looks planted, never a rubber belt on rollers. If the in-game object ever reads as industrial, the name is not the defence; §14's amendment is the test and the implementation is wrong.
 - “Colour Gate,” never “filter splitter”
 - “Habitat,” never “consumer building”
 - “Dewdrops,” never “currency unit”
@@ -328,7 +335,7 @@ Capacity is visually communicated through spaces such as nests, perches, flower 
 
 Dewdrops are healthy magical care made visible and are the only central Phase 1 currency.
 
-Earn them through correct settlement, ongoing habitat care, achievements, limited offline care, and occasional discoveries. Spend them on Garden Slides, Colour Gates, capacity upgrades, nursery rhythm improvements, garden expansion, and visible improvements. Dewdrops are never sold for real money, gated by ads, or made scarce simply to force waiting.
+Earn them through correct settlement, ongoing habitat care, achievements, limited offline care, and occasional discoveries. Spend them on **Garden Transit** — Garden Slides and Sprout Conveyor segments (§9.3, priced in §9.12) — plus Colour Gates, capacity upgrades, nursery rhythm improvements, additional habitats (§10.0), garden expansion, and visible improvements. Every Transit purchase is fully refundable on removal (§9.12), so spending is never a trap. Dewdrops are never sold for real money, gated by ads, or made scarce simply to force waiting.
 
 ### 8.3 Upgrade principles
 
@@ -338,7 +345,7 @@ Phase 1 categories:
 
 - Pod Rhythm
 - Habitat Room
-- Garden Slide Speed
+- Transit Speed *(2026-08-02: applies to every owned Garden Slide and Conveyor, not to a single Slide)*
 - Healthy Dew
 - Terrarium Flourish
 - Colour Gate
@@ -367,19 +374,55 @@ Automation is the signature progression system. It must look like garden care in
 
 Garden Paths are physical routes: mossy trails, glass root-tubes, flower-lined paths, water channels, or bubble streams. They must clearly show direction as needed through motion, integrated arrows, light flow, or route markers.
 
-Phase 1 paths connect Nursery, Slide, Gate, and Habitat. Use a ghost preview, generous snapping, kind invalid placement feedback, and no pixel-perfect placement. Players can remove/reposition Phase 1 structures without punitive loss.
+Phase 1 paths connect Nursery, Slides, Gates, and Habitats. *(2026-08-02: a path the player BUILDS is a Sprout Conveyor — see §9.3.2 and §9.9. The decorative walking paths that dress the garden and the functional Conveyor route are distinct objects; only the Conveyor carries Sprouts.)* Use a ghost preview, generous snapping, kind invalid placement feedback, and no pixel-perfect placement. Players can remove/reposition Phase 1 structures without punitive loss.
 
-### 9.3 Garden Slide
+### 9.3 Garden Transit *(2026-08-02 revision — supersedes the single Garden Slide)*
 
-The Garden Slide means: **“This helper carries Sprouts from the Nursery to one home.”**
+**Garden Transit** is the collective name for the player-built, garden-integrated automation layer. It has exactly two purchaseable artifact families, plus the Colour Gate as a decision point placed within it:
 
-It unlocks only after manual sorting is understood, is placed visibly in the world, has a clear destination, carries Sprouts with a fun movement animation, shows throughput/congestion simply, benefits from speed upgrades, and creates space for the next challenge instead of eliminating all interaction.
+| Artifact | What it means to the player | Problem it solves |
+|---|---|---|
+| **Garden Slide** | “A charming route that carries one kind of Sprout somewhere useful.” | High-visibility route acceleration — a delightful, legible delivery path that replaces repeated hand-carrying |
+| **Sprout Conveyor** | “A little grown channel I lay down to shape where Sprouts go.” | Flexible route extension — connecting artifacts to destinations across a growing garden |
+| **Colour Gate** (§9.4) | “A garden sign that sends each kind the right way.” | A conditional sorting decision where routes meet |
+
+Both families are **permanent buildable artifacts**: bought with Dewdrops, placed by the player, saved with the garden layout, movable and removable through a clear reconfiguration flow, and visually built into the terrarium rather than set on top of it.
+
+Neither may ever feel like a factory belt, a generic pipe, floating UI, or a maze. §14's amendment is the binding test.
+
+#### 9.3.1 Garden Slides
+
+The Garden Slide means: **“This helper carries Sprouts I choose from a source I choose to a home I choose.”**
+
+- **Slides are not unique.** The player may own and place **multiple** Slides at once, limited only by cost, space, route validity, performance, and the Phase 1 complexity cap (§9.12).
+- A Slide unlocks only after manual sorting is understood (the existing correct-placement milestone), and the first one must be an early, achievable, obviously worthwhile upgrade from hand-carrying.
+- Every Slide is **configurable** with at minimum: accepted Sprout colour/type (including **Any**), an input/source point, a directional output/destination, and an enabled/disabled state. See §9.14.
+- A Slide has a clear, original physical silhouette: a visible **entrance**, a raised curved or trough-like **transport channel**, **side rails or an edge lip**, **support structure** meeting the ground, and an identifiable **exit** with readable direction. See §9.16.
+- Sprouts must visibly **enter, travel along, and emerge from** a Slide, then continue toward a valid destination. Teleporting a Sprout from entry to exit is never an acceptable substitute.
+- Slides attach through explicit **compatible ports** (§9.13) — to the Nursery Pod, to Conveyors, to habitat approach docks — never by arbitrary mesh overlap, and never floating, intersecting, or ending ambiguously.
+- Slides benefit from the Transit Speed upgrade (§8.3), which applies to every owned Slide.
+
+#### 9.3.2 Sprout Conveyors
+
+The Sprout Conveyor means: **“A modular length of grown or carved garden channel that guides Sprouts onward.”** It is the concrete, named form of the buildable route segment introduced in §9.9.
+
+- Conveyors are bought and placed **one segment at a time**, cheaply enough that laying a route reads as a creative building action rather than a grind (§9.12).
+- Multiple Conveyors may be placed. They snap to the tile grid using the same forgiving placement language as every other structure (§9.8, §10) — predictable, discoverable, and visually clean. Freeform drawing remains out of scope (§9.9).
+- Conveyors connect **valid ports only** (§9.13): Nursery docks, Slide entries and exits, Colour Gate ports, habitat approach points, and other Conveyors.
+- Each Conveyor has a visibly readable **direction, entrance, exit, and connection state**.
+- Phase 1 Conveyor behaviour is deliberately simple: carry, guide, or deliver matching Sprouts toward an assigned valid destination. This is not a factory simulator — no throughput ratios, no balancing, no numeric optimisation.
+- A Conveyor may carry a simple routing rule **only where needed**: directional output, destination assignment, and/or a colour/type filter (§9.14).
+- Conveyors are modular: easy to remove and reposition, safe to edit without corrupting the state of a Sprout currently in transit (§9.15).
+- A Conveyor is never decoration alone. Each placed segment must have a visible gameplay purpose and a visible automation effect.
+- Conveyors must never create clutter, obscure Sprouts, block player interaction, harm camera readability, or make the terrarium read as industrial.
 
 ### 9.4 Colour Gate
 
 The Colour Gate means: **“This garden sign guides one kind of Sprout down the right path.”**
 
 It uses large pictorial colour/type controls, visibly shows its active rule, routes matching Sprouts toward a connected output, and sends nonmatches to fallback/waiting paths. Missing outputs produce friendly, specific feedback. It turns a mixed flow into understandable orderly routes.
+
+*(2026-08-02: the Colour Gate is now a decision point **within** Garden Transit, not a peer of the Slide. It is placed on a junction where Conveyor routes meet (§9.10), exposes ports like any other Transit artifact (§9.13), and uses the same redundant colour+icon+text rule display as Slides and Conveyors (§9.14). Slides and Conveyors carry; the Gate decides.)*
 
 ### 9.5 Future automation families
 
@@ -406,7 +449,9 @@ It uses large pictorial colour/type controls, visibly shows its active rule, rou
 11. *(2026-08-01)* Junction backpressure: a junction accumulates arrivals until its rule is configured
 12. *(2026-08-01)* Misroute stalls: a wrongly-routed Sprout waits at the last junction before the mismatched home for a manual fix
 
-No stage requires writing rules, code, boolean algebra, or manual ratios. Stages 10–12 add spatial building and repair, never arithmetic — see §9.8–§9.11.
+13. *(2026-08-02)* Multiple owned Slides, each filtered to a Sprout kind, composed with Conveyor segments into player-built routes — §9.3, capped for Phase 1 by §9.12
+
+No stage requires writing rules, code, boolean algebra, or manual ratios. Stages 10–13 add spatial building and repair, never arithmetic — see §9.8–§9.17.
 
 ### 9.7 Bottlenecks
 
@@ -421,9 +466,11 @@ Every unlock other than pure decoration is **placed by the player**, never auto-
 - An unlock still has to be *earned* first (Dewdrops, and any behavioural gate already established, e.g. the Colour Gate needing the Slide built first) — earning removes the restriction on placing it, it does not place it for the player.
 - Buying an unlock the player has nowhere valid to place yet must say so plainly ("Build a junction first" rather than a disabled button with no explanation) — this is the same friendly-recovery-copy standard §11 sets for a misplaced Sprout.
 
-### 9.9 Garden Routes as buildable segments *(2026-08-01 revision)*
+### 9.9 Garden Routes as buildable segments — i.e. Sprout Conveyors *(2026-08-01, respecified 2026-08-02)*
 
-A Garden Route (§9.2's mossy trail / root-tube / water channel) is no longer a fixed, pre-painted path — it is a segment the player places, one tile at a time, connecting a source to a destination. Building a route costs a small number of Dewdrops per segment (a real, felt cost, not decorative), so a compact layout is a genuine reward, not just an aesthetic choice.
+**Naming resolution:** the buildable route segment introduced here on 2026-08-01 and the **Sprout Conveyor** specified in §9.3.2 are the same mechanic. This section states the placement law; §9.3.2 states what it is and what it does; §9.12–§9.15 price, port, configure, and recover it. There is exactly one buildable route substrate in this game. Do not implement a second one, and do not treat "route segment" and "Conveyor" as different entities.
+
+A Garden Route (§9.2's mossy trail / root-tube / water channel) is no longer a fixed, pre-painted path — it is a Conveyor segment the player places, one tile at a time, connecting a source to a destination. Building a route costs a small number of Dewdrops per segment (a real, felt cost, not decorative), so a compact layout is a genuine reward, not just an aesthetic choice.
 
 - Segments snap to the tile grid with the same forgiving placement rules as any other structure.
 - A route must connect two valid endpoints (a Nursery, a habitat, a helper, or a junction) to do anything; an unconnected segment is inert and clearly reads as unfinished, not broken.
@@ -447,6 +494,132 @@ If a Sprout is dispatched down a route whose junction sends it toward the wrong 
 - Resolution is always available two ways: fix the junction's rule so the *next* wave routes correctly (does not retroactively move an already-stalled Sprout — that would be an invisible, unearned fix), or hand-carry the stalled Sprout the rest of the way exactly as in §5.2's manual Guide step.
 - A stall never expires, decays, or costs the player anything — see the §2.5 revision note above. It is a visible invitation to fix a junction, not a penalty for having built one.
 - This is what makes §9.4's Colour Gate configuration matter in a way it previously didn't as strongly: a wrong lane choice now has a small, friendly, visible, always-fixable consequence in the world, rather than resolving invisibly through the fallback path.
+
+### 9.12 Transit cost, refund, and the Phase 1 complexity cap *(2026-08-02)*
+
+Dewdrops (§8.2) are the **sole** currency for Slides and Conveyors. No real-money purchase, ad, loot box, random price, punishing timer, or manufactured scarcity is permitted (§14).
+
+**Costs are always shown before purchase and before placement is confirmed.**
+
+**Phase 1 balance target — validate in browser playtest, do not treat as settled.** These numbers are proposed against the shipped economy: income is `0.008 Dewdrops × settled Sprouts × multiplier` per 100ms tick, i.e. **4.8 Dewdrops per minute per settled Sprout**, and existing one-off unlocks cost 700 (Colour Gate) and 1500 (Mood Bell).
+
+| Purchase | Cost | Notes |
+|---|---|---|
+| Garden Slide **N** | `round5(150 × 1.8^(N-1))`, capped at **2400** | 150, 270, 485, 875, 1575, 2400, 2400… |
+| Sprout Conveyor segment | **15**, flat, no escalation | Cheap on purpose — laying a route is creative building, not a purchase decision |
+
+- **First Slide = 150 Dewdrops**, unlocked by the existing correct-placement milestone. The milestone grants *permission* to build; the 150 is the *price*. At ~20 settled Sprouts that is roughly a minute and a half of income — an early, achievable, clearly worthwhile first automation.
+- **Slide escalation is bounded**, not open-ended: the 1.8× growth stops at a stated maximum of 2400 so a large garden never faces an unreadable price, while early spam is still discouraged.
+- **Conveyors do not escalate.** Spam is prevented by the network cap below, not by making creative building expensive.
+
+**Refund and removal policy — generous by design (§10's "no punitive loss"):**
+
+- Before placement is confirmed (ghost/preview stage), cancelling costs **nothing**.
+- After placement, removing an artifact refunds it in **full**.
+- **Slide refund rule (save-schema constraint):** removing a Slide refunds the price of slide **N** where N is the count owned *at the moment of removal* — i.e. removing your 5th Slide refunds 1575. This is self-consistent, requires no per-instance purchase price in the save, and cannot be arbitraged by buying and selling at different counts.
+- A refund is never partial, delayed, or taxed. Mistakes must be cheap so experimentation stays joyful.
+
+**Phase 1 complexity cap.** The player must understand their first useful network at a glance:
+
+- Maximum **4** Garden Slides.
+- Maximum **30** Sprout Conveyor segments.
+- Reaching a cap is stated plainly in garden language ("Your garden has room for four Slides for now"), never a disabled control with no explanation (§9.8).
+
+### 9.13 Ports, anchors, and placement validity *(2026-08-02)*
+
+Transit artifacts connect through **ports**: explicit, named, compatible attachment points. Connection is never inferred from meshes happening to overlap.
+
+Port-bearing objects and their ports:
+
+- **Nursery Pod** — one or more outbound docks where Sprouts leave.
+- **Garden Slide** — one entry port, one exit port, each with a direction.
+- **Sprout Conveyor** — one entry port and one exit port per segment.
+- **Colour Gate** — one inbound port and its lane outputs.
+- **Habitat** — an approach dock where a delivered Sprout arrives before settling.
+
+Placement rules:
+
+- Placement uses a ghost/preview with **valid, invalid, and blocked** states, each distinguishable without relying on colour (§11).
+- An artifact snaps only to a **compatible port** or a valid terrain/path location. Snapping is generous; pixel-perfect placement is forbidden (§10).
+- Invalid placement is **prevented before purchase is confirmed**, and the reason is explained in plain garden language ("This Slide needs somewhere to let Sprouts off").
+- Artifacts maintain safe clearance from the Nursery, habitats, paths, terrain dressing, interactive objects, and each other. They must not clip the Pod, the floor, planting, or another artifact at **any supported camera angle or viewport size**.
+- Routes recompute **deterministically** after placement, removal, reconfiguration, save/load, and a destination becoming full. The same garden state always yields the same routing.
+
+### 9.14 Transit configuration *(2026-08-02)*
+
+Every Slide, and every Conveyor that needs one, exposes a small configuration surface. It must stay spatial and pictorial per §15's item 8 — never a rule editor, formula, or spreadsheet.
+
+- **Accepted kind:** a specific Sprout colour/type, or **Any**. `Any` accepts every kind and is the safe default for a first Slide, so a new player's first purchase works immediately without configuration.
+- **Source and destination:** chosen from compatible ports, shown in-world as a highlighted route preview, not typed or entered numerically.
+- **Enabled/disabled:** a player may switch an artifact off without removing it; a disabled artifact is visibly dormant, not broken, and never consumes or holds a Sprout.
+- **Redundant cues are mandatory.** Every rule is communicated by **colour *and* icon/symbol *and* species text**, plus a direction arrow and a status line. Routing may never depend on colour alone (§11).
+- The player can read any artifact's current rule and route **at a glance in-world**, and in full through an accessible details panel reachable by keyboard.
+
+### 9.15 Route states, priority, and safe recovery *(2026-08-02)*
+
+Every transit artifact is always in exactly one legible state: **idle**, **active/flowing**, **waiting**, **blocked**, **disabled**, or **invalid**. Each is readable in-world without opening a panel, and each is explained in friendly, specific, non-technical copy (§11).
+
+Named conditions and their required behaviour:
+
+| Condition | Required behaviour |
+|---|---|
+| No matching Sprout | Idle and calm. Not an error. |
+| Destination full | The Sprout waits safely; the artifact shows a "this home is cosy and full" state; nothing is lost. |
+| Blocked exit / no path | Waiting state with a specific explanation; never a silent stall. |
+| Disabled by player | Visibly dormant; holds nothing. |
+| Invalid target (removed or stale) | Explained plainly; the player is offered the fix. Never a silent reroute. |
+| Route edited while a Sprout is in transit | The in-transit Sprout completes safely or is returned to a valid waiting position. Editing is always safe. |
+
+**Absolute guarantees. An implementation that breaks any of these is wrong regardless of how well it reads:**
+
+- A Sprout is never **trapped**, **deleted**, **duplicated**, **permanently blocked**, or **silently rerouted**.
+- Removing a route artifact safely returns or reroutes every affected Sprout, and says what happened.
+- Route priority between competing artifacts is **deterministic and documented**, never random.
+- Nothing here is a failure state, a timer, or a loss (§2.5).
+
+**Manual interaction always coexists.** Hand-carrying a Sprout (§5.2) remains fully available and valuable at every stage of Transit ownership. Transit removes repetition, never agency: a player who prefers to place every Sprout by hand must always be able to, and a Sprout waiting on a route must always be pickable by hand.
+
+### 9.16 Transit art, readability, and performance acceptance *(2026-08-02)*
+
+These are acceptance criteria, not aspirations.
+
+**A completed Garden Slide must:**
+
+- Read as an original magical miniature garden slide at normal gameplay camera distance, with no tooltip.
+- Show an unmistakable entry, an elevated curved travel surface, supports meeting the ground, rails or an edge lip, and a visible exit.
+- Use an original tactile material from a consistent Tiny Terrarium family — painted wood, glazed ceramic, carved root, polished stone — with bevelled/layered geometry, non-flat material response, correct scale, soft shadows, and contact grounding.
+- Attach through explicit ports (§9.13) with **no clipping** into the Pod, floor, planting, habitats, or other artifacts at any supported camera angle.
+- Carry an original, subtle active-flow signal — travelling leaf markers, rolling seed lights, shifting petals, gentle runes — never a copied reference effect, never bloom alone.
+- Remain legible in high-contrast mode and when colour information is unavailable.
+- **Never resemble a snake, hose, tube, wire, or a generic pipe on a box** (§9.17).
+
+**A completed Sprout Conveyor must:**
+
+- Read as a modular original garden channel that looks planted, carved, or grown into the terrain — never an industrial belt.
+- Show clearly connected segments, obvious direction, compatible ports, and an understandable flow state.
+- Snap cleanly with no gaps, overlaps, z-fighting, terrain clipping, floating supports, or ambiguous dead ends.
+- Show where a Sprout is waiting, travelling, blocked, or delivered.
+- Stay readable when several segments are connected.
+
+**Both must:**
+
+- Make the garden look **more** charming and complete as more are purchased — density that improves the space, never clutter (§10).
+- Support reduced motion: state stays fully clear without continuous travel animation.
+- Hold the frame budget with multiple Slides, many Conveyor segments, and many Sprouts in transit simultaneously, on the WebGL baseline and on the low quality tier (§12).
+
+### 9.17 The superseded Slide design — explicitly rejected *(2026-08-02)*
+
+The Garden Slide as shipped before this revision is **rejected as a design, not merely as an implementation**. Do not rebuild any of the following, and do not treat any of them as a constraint when designing Garden Transit:
+
+1. **Only one Slide may exist.** Superseded: Slides are owned in multiples (§9.3.1).
+2. **The Slide is a fixed Nursery add-on with an automatic destination.** Superseded: the player places it and chooses its source and destination (§9.13, §9.14).
+3. **The Slide cannot be configured to collect a particular Sprout colour/type.** Superseded: an accepted-kind filter with an `Any` option is mandatory (§9.14).
+4. **The Slide has no scalable routing role.** Superseded: Slides compose with Conveyors and Colour Gates into player-built networks (§9.3).
+5. **It clips, floats, and attaches by mesh overlap.** Superseded: explicit ports and a no-clipping acceptance criterion (§9.13, §9.16).
+6. **It reads as a snake or tube on a box.** Superseded: a mandatory silhouette of entry, channel, rails, supports, exit (§9.16).
+7. **Its placement, entry, route, exit, direction, and purpose are ambiguous.** Superseded: each is a named, separately testable readability requirement (§9.16).
+
+A future implementation that reproduces any item on this list has not met this document, however closely it matches the surrounding prose.
 
 ## 10. Building and Future Progression
 
@@ -549,6 +722,16 @@ Excluded unless this document is intentionally revised:
 
 If a feature makes the player feel like an operator of a cold production system rather than a creative caretaker of a magical living garden, it does not belong.
 
+**2026-08-02 amendment — Garden Transit is the hardest case yet for this guardrail, and must pass it as written.** Multiple owned Slides, per-artifact colour filters, and a network of placed Conveyor segments are, mechanically, logistics. They stay on the caretaker side of this line only because every one of the following holds:
+
+- **Materials and form are garden-grown.** Painted wood, glazed ceramic, carved root, polished stone — planted into the terrain with supports and contact shadows (§9.16). A rubber belt on steel rollers fails this line no matter what the UI calls it.
+- **No number is ever optimised.** There is no throughput figure, no ratio, no balancing, no efficiency score. A player reads a route by looking at it (§15 item 8).
+- **The network is capped and small.** Four Slides and thirty Conveyor segments in Phase 1 (§9.12) — a garden the player can hold in their head, not a factory floor that scales until it needs a plan.
+- **Nothing is lost, timed, or punished.** Full refunds, safe edits mid-transit, no trapped or deleted Sprouts (§9.12, §9.15).
+- **Manual care never becomes obsolete.** Hand-carrying stays fully available and valuable (§9.15).
+
+If an implementation of Garden Transit leaves the player feeling like a logistics operator tuning a line — measuring, balancing, or optimising rather than shaping a garden — it has crossed this line and must be revised, regardless of how faithfully it matches §9.3's letter.
+
 **2026-08-01 revision — this guardrail still applies, and is the test for the new building layer.** §9.8–§9.11 and §10.0 introduce hand-placed structures, player-drawn routes, junction backpressure, and misroute stalls — mechanically closer to a production system than anything in this document before. They stay on the caretaker side of this line only because: placement and routing are always spatial and visual (never a formula, a rule editor, or a number to optimise); a backed-up junction or a stalled Sprout is never punished, timed, or lossy (§2.5); and every consequence is narrated in the warm vocabulary §2.1 already establishes. Any implementation of these sections that starts requiring the player to calculate throughput, read a manual, or treat a stall as a mistake to be punished for has crossed back over this line and must be revised, regardless of how faithfully it matches this document's letter.
 
 ## 15. Feature Checklist
@@ -568,6 +751,8 @@ Before adding or approving a feature:
 
 If any answer is no, revise or defer the feature.
 
+**2026-08-02 note on items 3, 4, and 8 for Garden Transit:** item 3 (visible delight, meaningful choice, useful capability) — a second Slide filtered to a different Sprout kind is all three at once, which is why multiple ownership is the core of the revision rather than a convenience. Item 4 (introduced after the player understands the problem) — the first Slide still arrives only after the manual-sorting milestone, and Conveyors only become purchasable once the player has a Slide whose route they might want to extend. Item 8 (in-world result, not menu complexity) — Transit configuration is a pictorial surface attached to the artifact in the world; the accessible details panel (§9.14) is an accessibility affordance and a redundant view, never the primary way to build a route.
+
 **2026-08-01 revision note on items 1, 5, and 8:** hand-placed structures, buildable routes, junction backpressure, and misroute stalls (§9.8–§9.11, §10.0) are designed to pass this checklist as written, not to need it softened. Item 1 (caretaker fantasy): building and repairing a garden by hand is *more* caretaker-like than watching it build itself, not less. Item 5 (calm, recoverable, no-failure): a stall or a backed-up junction must always satisfy this exactly as any other bottleneck does — if a specific implementation can't, that implementation is wrong, not the checklist. Item 8 (in-world result, not menu complexity): placement and routing must stay spatial, on the actual game board, never a separate configuration screen. Use this note to resolve apparent tension, not to lower the bar.
 
 ## 16. Phase 1 Definition of Done
@@ -578,8 +763,9 @@ Phase 1 is complete when a player can:
 2. Recognise and settle Red Ember, Blue Dew, and Yellow Sun Sprouts without technical explanation
 3. Receive joyful feedback and Dewdrops for correct care
 4. Recover safely from an incorrect habitat attempt
-5. Unlock, place, and observe Garden Slide automate a familiar task
+5. Unlock, buy, place, and observe a **Garden Slide** automate a familiar task — and then buy, place, and configure **a second Slide filtered to a different Sprout kind**, seeing both run at once *(2026-08-02: multiple ownership is part of Done, not a later phase — a single Slide no longer satisfies this item; see §9.3.1 and §9.17)*
 6. Unlock, configure, and observe Colour Gate route a mixed stream
+   *(2026-08-02: as a decision point placed within Garden Transit — see §9.4)*
 
    *(2026-08-01 note: this list describes the shipped Phase 1 experience and remains historically accurate — Phase 1 automations arrived pre-built. The 2026-08-01 revision changes placement to player-driven going forward per §9.8; existing saves need a migration, not a rewrite of this list.)*
 7. Buy meaningful upgrades and see their effects in the world
@@ -587,7 +773,9 @@ Phase 1 is complete when a player can:
 9. Use Garden Journal, achievements, settings, and credits
 10. Save/reload and receive modest offline care
 11. Play successfully with muted audio, reduced motion, and high contrast
-12. Feel their choices made the garden more alive and capable
+12. Buy and place **Sprout Conveyor segments** to extend one route from a Slide exit to a chosen habitat approach, and read that route's valid, idle, blocked, and full states without opening a panel *(2026-08-02, §9.3.2/§9.15)*
+13. Remove a transit artifact, receive the documented full refund, and see every affected Sprout safely returned or rerouted with an explanation *(2026-08-02, §9.12/§9.15)*
+14. Feel their choices made the garden more alive and capable
 
 The required closing feeling is:
 

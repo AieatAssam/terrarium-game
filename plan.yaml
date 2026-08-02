@@ -405,6 +405,25 @@ steps:
 
 # =============================================================================
 # PHASE 3 — Garden Routes as buildable segments (§9.9) + save migration
+# ***** SUPERSEDED 2026-08-02 BY PHASE 7 (Garden Transit) *****
+# =============================================================================
+# GameRules' 2026-08-02 revision establishes that §9.9's "buildable route
+# segment" and the new "Sprout Conveyor" are THE SAME MECHANIC under one name
+# (see that revision's NAMING RESOLUTION note). Phase 3 therefore does not
+# proceed as written: its four steps are superseded by the Conveyor tasks in
+# Phase 7, which specify the same substrate with ports, pricing, refunds,
+# configuration and recovery that Phase 3 never had.
+#
+# REPLACEMENT MAP — do not implement the left column, implement the right:
+#   3.1 Route segment as sim state          -> 7.3 (transit domain model) + 7.10 (Conveyor entity)
+#   3.2 Migration for fixed-to-dynamic path -> 7.2 (save migration, incl. the legacy single Slide)
+#   3.3 sim.layout.test.ts pinned arithmetic-> 7.2 (same test, same reason, now covering Conveyors)
+#   3.4 Build-mode UI for drawing segments  -> 7.6 (placement/preview) + 7.11 (Conveyor build flow)
+#
+# Phases 4 (junction backpressure) and 5 (misroute stalls) are NOT superseded:
+# they operate on whatever the route substrate is called, and now operate on
+# Conveyors. They still depend on this substrate existing — which Phase 7
+# delivers instead of Phase 3.
 # =============================================================================
 # The big one. Turns GARDEN_PATH_TILES from a fixed constant into
 # player-placed data. REFINE FULLY AT START OF THIS PHASE — the design
@@ -412,7 +431,9 @@ steps:
 # made during Phase 1 (the sim-side routing BFS's exact shape) that don't
 # exist yet.
 steps:
-  - phase: 3.1
+  - phase: "3.1"
+    status: superseded
+    superseded_by: "Phase 7 — see the replacement map in the Phase 3 banner above"
     title: Route segment as sim state
     do: >
       Path tiles move from a derived-at-import-time constant
@@ -426,7 +447,9 @@ steps:
       is checked, but whether it's ENFORCED at placement time or just
       visually indicated needs deciding).
     verification: TBD at phase start — depends on the connectivity decision above.
-  - phase: 3.2
+  - phase: "3.2"
+    status: superseded
+    superseded_by: "Phase 7 — see the replacement map in the Phase 3 banner above"
     title: Migration for the fixed-to-dynamic path network
     do: >
       Existing saves have no `routeSegments` field and implicitly rely on
@@ -437,7 +460,9 @@ steps:
       get a persistence test for it before touching gameplay code, not
       after.
     verification: A persistence test that loads a pre-Phase-3 save and asserts the exact fixed-network tiles appear in the migrated routeSegments.
-  - phase: 3.3
+  - phase: "3.3"
+    status: superseded
+    superseded_by: "Phase 7 — see the replacement map in the Phase 3 banner above"
     title: sim.layout.test.ts's pinned arithmetic
     do: >
       `tileDistance(NURSERY, GATE) + tileDistance(GATE, habitat) ===
@@ -451,7 +476,9 @@ steps:
       the ACTUAL placed route length, not Manhattan distance, once routes
       are dynamic.
     verification: TBD at phase start.
-  - phase: 3.4
+  - phase: "3.4"
+    status: superseded
+    superseded_by: "Phase 7 — see the replacement map in the Phase 3 banner above"
     title: Build-mode UI for drawing segments
     do: >
       Drag-across-tiles placement (§9.9: grid-snapped, not freeform) —
@@ -1520,6 +1547,894 @@ steps:
     commit: "chore(qa): Phase 6 acceptance sweep, viewport fixes and documentation"
     verification: Full sweep at both viewports with reduced motion, high contrast, keyboard-only and muted audio; documented rubric scores.
     depends_on: ["6.9", "6.10", "6.11", "6.12", "6.13", "6.14", "6.15", "6.16", "6.17"]
+
+# =============================================================================
+# PHASE 7 — Garden Transit (multiple Slides + Sprout Conveyors)
+# =============================================================================
+# Added 2026-08-02, from GameRules' Garden Transit revision (§9.3, §9.12–§9.17).
+#
+# WHY THIS PHASE EXISTS: the shipped Garden Slide is rejected AS A DESIGN, not
+# merely as an implementation — GameRules §9.17 enumerates the seven rejected
+# properties (unique, fixed Nursery add-on, unfilterable, non-composable,
+# clipping, snake-on-a-box, ambiguous). Do not treat any of them as a
+# constraint. Do not patch the existing Slide object; replace the model.
+#
+# RELATIONSHIP TO OTHER PHASES:
+#   * SUPERSEDES Phase 3 entirely (3.1–3.4) — see the Phase 3 banner's
+#     replacement map. Conveyors ARE §9.9's route segments.
+#   * Phase 1 (SHIPPED) established manual placement with a "one instance per
+#     automation type" rule. Phase 7 removes that limit for Slides and
+#     Conveyors; the Colour Gate and Mood Bell remain one-per-garden for now.
+#     Phase 1's placement UI, ghost preview and click-to-commit are REUSED and
+#     generalised, not rewritten.
+#   * Phases 4 (junction backpressure) and 5 (misroute stalls) still apply and
+#     now operate on Conveyors. They depend on 7.10/7.11 rather than Phase 3.
+#   * Phase 6 (world quality) is INDEPENDENT and may run in parallel, with one
+#     ordering constraint: 7.14 (transit art integration) should follow Phase
+#     6's lighting/material foundation (6.3/6.8) so transit artifacts are built
+#     against the finished material recipes rather than the current ones.
+#
+# ECONOMY THIS PHASE IMPLEMENTS (GameRules §9.12, a Phase 1 BALANCE TARGET to
+# validate in playtest, not a settled number):
+#   Slide N       : round5(150 * 1.8^(N-1)), capped at 2400  -> 150, 270, 485, 875, 1575, 2400…
+#   Conveyor      : 15 flat, no escalation
+#   Refund        : full, both families; a Slide refunds the price of slide N
+#                   where N is the count owned AT REMOVAL (no per-instance
+#                   price stored in the save)
+#   Phase 1 caps  : 4 Slides, 30 Conveyor segments
+#   Income for sanity: 0.008 * settledSprouts * multiplier per 100ms tick,
+#                   i.e. 4.8 Dewdrops/minute per settled Sprout (verified
+#                   against src/sim/systems.ts dewdropSystem, 2026-08-02).
+steps:
+  - phase: "7.1"
+    title: Audit the Slide, Gate, route, placement, currency and save systems before changing them
+    status: planned
+    why: >
+      Garden Transit replaces the automation domain model, and the existing
+      one is load-bearing for shipped features the player already has. An
+      audit first is what keeps the migration honest instead of discovering
+      mid-refactor that something assumed one instance per automation type.
+    supersedes: []
+    files:
+      - docs/ARCHITECTURE.md (append a transit audit section)
+    references:
+      - docs/references/tiny-glade/tactile-geometry/tiny-glade-02.jpg
+      - docs/references/tiny-glade/tactile-geometry/tiny-glade-02.md
+    principle: >
+      tiny-glade-02.md — "construct every structure from visibly stacked
+      sub-parts so placement reads as assembling a physical object". Knowing
+      which existing parts are load-bearing is the precondition for
+      decomposing the Slide into entry/channel/rails/supports/exit safely.
+    do: >
+      Map, with file and line references: every place that assumes ONE
+      instance per automationId (start from src/sim/systems.ts placeAutomation
+      and the AutomationInstance model, src/ui/components/buildMenu.ts's
+      unlocked-minus-placed filter, src/render/automation.ts's per-automation
+      site meshes keyed by automationId); the current unlock/threshold path
+      (src/data/unlocks.ts, src/sim/systems.ts unlockSystem); currency
+      deduction and refund paths (purchaseUpgrade); the save shape and its
+      migration seam (src/persistence/save.ts normaliseEnvelope, and its
+      documented inability to reach into arrays/records); the fixed path
+      network (src/render/layout.ts GARDEN_PATH_TILES) and every consumer;
+      and the pinned topology identity in tests/unit/sim.layout.test.ts.
+      State explicitly which of these must change, which may be generalised,
+      and which must be preserved untouched.
+    non_goals: >
+      No refactoring in this task. No design decisions — GameRules §9.3/§9.12
+      already made them. Do not "tidy" anything discovered.
+    acceptance: >
+      docs/ARCHITECTURE.md contains a Garden Transit audit section listing
+      every one-instance-per-automation assumption with file:line, every
+      currency and save touchpoint, and a preserve / generalise / replace
+      classification for each. A reader can plan 7.2 and 7.3 from it without
+      re-reading src/.
+    validation: npm run typecheck && npm run lint && npm test && npm run build
+    browser_scenarios: None — desk audit, but every claim must cite file:line.
+    evidence: None required.
+    accessibility: N/A (documentation task)
+    performance: N/A
+    save_compat: >
+      Identifies the migration surface for 7.2; changes nothing itself.
+    risk: Low. Documentation only. Rollback is reverting the doc.
+    commit: "docs(architecture): audit the automation domain ahead of Garden Transit"
+    verification: Every assumption in the audit must be checkable at the cited file:line; a spot check of five entries must all resolve.
+    depends_on: []
+
+  - phase: "7.2"
+    title: Migrate existing saves and the legacy single Slide into the transit model
+    status: planned
+    why: >
+      Players have gardens with a placed Garden Slide. That Slide must survive
+      the redesign as a real, owned, configured Transit Slide — not vanish,
+      not silently become something the player did not build. GameRules §9.12
+      makes refunds generous; a migration that loses a purchase would be the
+      opposite.
+    supersedes: ["3.2", "3.3"]
+    files:
+      - src/persistence/save.ts
+      - src/sim/state.ts
+      - tests/unit/persistence.save.test.ts
+      - tests/unit/sim.layout.test.ts
+    references:
+      - docs/references/garden-galaxy/decorative-progression/garden-galaxy-06.jpg
+      - docs/references/garden-galaxy/decorative-progression/garden-galaxy-06.md
+    principle: >
+      garden-galaxy-06.md — progression should visibly FINISH a space rather
+      than merely add objects. A migrated garden must come back looking
+      finished and intact, with the player's prior investment visibly
+      preserved, not reset to a blank transit layer.
+    do: >
+      Bump SIM_SHAPE_VERSION and add an explicit migration case. Convert the
+      legacy single `AutomationInstance` for gardenSlide into a Transit Slide
+      instance: same site tile, accepted-kind set to `Any` (the safe default,
+      GameRules §9.14), destination preserved from the legacy computed target,
+      enabled. Backfill the Conveyor network from the current fixed
+      GARDEN_PATH_TILES so an existing garden does not lose its paths. Do NOT
+      charge the player for anything the migration creates. Rewrite
+      tests/unit/sim.layout.test.ts's pinned Nursery→Gate→habitat distance
+      identity as a property of the DEFAULT seeded network rather than a law
+      of the universe, and add a test that transport duration derives from the
+      actual placed route length.
+    non_goals: >
+      No new gameplay. No pricing (7.4). No visual change (7.7+). Do not
+      migrate the Colour Gate or Mood Bell to multi-instance — they stay
+      one-per-garden this phase.
+    acceptance: >
+      A pre-Phase-7 save loads with: its Garden Slide present at its original
+      tile, filtered to `Any`, enabled, delivering to its original habitat; a
+      Conveyor network matching the previous fixed path tiles; unchanged
+      Dewdrop balance; and no Sprout lost, duplicated, or stranded. Loading
+      the same save twice produces identical state.
+    validation: >
+      npm run typecheck && npm run lint && npm test && npm run build; the
+      extended persistence and layout unit tests must pass.
+    browser_scenarios: >
+      Load a garden saved before this phase in Chrome; confirm the Slide and
+      paths are present and the Sprout population is unchanged.
+    evidence: docs/visual-qa/transit/migration-{before,after}.png
+    accessibility: N/A (data migration)
+    performance: Migration must not add measurable load time; measure cold load before/after.
+    save_compat: >
+      THIS TASK IS THE SAVE COMPATIBILITY CONTRACT for the phase. Write the
+      persistence test BEFORE the migration code, per Phase 3.2's own warning
+      that this is the riskiest migration in the plan.
+    risk: >
+      High — irreversible data loss if wrong. Mitigate with a test-first
+      migration and by never mutating the loaded envelope in place. Rollback
+      is a version-guard that refuses to migrate rather than corrupting.
+    commit: "feat(persistence): migrate legacy saves into the Garden Transit model"
+    verification: Load real pre-phase saves; assert Slide, paths, currency and Sprouts all survive; double-load determinism check.
+    depends_on: ["7.1"]
+
+  - phase: "7.3"
+    title: Define the transit domain model — multiple Slides, Conveyors, ports, filters, route state
+    status: planned
+    why: >
+      Every later task reads or writes this model. Getting the entities right
+      once prevents the Slide, the Conveyor and the Gate each growing their
+      own incompatible notion of "connected to".
+    supersedes: ["3.1"]
+    files:
+      - src/sim/state.ts
+      - src/core/ids.ts
+      - src/events/types.ts
+      - src/sim/systems.ts
+    references:
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-12.jpg
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-12.md
+    principle: >
+      slime-rancher-2-12.md — "thread a single path network between plots so
+      high density stays navigable rather than cluttered". One coherent
+      network model, not per-artifact ad-hoc links.
+    do: >
+      Define: a Slide instance (id, site tile, entry port, exit port,
+      acceptedKind: SproutTypeId | 'any', destination, enabled); a Conveyor
+      segment (id, tile, entry port, exit port, optional filter/destination);
+      a Port (owner id, kind, direction, compatibility rule); and a route
+      state enum matching GameRules §9.15 exactly (idle, active, waiting,
+      blocked, disabled, invalid). Slides and Conveyors become N-instance
+      collections; Colour Gate and Mood Bell stay single. Add the events the
+      renderer and UI will need. Keep everything serializable and free of
+      Babylon or DOM types — the sim/render boundary test enforces this.
+    non_goals: >
+      No rendering, no UI, no pricing. No junction backpressure (Phase 4) or
+      misroute stalls (Phase 5) — the model must merely not preclude them.
+    acceptance: >
+      Unit tests construct a garden with three Slides of different accepted
+      kinds and a ten-segment Conveyor route, serialize it, restore it, and
+      get an identical state. Route state for every artifact is derivable as a
+      pure function of the state — no hidden renderer-side truth.
+    validation: npm run typecheck && npm run lint && npm test && npm run build; the sim-boundary architecture test must still pass.
+    browser_scenarios: None — headless domain task.
+    evidence: None required.
+    accessibility: N/A (domain layer)
+    performance: Route-state derivation must be O(artifacts), not O(tiles²); assert on a 30-segment fixture.
+    save_compat: Shapes defined here are what 7.2 migrates INTO; land 7.2's test first.
+    risk: Medium — the model is hard to change later. Review against GameRules §9.13–§9.15 line by line before implementing.
+    commit: "feat(sim): define the Garden Transit domain model"
+    verification: Serialize/restore round-trip tests; pure-function route-state derivation tests.
+    depends_on: ["7.1", "7.2"]
+
+  - phase: "7.4"
+    title: Implement transit pricing, refunds, caps and unlock sequencing
+    status: planned
+    why: >
+      GameRules §9.12 makes cost visible, escalation bounded, and refunds
+      full, so experimentation stays joyful. Those properties only hold if
+      they are implemented and tested rather than assumed.
+    supersedes: []
+    files:
+      - src/data/upgrades.ts (or a new src/data/transit.ts)
+      - src/sim/systems.ts
+      - src/data/unlocks.ts
+      - tests/unit/data.transit.test.ts (new)
+    references:
+      - docs/references/garden-galaxy/collection-density/garden-galaxy-04.jpg
+      - docs/references/garden-galaxy/collection-density/garden-galaxy-04.md
+    principle: >
+      garden-galaxy-04.md — "one object per pedestal makes a collection
+      legible and makes each new unlock feel like an event". A purchase should
+      land as an event with a visible result, not a silent counter decrement.
+    do: >
+      Implement the §9.12 table: Slide N = round5(150 * 1.8^(N-1)) capped at
+      2400; Conveyor = 15 flat; caps of 4 Slides and 30 segments; full refund
+      on removal, with a Slide refunding the price of slide N at the CURRENT
+      owned count. Keep the existing 20-correct-placement milestone as the
+      permission gate for the first Slide (data.spawning.test.ts pins session
+      pacing to it — do not move it). Gate Conveyor availability behind owning
+      at least one placed Slide. Cost must be readable before purchase and
+      before placement confirmation.
+    non_goals: >
+      No UI (7.12). No new currency. No random or hidden pricing — GameRules
+      §14 forbids it. Do not change existing upgrade costs.
+    acceptance: >
+      Unit tests prove: the cost sequence is exactly 150/270/485/875/1575/2400
+      and never exceeds 2400; buying deducts exactly the shown price;
+      currency can never go negative; removal refunds exactly the current-count
+      price and buy→sell→buy at a fixed count is currency-neutral; caps are
+      enforced with a plain-language reason; costs and balances survive
+      save/load.
+    validation: npm run typecheck && npm run lint && npm test && npm run build
+    browser_scenarios: >
+      Buy a first Slide with visible Dewdrops; buy a second and confirm the
+      displayed price is 270; remove it and confirm the exact refund lands.
+    evidence: docs/visual-qa/transit/pricing-{first,second,cap,refund}.png
+    accessibility: Prices must be readable as text, not only as an icon and a number glyph.
+    performance: N/A
+    save_compat: Owned counts drive price and refund; they must persist. No per-instance price in the save (§9.12).
+    risk: >
+      Medium — an economy bug is player-visible and erodes trust. Balance
+      numbers are a stated playtest target; the FORMULA is what this task
+      pins, so retuning later is a constant change, not a rewrite.
+    commit: "feat(economy): price, cap and refund Garden Transit purchases"
+    verification: Full unit coverage of the cost/refund/cap table plus a browser buy-remove-rebuy round trip.
+    depends_on: ["7.3"]
+
+  - phase: "7.5"
+    title: Define the port and anchor contract for Nursery, Slides, Conveyors, Gates and habitats
+    status: planned
+    why: >
+      GameRules §9.13 forbids connection by mesh overlap — the exact defect
+      that makes today's Slide float, clip and terminate ambiguously. Ports
+      are the fix, and they must be one shared contract rather than five.
+    supersedes: []
+    files:
+      - src/sim/layout.ts (or a new src/sim/ports.ts)
+      - src/render/propDims.ts
+      - docs/CONTRACTS.md
+    references:
+      - docs/references/tiny-glade/tactile-geometry/tiny-glade-02.jpg
+      - docs/references/tiny-glade/tactile-geometry/tiny-glade-02.md
+      - docs/references/ooblets/tactile-geometry/ooblets-03.jpg
+      - docs/references/ooblets/tactile-geometry/ooblets-03.md
+    principle: >
+      tiny-glade-02.md — structures read as physical because they are built
+      from visibly stacked, deliberately joined sub-parts. ooblets-03.md —
+      "visible bolts, gauges and chunky levers" make a machine legible as a
+      machine; a port should be a visible, deliberate joint, not an implied one.
+    do: >
+      Define a Port as (ownerId, kind, tile, facing, compatibility). Declare
+      the port set for each object per GameRules §9.13: Nursery outbound
+      dock(s); Slide entry and exit; Conveyor entry and exit; Colour Gate
+      inbound plus lane outputs; habitat approach dock. Define the
+      compatibility matrix (which port kinds may join) and the clearance rule
+      that keeps artifacts off the Nursery, habitats, dressing and each other.
+      Port positions must derive from propDims.ts, the single source of prop
+      dimensions, so geometry and logic cannot disagree.
+    non_goals: >
+      No placement UI (7.6). No rendering. Do not reuse
+      src/render/automation.ts's isBuildableTile — Phase 1 already documented
+      that it has a different job (keeping scatter off gameplay tiles).
+    acceptance: >
+      Every port's world position is derived from propDims.ts and matches its
+      mesh anchor within a stated tolerance. The compatibility matrix is
+      exhaustive and unit-tested: for every ordered pair of port kinds the
+      answer is defined. Two artifacts joined at compatible ports have zero
+      geometric gap and zero overlap at the joint.
+    validation: npm run typecheck && npm run lint && npm test && npm run build
+    browser_scenarios: Inspect a joined Slide→Conveyor pair at maximum zoom for gap or overlap at the joint.
+    evidence: docs/visual-qa/transit/ports-joint-closeup.png
+    accessibility: N/A (geometry contract)
+    performance: Port lookup must be constant-time per artifact.
+    save_compat: Ports are derived, never stored — recomputed from artifact position and kind on load.
+    risk: >
+      Medium-high: the contract is depended on by every later task. Land it
+      with tests before 7.6 consumes it.
+    commit: "feat(sim): define the Garden Transit port and clearance contract"
+    verification: Exhaustive compatibility-matrix tests; zoomed browser inspection of a real joint.
+    depends_on: ["7.3"]
+
+  - phase: "7.6"
+    title: Generalise build mode — preview, snapping, clearance and accessible invalid feedback
+    status: planned
+    why: >
+      Phase 1 shipped single-artifact placement. Transit needs the same flow
+      to place many artifacts, snap to ports, refuse invalid positions BEFORE
+      purchase, and say why in garden language (GameRules §9.13, §9.8).
+    supersedes: ["3.4"]
+    files:
+      - src/input/index.ts
+      - src/render/automation.ts
+      - src/ui/components/buildMenu.ts
+      - src/main.ts
+    references:
+      - docs/references/ooblets/decorative-progression/ooblets-07.jpg
+      - docs/references/ooblets/decorative-progression/ooblets-07.md
+      - docs/references/tiny-glade/tactile-geometry/tiny-glade-02.jpg
+      - docs/references/tiny-glade/tactile-geometry/tiny-glade-02.md
+    principle: >
+      ooblets-07.md — "show an active placement grid only under the cursor
+      tile, not the whole field" — keep placement affordances local so the
+      garden never turns into a blueprint screen. tiny-glade-02.md — show
+      transform affordances directly on the piece in-world.
+    do: >
+      Extend Phase 1's ghost preview to: snap to compatible ports (7.5);
+      display valid / invalid / blocked states distinguishable WITHOUT colour
+      (shape, icon and text, per GameRules §11); refuse placement before the
+      purchase is confirmed and explain the reason in plain language; support
+      placing many artifacts of the same kind in sequence; and support move
+      and remove flows with the documented refund. Local grid affordance only
+      under the cursor, never a full-field overlay.
+    non_goals: >
+      No freeform drawing (GameRules §9.9). No new visual identity for the
+      artifacts (7.7, 7.11). No routing behaviour (7.13).
+    acceptance: >
+      A player can place four Slides and thirty Conveyor segments in one
+      session without a failed snap, a clipped artifact, or an unexplained
+      refusal. Invalid placement is refused before any Dewdrop is spent and
+      names its reason. Valid/invalid/blocked are each identifiable in a
+      desaturated screenshot. Placement works at 1440x900 and 390x844.
+    validation: >
+      npm run typecheck && npm run lint && npm test && npm run build; e2e
+      placement specs for multi-artifact placement and for each refusal reason.
+    browser_scenarios: >
+      Place, move and remove artifacts at desktop and 390px; attempt an
+      invalid placement against the Pod, a habitat, and an occupied tile.
+    evidence: docs/visual-qa/transit/placement-{valid,invalid,blocked,desaturated,390}.png
+    accessibility: >
+      Preview state must not rely on colour; placement must be reachable by
+      keyboard; touch targets must meet the existing forgiveness standard.
+    performance: Preview must not allocate per frame; sample frame time during a drag-place sequence.
+    save_compat: Placements persist immediately; an interrupted placement must never leave a half-built artifact.
+    risk: >
+      Medium — this is the interaction everything else is built on. Rollback
+      per file; Phase 1's single-artifact path must keep working throughout.
+    commit: "feat(input): generalise build mode for multi-artifact transit placement"
+    verification: Multi-artifact placement e2e; desaturated state check; both viewports; keyboard pass.
+    depends_on: ["7.4", "7.5"]
+
+  - phase: "7.7"
+    title: Rebuild the Garden Slide silhouette — entry, channel, rails, supports, exit
+    status: planned
+    why: >
+      GameRules §9.17 rejects the current object outright: it reads as a snake
+      or tube on a box, with ambiguous entry, direction and exit. This task
+      creates the original replacement form the whole feature is judged on.
+    supersedes: []
+    files:
+      - src/render/automation.ts
+      - src/render/propDims.ts
+      - src/render/pbrMaterials.ts
+    references:
+      - docs/references/tiny-glade/tactile-geometry/tiny-glade-02.jpg
+      - docs/references/tiny-glade/tactile-geometry/tiny-glade-02.md
+      - docs/references/tiny-glade/lighting-materials/tiny-glade-09.jpg
+      - docs/references/tiny-glade/lighting-materials/tiny-glade-09.md
+      - docs/references/ooblets/tactile-geometry/ooblets-03.jpg
+      - docs/references/ooblets/tactile-geometry/ooblets-03.md
+    principle: >
+      tiny-glade-02.md — "construct every structure from visibly stacked
+      sub-parts (base, frame, roof, trim) so it reads as a physical object,
+      not a stamped box". tiny-glade-09.md — "bevel and chamfer every edge so
+      grazing light produces highlight rolloff". ooblets-03.md — "rounded
+      bevels plus one oversized hero machine per room gives a tactile toy-like
+      feel without high-poly cost".
+    do: >
+      Build the Slide from named sub-parts: an entry mouth, a raised curved
+      trough channel, side rails or an edge lip, support legs meeting the
+      terrain with contact shadows, and a distinct exit lip with a readable
+      facing. Use one original tactile material family from GameRules §9.16
+      (painted wood, glazed ceramic, carved root, polished stone). All
+      dimensions from propDims.ts. Anchor to ports from 7.5.
+    non_goals: >
+      Do NOT copy tiny-glade's timber-frame or masonry vocabulary, or
+      ooblets' machine props — take stacked-sub-part construction and bevel
+      discipline only. No flow animation yet (7.9). No configuration (7.12).
+    acceptance: >
+      At the default camera an unfamiliar viewer can point to the entry, the
+      travel direction and the exit without a tooltip. The silhouette is
+      distinguishable in a desaturated screenshot from a pipe, hose, tube or
+      snake. Supports meet the ground with contact shadows and nothing floats.
+      Zero clipping against the Pod, terrain, planting, habitats or another
+      Slide at any supported camera angle, verified at both viewports.
+    validation: npm run typecheck && npm run lint && npm test && npm run build
+    browser_scenarios: >
+      Place a Slide adjacent to the Nursery, to a habitat, and beside a second
+      Slide; orbit through the full supported camera range at both viewports.
+    evidence: docs/visual-qa/transit/slide-{before,after,desaturated,adjacent-pod,390}.png
+    accessibility: Silhouette must read in high contrast and without colour.
+    performance: Measure with four Slides placed; stay within the Phase 6 6.1 budget +15%.
+    save_compat: Visual only; no state change.
+    risk: >
+      Medium-high — this is the task the user's complaint is really about. Get
+      an explicit visual review before building 7.8 on top of it.
+    commit: "feat(render): rebuild the Garden Slide as a legible garden slide"
+    verification: Unfamiliar-viewer readability check; desaturated silhouette check; clipping sweep with four Slides.
+    depends_on: ["7.5", "7.6"]
+
+  - phase: "7.8"
+    title: Deliver multiple configured Slides running one filtered route each
+    status: planned
+    why: >
+      This is the phase's proving milestone and GameRules §16's revised item
+      5: a second Slide, filtered to a different Sprout kind, running
+      alongside the first. Until this works the redesign is unproven.
+    supersedes: []
+    files:
+      - src/sim/systems.ts
+      - src/render/automation.ts
+      - src/ui/components/buildMenu.ts
+    references:
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-06.jpg
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-06.md
+    principle: >
+      slime-rancher-2-06.md — "let one autonomous helper unit visibly service
+      a zone to make the garden feel worked-in, not staged". Several helpers
+      each visibly serving their own route is the scaled form of that.
+    do: >
+      Wire the multi-instance lifecycle end to end: buy, place, configure the
+      accepted kind, select the destination, run, disable, remove. Dispatch
+      must respect each Slide's filter and choose deterministically when
+      several Slides could take the same Sprout.
+    non_goals: >
+      No Conveyors yet (7.10/7.11). No art changes (7.7 owns those). No
+      junction backpressure (Phase 4).
+    acceptance: >
+      A player buys a second Slide, filters it to Blue Dew, places it on a
+      compatible port, and sees it deliver ONLY Blue Dew Sprouts while the
+      first Slide continues on its own filter. Both survive save/load with
+      filters and destinations intact. No console errors. Dispatch order is
+      deterministic across runs from identical state.
+    validation: >
+      npm run typecheck && npm run lint && npm test && npm run build; new
+      e2e covering two configured Slides and a save/load round trip.
+    browser_scenarios: >
+      Two Slides with different filters running simultaneously; reload
+      mid-operation; disable one and confirm the other is unaffected.
+    evidence: docs/visual-qa/transit/two-slides-{running,after-reload}.png
+    accessibility: Each Slide's filter must be readable in-world without colour.
+    performance: Four Slides active with 20+ Sprouts; within budget.
+    save_compat: Filters, destinations and enabled state must all persist per instance.
+    risk: Medium. Rollback per file. Do not regress the single-Slide path during rollout.
+    commit: "feat(sim): run multiple filtered Garden Slides simultaneously"
+    verification: Two-Slide filtered-delivery e2e; determinism check; save/load round trip.
+    depends_on: ["7.7"]
+
+  - phase: "7.9"
+    title: Make Sprouts visibly enter, travel and exit a Slide
+    status: planned
+    why: >
+      GameRules §9.3.1 forbids teleporting a Sprout from entry to exit. The
+      journey is the charm and the legibility — it is how a player learns what
+      a Slide does without being told.
+    supersedes: []
+    files:
+      - src/render/automation.ts
+      - src/render/sprouts.ts (ride path only)
+      - src/render/motion.ts
+    references:
+      - docs/references/tiny-glade/reward-feedback/tiny-glade-01.jpg
+      - docs/references/tiny-glade/reward-feedback/tiny-glade-01.md
+      - docs/references/ooblets/reward-feedback/ooblets-11.jpg
+      - docs/references/ooblets/reward-feedback/ooblets-11.md
+    principle: >
+      tiny-glade-01.md — "attach an immediate, legible response to any direct
+      interaction". ooblets-11.md — the reward reads because it is anchored in
+      world space at the thing that caused it, large enough and long enough to
+      see.
+    do: >
+      Animate the Sprout onto the entry, along the channel surface (following
+      its curve, riding ON it rather than floating above it), and off the exit
+      lip toward the destination. Add an original active-flow signal per
+      GameRules §9.16 — travelling leaf markers, rolling seed lights, shifting
+      petals — driven by MotionConfig so reduced motion keeps state clarity
+      without continuous travel animation.
+    non_goals: >
+      Do not copy reference effects. No bloom-led glow. No animation that
+      hides where the Sprout actually is.
+    acceptance: >
+      A Sprout is continuously visible from entry to exit, always in contact
+      with the channel surface, never intersecting the rails or supports.
+      Under reduced motion the Sprout still moves between endpoints in
+      discrete readable steps and every state remains identifiable. Travel
+      duration responds to the Transit Speed upgrade.
+    validation: npm run typecheck && npm run lint && npm test && npm run build; reduced-motion e2e must pass.
+    browser_scenarios: Watch a full ride at default camera and at close zoom; repeat under reduced motion.
+    evidence: docs/visual-qa/transit/ride-{entry,mid,exit,reduced-motion}.png
+    accessibility: Reduced motion must preserve state clarity; no flashing.
+    performance: Four Slides riding simultaneously; within budget.
+    save_compat: A Sprout saved mid-ride must restore safely to a valid position (see 7.13).
+    risk: Medium — mid-ride save/restore is the subtle case. Cover it in 7.13's tests.
+    commit: "feat(render): show Sprouts entering, riding and leaving a Garden Slide"
+    verification: Frame-by-frame ride capture; contact check against the channel; reduced-motion pass.
+    depends_on: ["7.8"]
+
+  - phase: "7.10"
+    title: Implement the Sprout Conveyor segment entity and network composition
+    status: planned
+    why: >
+      Conveyors are how a route reaches across a growing garden. GameRules
+      §9.9's naming resolution makes this the single buildable route
+      substrate — replacing, not supplementing, Phase 3's route segments.
+    supersedes: ["3.1"]
+    files:
+      - src/sim/state.ts
+      - src/sim/systems.ts
+      - src/sim/layout.ts
+    references:
+      - docs/references/ooblets/garden-composition/ooblets-01.jpg
+      - docs/references/ooblets/garden-composition/ooblets-01.md
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-12.jpg
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-12.md
+    principle: >
+      ooblets-01.md — "edge garden beds with chunky rounded logs and vary
+      silhouettes per plot so each tile reads as a different state from the
+      default camera". slime-rancher-2-12.md — one threaded path network keeps
+      density navigable.
+    do: >
+      Implement the segment entity from 7.3: placement on the tile grid,
+      entry/exit ports, direction, connection state, and composition into
+      routes between a source port and a destination port. Deliver the Phase 1
+      behaviour only — carry, guide, or deliver matching Sprouts toward an
+      assigned valid destination. Optional per-segment filter and destination
+      where genuinely needed, not by default.
+    non_goals: >
+      No throughput, balancing, ratios, or merge/split logic. No factory
+      simulator. Junction backpressure remains Phase 4.
+    acceptance: >
+      Three placed segments compose one valid route from a Slide exit to a
+      habitat approach dock, and a matching Sprout traverses it end to end.
+      An unconnected segment is inert and reads as unfinished, not broken.
+      Route composition is deterministic and identical after save/load.
+    validation: npm run typecheck && npm run lint && npm test && npm run build; sim-boundary test must still pass.
+    browser_scenarios: Build a three-segment route; break it by removing the middle segment; repair it.
+    evidence: docs/visual-qa/transit/conveyor-route-{complete,broken,repaired}.png
+    accessibility: Connection state must be readable without colour.
+    performance: 30 segments with Sprouts in transit; route recomputation must not be per-frame.
+    save_compat: Segments and their connection state persist; 7.2 backfills the legacy fixed network into them.
+    risk: Medium-high — this replaces the fixed path network many modules read. Land behind the 7.2 migration.
+    commit: "feat(sim): implement Sprout Conveyor segments and route composition"
+    verification: Three-segment route traversal; break/repair; save/load determinism.
+    depends_on: ["7.6", "7.8"]
+
+  - phase: "7.11"
+    title: Give Conveyors an original grown-garden identity and build flow
+    status: planned
+    why: >
+      GameRules §14's 2026-08-02 amendment makes this the guardrail task: a
+      Conveyor that reads as a rubber belt on rollers fails the design
+      regardless of what the UI calls it.
+    supersedes: ["3.4"]
+    files:
+      - src/render/automation.ts (or a new src/render/conveyor.ts)
+      - src/render/propDims.ts
+      - src/render/pbrMaterials.ts
+    references:
+      - docs/references/ooblets/garden-composition/ooblets-01.jpg
+      - docs/references/ooblets/garden-composition/ooblets-01.md
+      - docs/references/tiny-glade/lighting-materials/tiny-glade-09.jpg
+      - docs/references/tiny-glade/lighting-materials/tiny-glade-09.md
+      - docs/references/garden-galaxy/decorative-progression/garden-galaxy-06.jpg
+      - docs/references/garden-galaxy/decorative-progression/garden-galaxy-06.md
+    principle: >
+      ooblets-01.md — chunky rounded edging reads as crafted garden
+      construction. tiny-glade-09.md — bevelled edges plus material contrast
+      keep surfaces inspectable close up. garden-galaxy-06.md — a soft-edge
+      pass makes added objects FINISH a space rather than clutter it.
+    do: >
+      Build the segment as a modular grown or carved channel that sits INTO
+      the terrain with visible supports or bedding, connects flush to its
+      neighbours, and shows direction, entry, exit and connection state. Add a
+      soft-edge treatment at segment joins so a long route reads as one
+      continuous crafted channel rather than repeated stamped tiles.
+    non_goals: >
+      No belt, roller, rubber, steel, or industrial vocabulary. Do not copy
+      reference props. No decorative-only segments — every segment carries.
+    acceptance: >
+      A ten-segment route shows no gaps, overlaps, z-fighting, terrain
+      clipping, floating supports, or ambiguous dead ends at any supported
+      camera angle. In a desaturated screenshot the route reads as a garden
+      channel, and its direction is identifiable without colour. Adding
+      segments makes the garden look more finished, judged against the
+      before/after capture.
+    validation: npm run typecheck && npm run lint && npm test && npm run build
+    browser_scenarios: Build a ten-segment route including a corner; inspect every joint at maximum zoom; check both viewports.
+    evidence: docs/visual-qa/transit/conveyor-{straight,corner,ten-segment,desaturated,joint-closeup}.png
+    accessibility: Direction and connection state must not depend on colour.
+    performance: 30 segments must be instanced or batched; within the Phase 6 6.1 budget +15%.
+    save_compat: Visual only.
+    risk: >
+      High for tone, not for code: this is where the terrarium could start
+      looking industrial. Require an explicit visual review against §14's
+      amendment before acceptance.
+    commit: "feat(render): give Sprout Conveyors a grown-garden identity"
+    verification: Ten-segment joint inspection; desaturated direction check; §14 tone review.
+    depends_on: ["7.7", "7.10"]
+
+  - phase: "7.12"
+    title: Build accessible transit configuration surfaces
+    status: planned
+    why: >
+      GameRules §9.14 requires every rule to be readable at a glance in-world
+      AND through an accessible panel, with colour plus icon plus text — never
+      colour alone. Without this the filter feature is unusable for a
+      colour-blind player and invisible to everyone else.
+    supersedes: []
+    files:
+      - src/ui/components/ (new transit config component)
+      - src/ui/uiState.ts
+      - src/render/automation.ts (in-world labels)
+    references:
+      - docs/references/ooblets/ui-readability/ooblets-09.jpg
+      - docs/references/ooblets/ui-readability/ooblets-09.md
+      - docs/references/tiny-glade/ui-readability/tiny-glade-03.jpg
+      - docs/references/tiny-glade/ui-readability/tiny-glade-03.md
+    principle: >
+      ooblets-09.md — "a compact card with colour-coded resource names and
+      required counts, and a plain-language status pill instead of an abstract
+      icon". tiny-glade-03.md — "place the picker adjacent to the outlined
+      target in-world and preview the change live".
+    do: >
+      Build the configuration surface: accepted kind including `Any`,
+      destination selection from compatible ports with a live in-world route
+      preview, direction, enabled/disabled, current status, and a plain-language
+      explanation for any error state. Mirror the rule as an in-world label on
+      the artifact itself. Make the distinction between manual carry, Slide
+      route, Conveyor route and Gate decision explicit in the copy.
+    non_goals: >
+      No rule editor, formula, boolean logic, or numeric entry (GameRules
+      §15 item 8). No configuration that exists only in a panel — the world
+      must always show the current rule.
+    acceptance: >
+      Every rule is conveyed by colour AND icon AND species text plus a
+      direction arrow and status line, verified in a desaturated screenshot
+      and in high-contrast mode. The panel is fully keyboard reachable with
+      visible focus and correct focus return. Selecting a destination previews
+      the route in-world before committing. `Any` is the default for a first
+      Slide and works with no configuration.
+    validation: >
+      npm run typecheck && npm run lint && npm test && npm run build; e2e for
+      keyboard-only configuration of a Slide filter and destination.
+    browser_scenarios: >
+      Configure a Slide by pointer, by keyboard, and at 390px; verify in high
+      contrast and desaturated.
+    evidence: docs/visual-qa/transit/config-{panel,in-world,desaturated,high-contrast,keyboard-focus,390}.png
+    accessibility: THIS TASK IS THE ACCESSIBILITY GATE for transit configuration.
+    performance: Panel must not re-render the scene; measure frame time with the panel open.
+    save_compat: Configuration changes persist immediately.
+    risk: Medium. Rollback per file.
+    commit: "feat(ui): accessible configuration for Slides and Conveyors"
+    verification: Keyboard-only configuration e2e; desaturated and high-contrast checks; both viewports.
+    depends_on: ["7.8", "7.10"]
+
+  - phase: "7.13"
+    title: Guarantee route safety — no Sprout lost, trapped, duplicated or silently rerouted
+    status: planned
+    why: >
+      GameRules §9.15 states these as absolute guarantees. They are the
+      difference between a cosy system the player trusts and one they are
+      afraid to edit.
+    supersedes: []
+    files:
+      - src/sim/systems.ts
+      - tests/unit/sim.transitSafety.test.ts (new)
+    references:
+      - docs/references/slime-rancher-2/reward-feedback/slime-rancher-2-05.jpg
+      - docs/references/slime-rancher-2/reward-feedback/slime-rancher-2-05.md
+    principle: >
+      slime-rancher-2-05.md — progression should visibly transform the space
+      rather than merely add items; by the same logic an edit to a route must
+      visibly resolve, never silently swallow what was in flight.
+    do: >
+      Implement and test every §9.15 condition: no matching Sprout, full
+      destination, blocked exit, no path, disabled, invalid/stale target, and
+      route edited while a Sprout is in transit. Define and document the
+      deterministic priority rule when several artifacts compete for one
+      Sprout. Removing an artifact must safely return or reroute every
+      affected Sprout and say what happened.
+    non_goals: >
+      No punishment, timers, decay, or loss of any kind. No silent recovery
+      either — every resolution is explained.
+    acceptance: >
+      Property tests over randomised garden layouts prove that across
+      placement, removal, reconfiguration, destination-full, disable and
+      save/load, the Sprout count is conserved exactly, no Sprout occupies two
+      places, and no Sprout is unreachable by hand. Every recovery produces a
+      player-visible explanation. Priority between competing artifacts is
+      identical across runs from identical state.
+    validation: npm run typecheck && npm run lint && npm test && npm run build
+    browser_scenarios: >
+      Remove a Slide mid-ride; fill a destination habitat mid-route; disable a
+      Slide with a Sprout aboard; reload during transit.
+    evidence: docs/visual-qa/transit/safety-{mid-ride-removal,full-destination,disabled,reload}.png
+    accessibility: Every recovery message must be plain-language and screen-reader reachable.
+    performance: Safety checks must not run per frame.
+    save_compat: A Sprout in transit at save time must restore to a valid, hand-reachable position.
+    risk: >
+      High — this is where silent data loss would live. Property tests before
+      implementation, not after.
+    commit: "feat(sim): guarantee Sprout safety across transit edits and failures"
+    verification: Randomised property tests for conservation; live mid-ride removal and reload.
+    depends_on: ["7.10", "7.12"]
+
+  - phase: "7.14"
+    title: Integrate transit artifacts into the garden's materials, lighting and composition
+    status: planned
+    why: >
+      GameRules §9.16 requires transit to make the garden look MORE charming
+      as it grows. This task lands after Phase 6's material and lighting
+      foundation so artifacts are built against the finished recipes.
+    supersedes: []
+    files:
+      - src/render/pbrMaterials.ts
+      - src/render/automation.ts
+      - src/render/world.ts
+    references:
+      - docs/references/tiny-glade/lighting-materials/tiny-glade-09.jpg
+      - docs/references/tiny-glade/lighting-materials/tiny-glade-09.md
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-06.jpg
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-06.md
+      - docs/references/garden-galaxy/decorative-progression/garden-galaxy-06.jpg
+      - docs/references/garden-galaxy/decorative-progression/garden-galaxy-06.md
+      - docs/references/ooblets/habitat-density/ooblets-14.jpg
+      - docs/references/ooblets/habitat-density/ooblets-14.md
+    principle: >
+      tiny-glade-09.md — bevelled edges under grazing light, warm points
+      against cool ambient. slime-rancher-2-06.md — authored zones with a
+      helper visibly servicing one make a space read as worked-in.
+      garden-galaxy-06.md — a soft-edge pass makes progression finish a space.
+      ooblets-14.md — height-staggered density reads as abundance, not noise.
+    do: >
+      Bind Slides and Conveyors to Phase 6's material recipes, add contact
+      shadows and terrain bedding at every support, and dress the immediate
+      surroundings of a placed artifact so it reads as built into its zone.
+      Verify the garden looks more finished, not more cluttered, at the Phase 1
+      caps of four Slides and thirty segments.
+    non_goals: >
+      No generic polish. No bloom-led effects. Do not obscure Sprouts, drop
+      targets or habitat occupancy with dressing.
+    acceptance: >
+      At the Phase 1 caps, every gameplay object remains readable, no artifact
+      obscures a drop target, and a before/after capture shows the garden
+      reading as more finished. Every artifact has contact shadows and terrain
+      bedding. Frame time p95 within the Phase 6 6.1 budget +15%.
+    validation: npm run typecheck && npm run lint && npm test && npm run build
+    browser_scenarios: A garden at the caps, at both viewports, high and low quality tiers.
+    evidence: docs/visual-qa/transit/integration-{empty,mid,at-cap,low-tier}.png
+    accessibility: Dressing must never reduce contrast for Sprouts or transit state signals.
+    performance: Measured at the caps on the low tier.
+    save_compat: Visual only.
+    risk: Medium — clutter risk at the caps. The caps are the mitigation and are already in GameRules §9.12.
+    commit: "feat(render): integrate Garden Transit into the garden's materials and lighting"
+    verification: At-cap readability and frame-time checks; before/after finish comparison.
+    depends_on: ["7.9", "7.11", "6.8"]
+
+  - phase: "7.15"
+    title: Garden Transit acceptance gate — browser, accessibility, performance, persistence
+    status: planned
+    why: >
+      Closes the phase against GameRules §9.16's acceptance criteria and §16's
+      revised Definition of Done, and proves the guarantees in §9.15 hold in a
+      real browser rather than only in unit tests.
+    supersedes: []
+    files:
+      - tests/e2e/ (new transit specs)
+      - docs/visual-qa/improvement-log.md
+    references:
+      - docs/references/slime-rancher-2/creature-readability/slime-rancher-2-01.jpg
+      - docs/references/slime-rancher-2/creature-readability/slime-rancher-2-01.md
+      - docs/references/ooblets/creature-personality/ooblets-04.jpg
+      - docs/references/ooblets/creature-personality/ooblets-04.md
+    principle: >
+      slime-rancher-2-01.md and ooblets-04.md — creatures must stay readable
+      and expressive at gameplay distance. Transit must never cost the Sprouts
+      their legibility; this gate is where that is checked with routes running.
+    do: >
+      Run the full scenario matrix in Chrome: one Slide; multiple Slides with
+      different filters; several Conveyors composing a route; invalid
+      placement; blocked route; full habitat; disable; removal and refund;
+      save/load including mid-transit; 390px viewport; reduced motion; high
+      contrast; muted audio; keyboard; pointer; touch. Record a measured
+      performance budget at the Phase 1 caps with a quality-tier strategy.
+      Score the result against REFERENCE_BOARD's rubric and record scores,
+      evidence and remaining defects in the improvement log.
+    non_goals: >
+      No new features. If a score lands below 4, record it as a documented
+      blocker with a concrete next fix rather than quietly accepting it.
+    acceptance: >
+      Every scenario passes with no unhandled console error. GameRules §16
+      items 5, 6, 12 and 13 are demonstrably satisfied. Frame time p95 at the
+      caps is within the recorded budget on both quality tiers. The
+      improvement log carries rubric scores with evidence for transit
+      readability, material richness, animation, accessibility and performance.
+    validation: >
+      npm run typecheck && npm run lint && npm test && npm run build && npm
+      run test:e2e
+    browser_scenarios: The full matrix above, from a clean save.
+    evidence: docs/visual-qa/transit/gate-{single,multi,conveyor,invalid,blocked,full,reload,390,reduced-motion,high-contrast}.png
+    accessibility: This task is the accessibility gate for the phase.
+    performance: Final measurement at the Phase 1 caps on both tiers.
+    save_compat: Includes the migration re-verification from 7.2 against a real pre-phase save.
+    risk: Low technically; high process risk if skipped.
+    commit: "chore(qa): Garden Transit acceptance gate"
+    verification: Full scenario matrix from a clean save plus a migrated save; documented rubric scores.
+    depends_on: ["7.13", "7.14"]
+
+  - phase: "7.16"
+    title: Land the documentation updates GameRules' revision deferred
+    status: planned
+    why: >
+      GameRules §17 requires a revision to carry updates to dependent design,
+      architecture and QA documents plus test updates. The 2026-08-02 revision
+      recorded these as DEFERRED because that task was scoped to GameRules and
+      plan.yaml only. This task discharges that debt — it is not optional
+      tidying, it is the other half of a change-controlled revision.
+    supersedes: []
+    files:
+      - docs/CONTRACTS.md
+      - docs/ARCHITECTURE.md
+      - docs/GAME_DESIGN.md
+      - work_progress.yaml
+    references:
+      - docs/references/ooblets/ui-readability/ooblets-09.jpg
+      - docs/references/ooblets/ui-readability/ooblets-09.md
+    principle: >
+      ooblets-09.md — plain-language status over abstract icons. The same
+      standard applies to the project's own documents: state what is true now,
+      plainly, rather than leaving a reader to infer it.
+    do: >
+      Update CONTRACTS.md with transit ids, ports, the event union additions,
+      and the save shape/version. Update ARCHITECTURE.md with the as-built
+      transit domain. Update GAME_DESIGN.md wherever it describes a single
+      Garden Slide or auto-placed automation. Record the phase in
+      work_progress.yaml.
+    non_goals: >
+      No design changes — GameRules is authoritative. Do not edit GameRules
+      here; if something in it turns out wrong, surface the conflict.
+    acceptance: >
+      No project document still describes the Garden Slide as unique,
+      unconfigurable, or auto-placed. CONTRACTS.md's event union and save
+      version match the shipped code exactly, verified by grep against src/.
+    validation: npm run typecheck && npm run lint && npm test && npm run build
+    browser_scenarios: None — documentation task.
+    evidence: None required.
+    accessibility: N/A
+    performance: N/A
+    save_compat: Documents the migration; changes nothing.
+    risk: Low. Rollback per file.
+    commit: "docs: reconcile project documentation with the Garden Transit revision"
+    verification: Grep every doc for stale single-Slide language; diff CONTRACTS.md's event union against src/events/types.ts.
+    depends_on: ["7.15"]
 
 # =============================================================================
 # VERIFICATION (every phase)
