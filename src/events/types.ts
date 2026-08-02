@@ -127,6 +127,7 @@ export type GameEvent =
     }
   | { type: 'transit:slideBuilt'; slide: SlideInstance; entryPort: Port; exitPort: Port }
   | { type: 'transit:conveyorBuilt'; conveyor: ConveyorSegment; entryPort: Port; exitPort: Port }
+  | { type: 'transit:artifactMoved'; artifactId: string; artifactKind: 'gardenSlide' | 'sproutConveyor'; tile: TileCoord }
   | { type: 'transit:artifactRemoved'; artifactId: string; artifactKind: 'gardenSlide' | 'sproutConveyor'; refund: number }
   | { type: 'transit:routeStateChanged'; artifactId: string; artifactKind: TransitArtifactKind; state: RouteState }
   | { type: 'automation:unlocked'; automationId: AutomationId }
@@ -235,6 +236,9 @@ export type GameEvent =
          * unplaced automation appears in `unlockedAutomations` but not here.
          */
         automationSites?: Partial<Record<AutomationId, TileCoord>>;
+        /** Placed Garden Transit artifacts, restored without replaying build events. */
+        slides?: Array<{ id: string; tile: TileCoord }>;
+        conveyors?: Array<{ id: string; tile: TileCoord }>;
         /**
          * Every habitat INSTANCE standing in the restored save (the three
          * originals plus any the player built — Phase 2). A restored save

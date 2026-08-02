@@ -40,6 +40,8 @@ export {
   placeHabitat,
   placeSlide,
   purchaseUpgrade,
+  moveConveyor,
+  moveSlide,
   removeConveyor,
   removeSlide,
   spawnSystem,

@@ -11,7 +11,7 @@ Authoritative shared interfaces. Any agent needing a change here must report it 
 > shape, and the fixed trunk topology described under "Grid and layout".
 >
 > Phase 7 is landing incrementally. The port contract below is current as of
-> task **7.5**; the remaining automation, save and fixed-topology sections are
+> task **7.6**; the remaining automation, save and fixed-topology sections are
 > still reconciled by task **7.16**. Read GameRules §9.3 for the full design
 > intent.
 
@@ -105,6 +105,19 @@ resolves a port through `portWorldPosition(port, body)`: the body dimensions
 derive its ground-level height and socket inset, while opposite adjacent ports
 share the exact half-tile seam within `PORT_ANCHOR_TOLERANCE`.
 
+### Build-mode transit placement (Phase 7.6)
+
+`SimRuntime.placeSlide` and `placeConveyor` spend the configured build cost and
+emit `transit:slideBuilt` or `transit:conveyorBuilt`. `moveSlide` and `moveConveyor` relocate an
+existing artifact without charging or refunding and emit
+`transit:artifactMoved`; `removeSlide` and `removeConveyor` refund and emit
+`transit:artifactRemoved`. Placement and removal persist immediately after a
+successful mutation. The build menu and input layer share the same selected
+artifact kind, tile-clearance rules, port preview, keyboard placement, and
+pointer/touch placement path. Transit positions are compact save snapshot
+fields (`slides` and `conveyors`) so UI counts and world markers hydrate after
+load.
+
 ## Core string ids (do not rename)
 
 ```ts
@@ -173,6 +186,8 @@ interface SaveLoadedSnapshot {
   moodBellRule?: MoodId;
   nurseryRhythm?: 'lively' | 'easing' | 'resting';
   waitingSproutCount?: number;
+  slides?: { id: string; tile: TileCoord }[];
+  conveyors?: { id: string; tile: TileCoord }[];
 }
 ```
 

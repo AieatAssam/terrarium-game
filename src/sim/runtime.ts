@@ -36,6 +36,8 @@ import {
   purchaseUpgrade as purchaseUpgradeSystem,
   removeConveyor as removeConveyorSystem,
   removeSlide as removeSlideSystem,
+  moveConveyor as moveConveyorSystem,
+  moveSlide as moveSlideSystem,
   setColourGateLane as setColourGateLaneSystem,
   setMoodBellRule as setMoodBellRuleSystem,
   transitPlacementLockReason,
@@ -84,6 +86,10 @@ export interface SimRuntime {
   removeSlide: (slideId: string) => void;
   /** Removes a placed Conveyor and applies its full flat refund. */
   removeConveyor: (conveyorId: string) => void;
+  /** Moves a placed Slide without changing its ownership or balance. */
+  moveSlide: (slideId: string, tile: TileCoord) => void;
+  /** Moves a placed Conveyor without changing its ownership or balance. */
+  moveConveyor: (conveyorId: string, tile: TileCoord) => void;
   /** Permission, cap and price copy for the transit build surface. */
   getTransitPlacementLockReason: (kind: PricedTransitKind) => string | null;
   /**
@@ -208,6 +214,8 @@ export async function startSimRuntime(
         fullHabitatInstances: fullHabitatsOf(state),
         automationTargets: automationTargetsOf(state),
         automationSites: automationSitesOf(state),
+        slides: state.slides.map((slide) => ({ id: slide.id, tile: slide.tile })),
+        conveyors: state.conveyors.map((conveyor) => ({ id: conveyor.id, tile: conveyor.tile })),
         habitatInstances: state.habitats.map((h) => ({ id: h.id, habitatId: h.habitatId, tile: h.tile, count: h.count })),
         sprouts: state.sprouts.map((s) => {
           const instance = s.state === 'settled' ? habitatInstanceAtTile(state.habitats, s.tile) : null;
@@ -280,6 +288,10 @@ export async function startSimRuntime(
     bus.emit(event);
   };
 
+  const persistImmediate = (): void => {
+    void saveGame(state).then(() => bus.emit({ type: 'save:written' }));
+  };
+
   const unsubDropped = bus.subscribe('sprout:dropped', (event) => {
     // A drop lands on at most one of the two — `overAutomation` (a player
     // handing a Sprout straight to a built helper, GameRules §9.1) takes the
@@ -333,18 +345,32 @@ export async function startSimRuntime(
     placeSlide: (placement) => {
       const result = placeSlideSystem(state, placement);
       state = commit(emit, result.state, result.events);
+      if (result.events.length > 0) persistImmediate();
     },
     placeConveyor: (tile) => {
       const result = placeConveyorSystem(state, tile);
       state = commit(emit, result.state, result.events);
+      if (result.events.length > 0) persistImmediate();
     },
     removeSlide: (slideId) => {
       const result = removeSlideSystem(state, slideId);
       state = commit(emit, result.state, result.events);
+      if (result.events.length > 0) persistImmediate();
     },
     removeConveyor: (conveyorId) => {
       const result = removeConveyorSystem(state, conveyorId);
       state = commit(emit, result.state, result.events);
+      if (result.events.length > 0) persistImmediate();
+    },
+    moveSlide: (slideId, tile) => {
+      const result = moveSlideSystem(state, slideId, tile);
+      state = commit(emit, result.state, result.events);
+      if (result.events.length > 0) persistImmediate();
+    },
+    moveConveyor: (conveyorId, tile) => {
+      const result = moveConveyorSystem(state, conveyorId, tile);
+      state = commit(emit, result.state, result.events);
+      if (result.events.length > 0) persistImmediate();
     },
     getTransitPlacementLockReason: (kind) => transitPlacementLockReason(state, kind),
     getUpgradeLockReason: (upgradeId) =>

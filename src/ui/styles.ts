@@ -249,6 +249,31 @@ export const UI_CSS = /* css */ `
   height: 24px;
 }
 
+.tt-buildmenu-status {
+  max-width: 280px;
+  padding: 8px 12px;
+  border: 2px solid var(--tt-border);
+  border-radius: var(--tt-radius-md);
+  background: var(--tt-panel);
+  color: var(--tt-text);
+  font-size: 0.78rem;
+  line-height: 1.25;
+  text-align: left;
+  box-shadow: 0 4px 14px var(--tt-shadow);
+}
+
+.tt-buildmenu-status[data-placement-state='valid'] {
+  border-style: solid;
+}
+
+.tt-buildmenu-status[data-placement-state='invalid'] {
+  border-style: dashed;
+}
+
+.tt-buildmenu-status[data-placement-state='blocked'] {
+  border-style: double;
+}
+
 /* ---------- Dev-only debug panel ---------- */
 
 .tt-debug-panel {

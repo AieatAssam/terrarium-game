@@ -4,6 +4,8 @@ import { createInitialSimState, type SimState } from '../../src/sim/state';
 import {
   deriveTransitRouteState,
   deriveTransitRouteStates,
+  moveConveyor,
+  moveSlide,
   placeConveyor,
   placeSlide,
   removeConveyor,
@@ -156,5 +158,25 @@ describe('Garden Transit domain model', () => {
 
     const conveyor = placeConveyor({ ...rebought.state, dewdrops: 15 }, { x: 7, z: 8 });
     expect(removeConveyor(conveyor.state, conveyor.state.conveyors[0].id).state.dewdrops).toBe(15);
+  });
+
+  it('moves owned artifacts without charging and refuses occupied destinations', () => {
+    let state = {
+      ...createInitialSimState(17),
+      correctPlacementCount: UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements,
+      dewdrops: 500,
+    };
+    state = unlockSystem(state).state;
+    state = placeSlide(state, { tile: GARDEN_SLIDE_TILE, destination: 'sunflowerMeadow' }).state;
+    const moved = moveSlide(state, 'slide-1', { x: 7, z: 6 });
+    expect(moved.state.slides[0].tile).toEqual({ x: 7, z: 6 });
+    expect(moved.state.dewdrops).toBe(state.dewdrops);
+    expect(moved.events).toEqual([{ type: 'transit:artifactMoved', artifactId: 'slide-1', artifactKind: 'gardenSlide', tile: { x: 7, z: 6 } }]);
+    expect(moveSlide(moved.state, 'slide-1', HABITAT_TILES.emberNook).state).toBe(moved.state);
+
+    const conveyor = placeConveyor({ ...moved.state, dewdrops: 15 }, { x: 7, z: 8 });
+    const conveyorMove = moveConveyor(conveyor.state, 'conveyor-7-8', { x: 7, z: 9 });
+    expect(conveyorMove.state.conveyors[0].tile).toEqual({ x: 7, z: 9 });
+    expect(conveyorMove.state.dewdrops).toBe(0);
   });
 });

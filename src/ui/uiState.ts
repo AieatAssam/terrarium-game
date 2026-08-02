@@ -6,6 +6,7 @@
 // handler — so the UI can never show progress the sim hasn't confirmed.
 
 import type { AchievementId, AutomationId, HabitatId, MoodId, SproutTypeId, UpgradeId } from '../core/ids';
+import type { PricedTransitKind } from '../data/transit';
 import type { EventBus, GameEvent } from '../events';
 
 export interface OfflineReturnInfo {
@@ -30,6 +31,8 @@ export interface UiState {
    * this to stop offering a "place me" button for something already built.
    */
   placedAutomations: Set<AutomationId>;
+  /** Counts of paid Transit artifacts currently owned, used by the build menu. */
+  transitCounts: Record<PricedTransitKind, number>;
   upgradeLevels: Partial<Record<UpgradeId, number>>;
   unlockedAchievements: Set<AchievementId>;
   journalDiscovered: Set<SproutTypeId>;
@@ -76,6 +79,7 @@ function createInitialState(): UiState {
     dewdropTotal: 0,
     unlockedAutomations: new Set(),
     placedAutomations: new Set(),
+    transitCounts: { gardenSlide: 0, sproutConveyor: 0 },
     upgradeLevels: {},
     unlockedAchievements: new Set(),
     journalDiscovered: new Set(),
@@ -124,6 +128,23 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
       ...prev,
       lastBuiltAutomation: event.automationId,
       placedAutomations: new Set(prev.placedAutomations).add(event.automationId),
+    })),
+    on('transit:slideBuilt', (prev) => ({
+      ...prev,
+      lastBuiltAutomation: 'gardenSlide',
+      placedAutomations: new Set(prev.placedAutomations).add('gardenSlide'),
+      transitCounts: { ...prev.transitCounts, gardenSlide: prev.transitCounts.gardenSlide + 1 },
+    })),
+    on('transit:conveyorBuilt', (prev) => ({
+      ...prev,
+      transitCounts: { ...prev.transitCounts, sproutConveyor: prev.transitCounts.sproutConveyor + 1 },
+    })),
+    on('transit:artifactRemoved', (prev, event) => ({
+      ...prev,
+      transitCounts: {
+        ...prev.transitCounts,
+        [event.artifactKind]: Math.max(0, prev.transitCounts[event.artifactKind] - 1),
+      },
     })),
     on('upgrade:purchased', (prev, event) => ({
       ...prev,
@@ -184,6 +205,10 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
       dewdropTotal: event.snapshot.dewdrops,
       unlockedAutomations: new Set(event.snapshot.unlockedAutomations),
       placedAutomations: new Set(Object.keys(event.snapshot.automationSites ?? {}) as AutomationId[]),
+      transitCounts: {
+        gardenSlide: event.snapshot.slides?.length ?? 0,
+        sproutConveyor: event.snapshot.conveyors?.length ?? 0,
+      },
       upgradeLevels: { ...event.snapshot.upgradeLevels },
       unlockedAchievements: new Set(event.snapshot.unlockedAchievements),
       journalDiscovered: new Set(event.snapshot.journalDiscovered),

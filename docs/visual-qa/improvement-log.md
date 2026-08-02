@@ -340,3 +340,18 @@ rather than as a pass.
 Re-author the Sprout sprite sheets so the creature fills its plane, then
 re-measure visible-art height; and fix the pointer-drag harness path so the
 core interaction has real pointer-level regression coverage again.
+
+## 2026-08-02 — Phase 7.6 transit placement
+
+Playwright dev validation now covers the paid Garden Transit build surface at
+1440x900 and 390x844: four Garden Slides, repeated Sprout Conveyor placement,
+Nursery and occupied-tile refusals, keyboard move/remove, immediate save
+hydration, and 44px touch targets. The visual state is intentionally readable
+without colour: valid uses a check plus solid status, invalid uses an
+exclamation plus dashed status, and blocked uses a stop symbol plus double
+border and garden-language reason.
+
+Evidence: `transit/placement-valid.png`, `transit/placement-invalid.png`,
+`transit/placement-blocked.png`, and `transit/placement-390.png`. The existing
+real mouse drag harness remains a separate pre-existing limitation; the new
+transit checks use real build-menu/canvas clicks and keyboard input.

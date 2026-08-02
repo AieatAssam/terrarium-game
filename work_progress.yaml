@@ -16,10 +16,10 @@
 
 meta:
   updated: 2026-08-02
-  head: latest Phase 7.5 transit-port-contract commit (main; 52a0c98 = Phase 2 buildable habitats; 67bea9b = dependent-doc reconciliation, fecefe8 = Garden Transit rules+plan revision)
+  head: latest Phase 7.6 transit-placement commit (main; 52a0c98 = Phase 2 buildable habitats; 67bea9b = dependent-doc reconciliation, fecefe8 = Garden Transit rules+plan revision)
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
-  tests_passing: "362 unit tests / 35 files (re-verified 2026-08-02 via `npm test` — all green)"
+  tests_passing: "364 unit tests / 35 files (re-verified 2026-08-02 via `npm test` — all green)"
   check_command: npm run typecheck && npm run lint && npm test && npm run build
   note: >
     This meta block had gone stale twice (read a98b552/258 tests through
@@ -557,6 +557,32 @@ in_flight:
       Added exhaustive matrix, contract, save-shape and anchor tests. Full
       browser joint inspection is deferred because no current renderer/UI path
       consumes these anchors; 7.6/7.7 will validate the real joined meshes.
+      7.6 INTENT (2026-08-02): wire the paid Garden Slide and Sprout Conveyor
+      operations into the existing build surface. Generalise input build mode
+      to transit kinds with local snap-to-port hints, tile clearance, keyboard
+      commit/cancel, move/remove selection, and friendly valid/invalid/blocked
+      status copy. Extend the existing automation renderer with reusable
+      placement ghosts and temporary transit markers (no new artifact identity
+      before 7.7), and hydrate transit counts/placements from save snapshots.
+      Planned ownership: src/input/index.ts, src/render/automation.ts,
+      src/ui/components/buildMenu.ts, src/ui/uiState.ts, src/main.ts, plus the
+      smallest runtime/event/sim helpers needed to revalidate move/remove.
+      7.6 DONE (2026-08-02): generalised the build surface for paid Garden
+      Slides and Sprout Conveyors, including reusable ghosts, local compatible
+      port snapping, Nursery/habitat/occupied clearance, keyboard placement,
+      move and remove/refund flows, and live text/symbol valid-invalid-blocked
+      feedback that does not rely on colour. Added temporary shared transit
+      markers (dedicated art remains 7.7), save hydration plus immediate
+      persistence after transit mutations, UI caps/prices/counts, and four
+      focused unit tests for movement and transit UI state. Added the dev e2e
+      placement suite: four Slides, repeated Conveyors, Nursery/occupied
+      refusal without negative currency, keyboard move/remove, save round-trip,
+      desktop 1440x900 and mobile 390x844 touch-target checks. Full required
+      gate and the two new e2e scenarios passed. Browser evidence is in
+      docs/visual-qa/transit/placement-{valid,invalid,blocked,390}.png and
+      docs/visual-qa/improvement-log.md. Existing real mouse Sprout-drag e2e
+      failures remain the pre-existing harness limitation documented below;
+      the transit suite uses real build-menu/canvas clicks and keyboard input.
   - owner: claude session 2026-08-02 (Phase 2 — buildable habitats, instance model)
     files: >
       PLAN: src/core/ids.ts (docs only), src/sim/state.ts, src/sim/systems.ts,

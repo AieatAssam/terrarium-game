@@ -1870,7 +1870,7 @@ steps:
 
   - phase: "7.6"
     title: Generalise build mode — preview, snapping, clearance and accessible invalid feedback
-    status: planned
+    status: completed
     why: >
       Phase 1 shipped single-artifact placement. Transit needs the same flow
       to place many artifacts, snap to ports, refuse invalid positions BEFORE

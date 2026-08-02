@@ -534,6 +534,32 @@ export function removeConveyor(state: SimState, conveyorId: string): TickResult 
   };
 }
 
+/** Moves a placed Slide without charging or refunding; ownership stays intact. */
+export function moveSlide(state: SimState, slideId: string, tile: TileCoord): TickResult {
+  const slide = state.slides.find((item) => item.id === slideId);
+  if (!slide || sameTile(slide.tile, tile)) return { state, events: [] };
+  const occupied = occupiedTransitTiles(state).filter((occupiedTile) => !sameTile(occupiedTile, slide.tile));
+  if (!isValidTileCoord(tile) || !isValidAutomationSite('gardenSlide', tile, occupied)) return { state, events: [] };
+  return {
+    state: { ...state, slides: state.slides.map((item) => (item.id === slideId ? { ...item, tile } : item)) },
+    events: [{ type: 'transit:artifactMoved', artifactId: slideId, artifactKind: 'gardenSlide', tile }],
+  };
+}
+
+/** Moves a placed Conveyor without charging or refunding; ownership stays intact. */
+export function moveConveyor(state: SimState, conveyorId: string, tile: TileCoord): TickResult {
+  const conveyor = state.conveyors.find((item) => item.id === conveyorId);
+  if (!conveyor || sameTile(conveyor.tile, tile)) return { state, events: [] };
+  const occupied = occupiedTransitTiles(state).filter((occupiedTile) => !sameTile(occupiedTile, conveyor.tile));
+  if (!isValidTileCoord(tile) || sameTile(tile, NURSERY_TILE) || occupied.some((occupiedTile) => sameTile(occupiedTile, tile))) {
+    return { state, events: [] };
+  }
+  return {
+    state: { ...state, conveyors: state.conveyors.map((item) => (item.id === conveyorId ? { ...item, tile } : item)) },
+    events: [{ type: 'transit:artifactMoved', artifactId: conveyorId, artifactKind: 'sproutConveyor', tile }],
+  };
+}
+
 /**
  * Player commits building a NEW habitat of an existing kind (Phase 2,
  * plan.yaml Phase 2.2, GameRules §10.0). Same shape as `placeAutomation`: a

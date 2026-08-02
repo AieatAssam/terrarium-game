@@ -22,10 +22,11 @@ import { Plane } from '@babylonjs/core/Maths/math.plane';
 import '@babylonjs/core/Culling/ray';
 
 import type { AutomationId, HabitatId } from '../core/ids';
+import type { PricedTransitKind } from '../data/transit';
 import { HABITATS } from '../data/habitats';
 import type { EventBus } from '../events/bus';
 import type { RendererHandle } from '../render/index';
-import { worldToTile, type TileCoord } from '../render/coords';
+import { isWithinGrid, worldToTile, type TileCoord } from '../render/coords';
 import { SPROUT_FLOAT_HEIGHT, SPROUT_SPRITE_SIZE } from '../render/sprouts';
 // Render (and input) may import from sim — only sim may never import
 // render/ui/audio/input. isValidAutomationSite is pure tile-graph logic
@@ -33,6 +34,16 @@ import { SPROUT_FLOAT_HEIGHT, SPROUT_SPRITE_SIZE } from '../render/sprouts';
 // build-mode ghost preview and the actual placement commit ask the exact
 // same question, rather than a second, potentially-diverging guess.
 import { isValidAutomationSite, isValidHabitatSite } from '../sim/layout';
+import { GARDEN_SLIDE_TILE, NURSERY_TILE } from '../sim/layout';
+import {
+  getColourGatePorts,
+  getConveyorPorts,
+  getHabitatPorts,
+  getNurseryPorts,
+  getSlidePorts,
+  portsJoined,
+  type Port,
+} from '../sim/ports';
 
 const GROUND_PLANE = new Plane(0, 1, 0, 0); // y = 0
 // The horizontal plane a dragged Sprout is moved on. This has to be EXACTLY
@@ -53,6 +64,7 @@ const HOVER_MARGIN_TILES = 0.35;
 const PAN_SPEED = 0.0026;
 const WHEEL_ZOOM_SENSITIVITY = 0.01;
 const PINCH_ZOOM_SENSITIVITY = 1;
+const PLACEMENT_PREVIEW_EVENT = 'terrarium:placementPreview';
 
 export interface InputHooks {
   /**
@@ -67,6 +79,9 @@ export interface InputHooks {
    * The sim's `placeHabitat` re-checks the full-now gate + cost + site on
    * commit, so this path can't overdraw even if the preview drifted. */
   onPlaceHabitat?: (habitatId: HabitatId, tile: TileCoord) => void;
+  onPlaceTransit?: (kind: PricedTransitKind, tile: TileCoord) => void;
+  onMoveTransit?: (kind: PricedTransitKind, id: string, tile: TileCoord) => void;
+  onRemoveTransit?: (kind: PricedTransitKind, id: string) => void;
 }
 
 export interface InputHandle {
@@ -85,6 +100,7 @@ export interface InputHandle {
   /** Phase 2 — habitat build mode, mirroring `enterBuildMode`: the ghost
    * previews via `habitats.previewAt` and commits via `onPlaceHabitat`. */
   enterHabitatBuildMode: (habitatId: HabitatId) => void;
+  enterTransitBuildMode: (kind: PricedTransitKind) => void;
   /** Exits build mode (if active) and clears the ghost preview. Safe to call when not in build mode. */
   exitBuildMode: () => void;
   dispose: () => void;
@@ -107,18 +123,35 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   let pinching = false;
   let pinchStartDistance = 0;
   let pinchStartRadius = 0;
-  type BuildMode = { kind: 'automation'; id: AutomationId } | { kind: 'habitat'; id: HabitatId } | null;
+  type BuildMode =
+    | { kind: 'automation'; id: AutomationId }
+    | { kind: 'habitat'; id: HabitatId }
+    | { kind: 'transit'; id: PricedTransitKind; movingId?: string }
+    | null;
   let buildMode: BuildMode = null;
   // Every PLACED automation's own site tile, tracked locally so build-mode
   // hit-testing (isValidAutomationSite needs "what's already occupied")
   // doesn't require reaching into SimState — this module only ever talks to
   // sim over the bus/hooks, never by reading it directly.
   const occupiedSiteTiles = new Map<AutomationId, TileCoord>();
+  const transitTiles = new Map<string, { kind: PricedTransitKind; tile: TileCoord }>();
+  let selectedTransit: { id: string; kind: PricedTransitKind } | null = null;
+  let buildCursorTile: TileCoord | null = null;
   bus.subscribe('automation:built', (e) => occupiedSiteTiles.set(e.automationId, e.siteTile));
+  bus.subscribe('transit:slideBuilt', (e) => transitTiles.set(e.slide.id, { kind: 'gardenSlide', tile: e.slide.tile }));
+  bus.subscribe('transit:conveyorBuilt', (e) => transitTiles.set(e.conveyor.id, { kind: 'sproutConveyor', tile: e.conveyor.tile }));
+  bus.subscribe('transit:artifactMoved', (e) => transitTiles.set(e.artifactId, { kind: e.artifactKind, tile: e.tile }));
+  bus.subscribe('transit:artifactRemoved', (e) => {
+    transitTiles.delete(e.artifactId);
+    if (selectedTransit?.id === e.artifactId) selectedTransit = null;
+  });
   bus.subscribe('save:loaded', (e) => {
     for (const [id, tile] of Object.entries(e.snapshot.automationSites ?? {}) as [AutomationId, TileCoord][]) {
       occupiedSiteTiles.set(id, tile);
     }
+    transitTiles.clear();
+    for (const slide of e.snapshot.slides ?? []) transitTiles.set(slide.id, { kind: 'gardenSlide', tile: slide.tile });
+    for (const conveyor of e.snapshot.conveyors ?? []) transitTiles.set(conveyor.id, { kind: 'sproutConveyor', tile: conveyor.tile });
   });
 
   // Every tile something already stands on: automation sites plus every
@@ -128,7 +161,123 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   const allOccupiedTiles = (): TileCoord[] => [
     ...habitats.entries().map((entry) => entry.tile),
     ...occupiedSiteTiles.values(),
+    ...Array.from(transitTiles.values(), (entry) => entry.tile),
   ];
+
+  const sameTile = (a: TileCoord, b: TileCoord): boolean => a.x === b.x && a.z === b.z;
+  const occupiedForTransit = (movingId?: string): TileCoord[] => [
+    NURSERY_TILE,
+    ...habitats.entries().map((entry) => entry.tile),
+    ...occupiedSiteTiles.values(),
+    ...Array.from(transitTiles.entries())
+      .filter(([id]) => id !== movingId)
+      .map(([, entry]) => entry.tile),
+  ];
+
+  const stepFromPort = (port: Port): TileCoord => {
+    if (port.facing === 'north') return { x: port.tile.x, z: port.tile.z - 1 };
+    if (port.facing === 'south') return { x: port.tile.x, z: port.tile.z + 1 };
+    if (port.facing === 'east') return { x: port.tile.x + 1, z: port.tile.z };
+    return { x: port.tile.x - 1, z: port.tile.z };
+  };
+
+  const portsForTransit = (movingId?: string): Port[] => {
+    const ports: Port[] = [getNurseryPorts().outboundDock];
+    for (const entry of habitats.entries()) ports.push(getHabitatPorts(entry.id, entry.habitatId, entry.tile).approachDock);
+    for (const [id, entry] of transitTiles) {
+      if (id === movingId) continue;
+      const derived = entry.kind === 'gardenSlide' ? getSlidePorts({ id, tile: entry.tile }) : getConveyorPorts({ id, tile: entry.tile });
+      ports.push(derived.entryPort, derived.exitPort);
+    }
+    const gateTile = occupiedSiteTiles.get('colourGate');
+    if (gateTile) {
+      const gate = getColourGatePorts(gateTile);
+      ports.push(gate.inboundPort, gate.lanePorts.west, gate.lanePorts.east);
+    }
+    return ports;
+  };
+
+  const candidatePorts = (kind: PricedTransitKind, tile: TileCoord): Port[] => {
+    const derived = kind === 'gardenSlide' ? getSlidePorts({ id: 'preview', tile }) : getConveyorPorts({ id: 'preview', tile });
+    return [derived.entryPort, derived.exitPort];
+  };
+
+  const snapTransitTile = (
+    kind: PricedTransitKind,
+    pointerTile: TileCoord,
+    movingId?: string,
+  ): { tile: TileCoord; snapped: boolean } => {
+    const occupied = occupiedForTransit(movingId);
+    if (occupied.some((tile) => sameTile(tile, pointerTile))) return { tile: pointerTile, snapped: false };
+    let best: TileCoord | null = null;
+    let bestDistance = Infinity;
+    for (const port of portsForTransit(movingId)) {
+      const candidate = stepFromPort(port);
+      if (!isWithinGrid(candidate) || occupied.some((tile) => sameTile(tile, candidate))) continue;
+      if (!candidatePorts(kind, candidate).some((next) => portsJoined(next, port))) continue;
+      const distance = Math.abs(candidate.x - pointerTile.x) + Math.abs(candidate.z - pointerTile.z);
+      if (distance <= 1 && distance < bestDistance) {
+        best = candidate;
+        bestDistance = distance;
+      }
+    }
+    return best ? { tile: best, snapped: true } : { tile: pointerTile, snapped: false };
+  };
+
+  type TransitPreview = { state: 'valid' | 'invalid' | 'blocked'; message: string };
+  const transitPreview = (kind: PricedTransitKind, tile: TileCoord, movingId?: string): TransitPreview => {
+    if (!isWithinGrid(tile)) return { state: 'invalid', message: 'Choose a tile inside the garden.' };
+    const occupied = occupiedForTransit(movingId);
+    if (sameTile(tile, NURSERY_TILE)) {
+      return { state: 'blocked', message: 'Leave the Nursery clear for waiting Sprouts.' };
+    }
+    if (occupied.some((occupiedTile) => sameTile(occupiedTile, tile))) {
+      return { state: 'blocked', message: 'That tile is already holding something.' };
+    }
+    if (kind === 'gardenSlide' && !isValidAutomationSite('gardenSlide', tile, occupied)) {
+      return { state: 'invalid', message: 'Garden Slides need a path tile with room to join.' };
+    }
+    return { state: 'valid', message: 'Ready to place on this tile.' };
+  };
+
+  const announceTransitPreview = (kind: PricedTransitKind, tile: TileCoord, preview: TransitPreview, snapped: boolean): void => {
+    const message = snapped && preview.state === 'valid' ? 'Snapped to a compatible port.' : preview.message;
+    window.dispatchEvent(
+      new CustomEvent(PLACEMENT_PREVIEW_EVENT, {
+        detail: { state: preview.state, message, kind, tile },
+      }),
+    );
+  };
+
+  const previewTransit = (kind: PricedTransitKind, pointerTile: TileCoord, movingId?: string): TileCoord => {
+    const snapped = snapTransitTile(kind, pointerTile, movingId);
+    const feedback = transitPreview(kind, snapped.tile, movingId);
+    automation.previewTransitAt(kind, snapped.tile, feedback.state);
+    announceTransitPreview(kind, snapped.tile, feedback, snapped.snapped);
+    return snapped.tile;
+  };
+
+  const commitBuildAt = (tile: TileCoord): void => {
+    if (!buildMode) return;
+    if (buildMode.kind === 'transit') {
+      const snapped = snapTransitTile(buildMode.id, tile, buildMode.movingId);
+      const feedback = transitPreview(buildMode.id, snapped.tile, buildMode.movingId);
+      announceTransitPreview(buildMode.id, snapped.tile, feedback, snapped.snapped);
+      if (feedback.state !== 'valid') return;
+      if (buildMode.movingId) hooks.onMoveTransit?.(buildMode.id, buildMode.movingId, snapped.tile);
+      else hooks.onPlaceTransit?.(buildMode.id, snapped.tile);
+      exitBuildMode();
+      return;
+    }
+    const valid =
+      buildMode.kind === 'automation'
+        ? isValidAutomationSite(buildMode.id, tile, Array.from(occupiedSiteTiles.values()))
+        : isValidHabitatSite(tile, allOccupiedTiles());
+    if (!valid) return;
+    if (buildMode.kind === 'automation') hooks.onPlaceAutomation?.(buildMode.id, tile);
+    else hooks.onPlaceHabitat?.(buildMode.id, tile);
+    exitBuildMode();
+  };
 
   const canvasPoint = (event: PointerEvent): { x: number; y: number } => {
     const rect = canvas.getBoundingClientRect();
@@ -250,25 +399,16 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     if (buildMode) {
       const ground = groundPointAt(x, y, GROUND_PLANE);
       const tile = ground ? worldToTile(ground) : null;
-      const valid =
-        buildMode.kind === 'automation'
-          ? tile !== null && isValidAutomationSite(buildMode.id, tile, Array.from(occupiedSiteTiles.values()))
-          : tile !== null && isValidHabitatSite(tile, allOccupiedTiles());
       console.debug(
         '[terrarium/debug buildmode commit] ' +
           JSON.stringify({
             buildMode,
             ground,
             tile,
-            valid,
             occupied: Array.from(occupiedSiteTiles.entries()),
           }),
       );
-      if (tile && valid) {
-        if (buildMode.kind === 'automation') hooks.onPlaceAutomation?.(buildMode.id, tile);
-        else hooks.onPlaceHabitat?.(buildMode.id, tile);
-        exitBuildMode();
-      }
+      if (tile) commitBuildAt(tile);
       // Invalid tile: stay in build mode (the red-tinted ghost preview
       // already told the player why) rather than silently exiting — a tap
       // that missed should be a free retry, not a lost gesture.
@@ -285,6 +425,23 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     }
 
     if (activePointers.size === 1) {
+      const ground = groundPointAt(x, y, GROUND_PLANE);
+      const transit = ground ? automation.nearestTransitWithin(ground, HOVER_MARGIN_TILES) : null;
+      if (transit) {
+        selectedTransit = transit;
+        window.dispatchEvent(
+          new CustomEvent(PLACEMENT_PREVIEW_EVENT, {
+            detail: {
+              state: 'valid',
+              message: `${transit.kind === 'gardenSlide' ? 'Garden Slide' : 'Sprout Conveyor'} selected. Press M to move or Delete to remove.`,
+              kind: transit.kind,
+              tile: transitTiles.get(transit.id)?.tile ?? null,
+            },
+          }),
+        );
+        panPointerId = null;
+        return;
+      }
       const sproutId = pickSproutId(x, y);
       if (sproutId) {
         const visual = sprouts.get(sproutId);
@@ -312,7 +469,11 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
       const tile = ground ? worldToTile(ground) : null;
       if (tile) {
         if (buildMode.kind === 'automation') previewAutomation(buildMode.id, tile);
-        else previewHabitat(buildMode.id, tile);
+        else if (buildMode.kind === 'habitat') previewHabitat(buildMode.id, tile);
+        else {
+          buildCursorTile = tile;
+          previewTransit(buildMode.id, tile, buildMode.movingId);
+        }
       }
       return;
     }
@@ -414,11 +575,65 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     camera.zoomBy(-event.deltaY * WHEEL_ZOOM_SENSITIVITY);
   };
 
+  const handleKeyDown = (event: KeyboardEvent): void => {
+    if (event.target instanceof HTMLButtonElement) return;
+    if (buildMode) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        exitBuildMode();
+        return;
+      }
+      const directions: Record<string, TileCoord> = {
+        ArrowUp: { x: 0, z: -1 },
+        ArrowDown: { x: 0, z: 1 },
+        ArrowLeft: { x: -1, z: 0 },
+        ArrowRight: { x: 1, z: 0 },
+      };
+      const direction = directions[event.key];
+      if (direction) {
+        event.preventDefault();
+        const origin = buildCursorTile ?? (buildMode.kind === 'transit' ? GARDEN_SLIDE_TILE : { x: 8, z: 7 });
+        buildCursorTile = { x: origin.x + direction.x, z: origin.z + direction.z };
+        if (buildMode.kind === 'automation') previewAutomation(buildMode.id, buildCursorTile);
+        else if (buildMode.kind === 'habitat') previewHabitat(buildMode.id, buildCursorTile);
+        else previewTransit(buildMode.id, buildCursorTile, buildMode.movingId);
+        return;
+      }
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        if (buildCursorTile) commitBuildAt(buildCursorTile);
+      }
+      return;
+    }
+
+    if ((event.key === 'Delete' || event.key === 'Backspace') && selectedTransit) {
+      event.preventDefault();
+      const removed = selectedTransit;
+      hooks.onRemoveTransit?.(removed.kind, removed.id);
+      selectedTransit = null;
+      window.dispatchEvent(
+        new CustomEvent(PLACEMENT_PREVIEW_EVENT, {
+          detail: { state: 'valid', message: 'Removed. The Dewdrops have been returned.', kind: removed.kind, tile: null },
+        }),
+      );
+      return;
+    }
+    if (event.key.toLowerCase() === 'm' && selectedTransit) {
+      event.preventDefault();
+      const moving = selectedTransit;
+      buildCursorTile = transitTiles.get(moving.id)?.tile ?? GARDEN_SLIDE_TILE;
+      buildMode = { kind: 'transit', id: moving.kind, movingId: moving.id };
+      selectedTransit = null;
+      previewTransit(moving.kind, buildCursorTile, moving.id);
+    }
+  };
+
   canvas.addEventListener('pointerdown', handlePointerDown);
   canvas.addEventListener('pointermove', handlePointerMove);
   canvas.addEventListener('pointerup', handlePointerUp);
   canvas.addEventListener('pointercancel', handlePointerUp);
   canvas.addEventListener('wheel', handleWheel, { passive: false });
+  window.addEventListener('keydown', handleKeyDown);
 
   const screenToTile = (clientX: number, clientY: number): TileCoord | null => {
     const rect = canvas.getBoundingClientRect();
@@ -427,11 +642,23 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   };
 
   const previewAutomation = (automationId: AutomationId, tile: TileCoord): void => {
-    automation.previewAt(automationId, tile, isValidAutomationSite(automationId, tile, Array.from(occupiedSiteTiles.values())));
+    const valid = isValidAutomationSite(automationId, tile, Array.from(occupiedSiteTiles.values()));
+    automation.previewAt(automationId, tile, valid);
+    window.dispatchEvent(
+      new CustomEvent(PLACEMENT_PREVIEW_EVENT, {
+        detail: { state: valid ? 'valid' : 'invalid', message: valid ? 'Ready to place on this tile.' : 'Choose an open path tile.', kind: 'automation', tile },
+      }),
+    );
   };
 
   const previewHabitat = (habitatId: HabitatId, tile: TileCoord): void => {
-    habitats.previewAt(habitatId, tile, isValidHabitatSite(tile, allOccupiedTiles()));
+    const valid = isValidHabitatSite(tile, allOccupiedTiles());
+    habitats.previewAt(habitatId, tile, valid);
+    window.dispatchEvent(
+      new CustomEvent(PLACEMENT_PREVIEW_EVENT, {
+        detail: { state: valid ? 'valid' : 'invalid', message: valid ? 'Ready to place this home.' : 'Choose an open path tile for this home.', kind: 'habitat', tile },
+      }),
+    );
   };
 
   const enterBuildMode = (automationId: AutomationId): void => {
@@ -445,6 +672,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
       dragPointerId = null;
     }
     buildMode = { kind: 'automation', id: automationId };
+    buildCursorTile = null;
   };
 
   const enterHabitatBuildMode = (habitatId: HabitatId): void => {
@@ -456,10 +684,26 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
       dragPointerId = null;
     }
     buildMode = { kind: 'habitat', id: habitatId };
+    buildCursorTile = null;
+  };
+
+  const enterTransitBuildMode = (kind: PricedTransitKind): void => {
+    if (dragSproutId) {
+      sprouts.setDragValidity(dragSproutId, null);
+      const visual = sprouts.get(dragSproutId);
+      if (visual) visual.held = false;
+      dragSproutId = null;
+      dragPointerId = null;
+    }
+    selectedTransit = null;
+    buildCursorTile = kind === 'gardenSlide' ? GARDEN_SLIDE_TILE : { x: 8, z: 6 };
+    buildMode = { kind: 'transit', id: kind };
+    previewTransit(kind, buildCursorTile);
   };
 
   const exitBuildMode = (): void => {
     buildMode = null;
+    buildCursorTile = null;
     automation.clearPreview();
     habitats.clearPreview();
   };
@@ -470,6 +714,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     canvas.removeEventListener('pointerup', handlePointerUp);
     canvas.removeEventListener('pointercancel', handlePointerUp);
     canvas.removeEventListener('wheel', handleWheel);
+    window.removeEventListener('keydown', handleKeyDown);
   };
 
   return {
@@ -478,6 +723,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     clearAutomationPreview: automation.clearPreview,
     enterBuildMode,
     enterHabitatBuildMode,
+    enterTransitBuildMode,
     exitBuildMode,
     dispose,
   };

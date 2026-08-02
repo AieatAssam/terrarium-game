@@ -19,6 +19,7 @@ import type { SaveEnvelope } from '../../src/persistence/save';
 // no Babylon deep specifiers (same rationale as the top-of-file header).
 import { AUTOMATION_SITE_TILES } from '../../src/render/layout';
 import type { AutomationId } from '../../src/core/ids';
+import type { PricedTransitKind } from '../../src/data/transit';
 
 // Mirrors the dev-only globals src/ui/index.ts (__terrariumUIF) and
 // src/render/index.ts (__debug) attach to `window` when `isDev` is true —
@@ -186,6 +187,7 @@ export interface UiStateSnapshot {
   lastAchievementUnlocked: string | undefined;
   habitatInstanceCounts: Record<string, number>;
   habitatFullKinds: string[];
+  transitCounts: Record<PricedTransitKind, number>;
 }
 
 export async function getUiState(page: Page): Promise<UiStateSnapshot> {
@@ -201,6 +203,7 @@ export async function getUiState(page: Page): Promise<UiStateSnapshot> {
       lastAchievementUnlocked: state.lastAchievementUnlocked,
       habitatInstanceCounts: { ...state.habitatInstanceCounts },
       habitatFullKinds: Array.from(state.habitatFullKinds).sort(),
+      transitCounts: { ...state.transitCounts },
     };
   });
 }
@@ -360,6 +363,25 @@ export async function placeAutomationViaBuildMenu(page: Page, automationId: Auto
   const screen = await projectToScreen(page, { x: site.x, y: 0, z: site.z });
   await page.mouse.click(screen.x, screen.y);
   await expect.poll(async () => (await getUiState(page)).lastBuiltAutomation, { timeout: 10_000 }).toBe(automationId);
+}
+
+const TRANSIT_MENU_LABEL: Record<PricedTransitKind, string> = {
+  gardenSlide: 'Garden Slide',
+  sproutConveyor: 'Sprout Conveyor',
+};
+
+/** Places one paid transit artifact through the build menu and verifies the sim confirmed it. */
+export async function placeTransitViaBuildMenu(page: Page, kind: PricedTransitKind, tile: { x: number; z: number }): Promise<void> {
+  const toolbar = page.getByRole('toolbar', { name: 'Build menu' });
+  const button = toolbar.getByRole('button', { name: new RegExp(`^${TRANSIT_MENU_LABEL[kind]}`) });
+  await expect(button, `build menu should offer "${TRANSIT_MENU_LABEL[kind]}"`).toBeVisible();
+  const before = (await getUiState(page)).transitCounts[kind];
+  await button.click();
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  const screen = await projectToScreen(page, { x: tile.x, y: 0, z: tile.z });
+  await page.mouse.move(screen.x, screen.y);
+  await page.mouse.click(screen.x, screen.y);
+  await expect.poll(async () => (await getUiState(page)).transitCounts[kind], { timeout: 10_000 }).toBe(before + 1);
 }
 
 /**

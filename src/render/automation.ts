@@ -70,6 +70,7 @@ import {
   type PropBody,
 } from './propDims';
 import { HABITATS } from '../data/habitats';
+import type { PricedTransitKind } from '../data/transit';
 import { SPROUT_TYPES } from '../data/sproutTypes';
 import type { EventBus } from '../events/bus';
 import type { AutomationId, HabitatId, MoodId, SproutTypeId } from '../core/ids';
@@ -90,6 +91,9 @@ const SITE_CAP_WIDTH = 1.0;
 const SITE_CAP_HEIGHT = 0.68;
 const PREVIEW_CAP_WIDTH = 1.05;
 const PREVIEW_CAP_HEIGHT = 0.71;
+const PREVIEW_VALID = new Color3(0.2, 0.7, 0.3);
+const PREVIEW_INVALID = new Color3(0.6, 0.15, 0.15);
+const PREVIEW_BLOCKED = new Color3(0.85, 0.55, 0.15);
 
 // ---------------------------------------------------------------------------
 // Activity presentation constants
@@ -456,8 +460,18 @@ interface SiteMarker {
   beadLocalY: number;
 }
 
+interface TransitMarker {
+  id: string;
+  kind: PricedTransitKind;
+  mesh: Mesh;
+  bodyMaterial: PBRMetallicRoughnessMaterial;
+  capMaterial: PBRMetallicRoughnessMaterial;
+  tile: TileCoord;
+}
+
 export interface AutomationManager {
-  previewAt: (automationId: AutomationId, tile: TileCoord, valid: boolean) => void;
+  previewAt: (automationId: AutomationId, tile: TileCoord, status: boolean | 'valid' | 'invalid' | 'blocked') => void;
+  previewTransitAt: (kind: PricedTransitKind, tile: TileCoord, status: 'valid' | 'invalid' | 'blocked') => void;
   clearPreview: () => void;
   /**
    * The nearest BUILT automation site within `marginTiles` of `world`, or
@@ -470,6 +484,7 @@ export interface AutomationManager {
    * its translucent "not yet built" marker is not a valid drop target.
    */
   nearestBuiltWithin: (world: { x: number; z: number }, marginTiles: number) => AutomationId | null;
+  nearestTransitWithin: (world: { x: number; z: number }, marginTiles: number) => { id: string; kind: PricedTransitKind } | null;
   /**
    * Whether `automationId` would currently accept `sproutType` — an
    * approximation for the drag-hover tint only (mirrors habitats.ts's own
@@ -557,6 +572,64 @@ function activityOf(site: SiteMarker): SiteActivity {
 
 export function createAutomationManager(scene: Scene, bus: EventBus, shadowGenerator: ShadowGenerator): AutomationManager {
   const sites = {} as Record<AutomationId, SiteMarker>;
+  const transitMarkers = new Map<string, TransitMarker>();
+
+  const addTransitMarker = (id: string, kind: PricedTransitKind, tile: TileCoord): void => {
+    const existing = transitMarkers.get(id);
+    if (existing) {
+      existing.tile = tile;
+      const world = tileToWorld(tile);
+      existing.mesh.position.set(world.x, AUTOMATION_BODIES.gardenSlide.centreY, world.z);
+      existing.mesh.metadata = { kind: 'transit', transitKind: kind, artifactId: id, tile };
+      return;
+    }
+    const body = AUTOMATION_BODIES.gardenSlide;
+    const mesh = buildAutomationMesh(scene, `terrarium.transit.${kind}.${id}`, body);
+    const bodyMaterial = createPaintedMetalMaterial(
+      scene,
+      `terrarium.transit.${kind}.${id}.body.mat`,
+      SITE_FALLBACK_COLOR.gardenSlide.clone(),
+    );
+    bodyMaterial.alpha = 1;
+    mesh.material = bodyMaterial;
+    const cap = attachStandee(
+      scene,
+      mesh,
+      `terrarium.transit.${kind}.${id}.cap`,
+      'structure.gardenSlide.base',
+      SITE_FALLBACK_COLOR.gardenSlide,
+      SITE_CAP_WIDTH,
+      SITE_CAP_HEIGHT,
+      halfHeight(body),
+    );
+    cap.material.alpha = 1;
+    mesh.isPickable = false;
+    const world = tileToWorld(tile);
+    mesh.position.set(world.x, body.centreY, world.z);
+    mesh.metadata = { kind: 'transit', transitKind: kind, artifactId: id, tile };
+    shadowGenerator.addShadowCaster(mesh);
+    transitMarkers.set(id, { id, kind, mesh, bodyMaterial, capMaterial: cap.material, tile });
+  };
+
+  const removeTransitMarker = (id: string): void => {
+    const marker = transitMarkers.get(id);
+    if (!marker) return;
+    marker.mesh.dispose();
+    marker.bodyMaterial.dispose();
+    marker.capMaterial.dispose();
+    transitMarkers.delete(id);
+  };
+
+  const syncTransitMarkers = (
+    slides: Array<{ id: string; tile: TileCoord }> | undefined,
+    conveyors: Array<{ id: string; tile: TileCoord }> | undefined,
+  ): void => {
+    const next = new Map<string, { kind: PricedTransitKind; tile: TileCoord }>();
+    for (const slide of slides ?? []) next.set(slide.id, { kind: 'gardenSlide', tile: slide.tile });
+    for (const conveyor of conveyors ?? []) next.set(conveyor.id, { kind: 'sproutConveyor', tile: conveyor.tile });
+    for (const id of transitMarkers.keys()) if (!next.has(id)) removeTransitMarker(id);
+    for (const [id, marker] of next) addTransitMarker(id, marker.kind, marker.tile);
+  };
 
   // Shared across every automation site (there are only three, but this is the
   // "shared PBR materials, not one texture set per object" rule and it keeps
@@ -850,6 +923,11 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
   const unsubscribers = [
     bus.subscribe('automation:built', (e) => markBuilt(e.automationId, e.siteTile, e.targetHabitatId ?? null)),
 
+    bus.subscribe('transit:slideBuilt', (e) => addTransitMarker(e.slide.id, 'gardenSlide', e.slide.tile)),
+    bus.subscribe('transit:conveyorBuilt', (e) => addTransitMarker(e.conveyor.id, 'sproutConveyor', e.conveyor.tile)),
+    bus.subscribe('transit:artifactMoved', (e) => addTransitMarker(e.artifactId, e.artifactKind, e.tile)),
+    bus.subscribe('transit:artifactRemoved', (e) => removeTransitMarker(e.artifactId)),
+
     bus.subscribe('automation:colourGateRuleChanged', (e) => applyGateRule(e.lanes)),
 
     bus.subscribe('automation:moodBellRuleChanged', (e) => {
@@ -864,6 +942,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     // placement) — an unlocked-but-unplaced automation has nothing to mark
     // built yet.
     bus.subscribe('save:loaded', (e) => {
+      syncTransitMarkers(e.snapshot.slides, e.snapshot.conveyors);
       for (const instanceId of e.snapshot.fullHabitatInstances ?? []) fullHabitatInstances.add(instanceId);
       for (const instance of e.snapshot.habitatInstances ?? []) registerHabitatInstance(instance.habitatId, instance.id);
       const targets = e.snapshot.automationTargets ?? {};
@@ -1086,36 +1165,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
   let previewMesh: Mesh | undefined;
   let previewBodyMaterial: PBRMetallicRoughnessMaterial | undefined;
   let previewCap: FlatCap | undefined;
-
-  const previewAt = (automationId: AutomationId, tile: TileCoord, valid: boolean): void => {
-    clearPreview();
-    const world = tileToWorld(tile);
-    const mesh = buildAutomationMesh(scene, 'terrarium.automation.preview', AUTOMATION_PREVIEW_BODY);
-    mesh.position.set(world.x, AUTOMATION_PREVIEW_BODY.centreY, world.z);
-    mesh.isPickable = false;
-    const tint = valid ? new Color3(0.2, 0.7, 0.3) : new Color3(0.6, 0.15, 0.15);
-    const bodyMaterial = createPaintedMetalMaterial(scene, 'terrarium.automation.preview.body.mat', SITE_FALLBACK_COLOR[automationId]);
-    bodyMaterial.alpha = 0.55;
-    bodyMaterial.emissiveColor = tint;
-    mesh.material = bodyMaterial;
-
-    const cap = attachStandee(
-      scene,
-      mesh,
-      'terrarium.automation.preview.cap',
-      `structure.${automationId}.base`,
-      SITE_FALLBACK_COLOR[automationId],
-      PREVIEW_CAP_WIDTH,
-      PREVIEW_CAP_HEIGHT,
-      halfHeight(AUTOMATION_PREVIEW_BODY),
-    );
-    cap.material.alpha = 0.55;
-    cap.material.emissiveColor = tint;
-
-    previewMesh = mesh;
-    previewBodyMaterial = bodyMaterial;
-    previewCap = cap;
-  };
+  let previewKey: string | undefined;
 
   const clearPreview = (): void => {
     previewMesh?.dispose(); // recursively disposes the cap child mesh too
@@ -1124,6 +1174,58 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     previewMesh = undefined;
     previewBodyMaterial = undefined;
     previewCap = undefined;
+    previewKey = undefined;
+  };
+
+  const ensurePreview = (key: string, artId: AutomationId): void => {
+    if (previewMesh && previewBodyMaterial && previewCap && previewKey === key) return;
+    clearPreview();
+    const mesh = buildAutomationMesh(scene, 'terrarium.automation.preview', AUTOMATION_PREVIEW_BODY);
+    mesh.isPickable = false;
+    const bodyMaterial = createPaintedMetalMaterial(
+      scene,
+      'terrarium.automation.preview.body.mat',
+      SITE_FALLBACK_COLOR[artId].clone(),
+    );
+    bodyMaterial.alpha = 0.55;
+    mesh.material = bodyMaterial;
+    const cap = attachStandee(
+      scene,
+      mesh,
+      'terrarium.automation.preview.cap',
+      `structure.${artId}.base`,
+      SITE_FALLBACK_COLOR[artId],
+      PREVIEW_CAP_WIDTH,
+      PREVIEW_CAP_HEIGHT,
+      halfHeight(AUTOMATION_PREVIEW_BODY),
+    );
+    cap.material.alpha = 0.55;
+    previewMesh = mesh;
+    previewBodyMaterial = bodyMaterial;
+    previewCap = cap;
+    previewKey = key;
+  };
+
+  const updatePreview = (tile: TileCoord, status: 'valid' | 'invalid' | 'blocked'): void => {
+    if (!previewMesh || !previewBodyMaterial || !previewCap) return;
+    const world = tileToWorld(tile);
+    previewMesh.position.set(world.x, AUTOMATION_PREVIEW_BODY.centreY, world.z);
+    const tint = status === 'valid' ? PREVIEW_VALID : status === 'blocked' ? PREVIEW_BLOCKED : PREVIEW_INVALID;
+    previewBodyMaterial.emissiveColor.copyFrom(tint);
+    previewCap.material.emissiveColor.copyFrom(tint);
+    previewMesh.scaling.setAll(status === 'blocked' ? 1.08 : status === 'invalid' ? 0.96 : 1);
+  };
+
+  const previewAt = (automationId: AutomationId, tile: TileCoord, status: boolean | 'valid' | 'invalid' | 'blocked'): void => {
+    ensurePreview(`automation:${automationId}`, automationId);
+    updatePreview(tile, typeof status === 'boolean' ? (status ? 'valid' : 'invalid') : status);
+  };
+
+  const previewTransitAt = (kind: PricedTransitKind, tile: TileCoord, status: 'valid' | 'invalid' | 'blocked'): void => {
+    // Temporary shared Garden Slide art keeps 7.6 about placement feedback;
+    // dedicated conveyor identity belongs to the visual pass in 7.7.
+    ensurePreview(`transit:${kind}`, 'gardenSlide');
+    updatePreview(tile, status);
   };
 
   const nearestBuiltWithin = (world: { x: number; z: number }, marginTiles: number): AutomationId | null => {
@@ -1140,6 +1242,21 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       if (d <= limit && d < bestDist) {
         bestDist = d;
         best = id;
+      }
+    }
+    return best;
+  };
+
+  const nearestTransitWithin = (world: { x: number; z: number }, marginTiles: number): { id: string; kind: PricedTransitKind } | null => {
+    let best: { id: string; kind: PricedTransitKind } | null = null;
+    let bestDist = Infinity;
+    for (const marker of transitMarkers.values()) {
+      const centre = tileToWorld(marker.tile);
+      const distance = Math.hypot(world.x - centre.x, world.z - centre.z);
+      const limit = footprintRadius(AUTOMATION_BODIES.gardenSlide) + marginTiles;
+      if (distance <= limit && distance < bestDist) {
+        bestDist = distance;
+        best = { id: marker.id, kind: marker.kind };
       }
     }
     return best;
@@ -1174,9 +1291,15 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       site.beadMaterial.dispose();
       site.waitMaterial.dispose();
     }
+    for (const marker of transitMarkers.values()) {
+      marker.mesh.dispose();
+      marker.bodyMaterial.dispose();
+      marker.capMaterial.dispose();
+    }
+    transitMarkers.clear();
   };
 
-  return { previewAt, clearPreview, nearestBuiltWithin, matchesSprout, dispose };
+  return { previewAt, previewTransitAt, clearPreview, nearestBuiltWithin, nearestTransitWithin, matchesSprout, dispose };
 }
 
 /** Whether a tile is free for an automation build (inside grid, not on the reserved nursery/habitat/path/other-site layout). Exposed for input's ghost-preview validity check. */

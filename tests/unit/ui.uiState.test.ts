@@ -53,6 +53,32 @@ describe('uiState store', () => {
     expect(store.getState().lastBuiltAutomation).toBe('gardenSlide');
   });
 
+  it('tracks paid transit counts, refunds, and save hydration', () => {
+    const bus = new EventBus();
+    const store = createUiStateStore(bus);
+    bus.emit({ type: 'transit:slideBuilt', slide: { id: 'slide-1', tile: { x: 8, z: 7 }, acceptedKind: 'any', destination: 'sunflowerMeadow', enabled: true, builtAtTick: 0 }, entryPort: { ownerId: 'slide-1', kind: 'entry', tile: { x: 8, z: 7 }, facing: 'south', compatibility: 'transit' }, exitPort: { ownerId: 'slide-1', kind: 'exit', tile: { x: 8, z: 7 }, facing: 'north', compatibility: 'transit' } });
+    bus.emit({ type: 'transit:conveyorBuilt', conveyor: { id: 'conveyor-1', tile: { x: 7, z: 8 }, builtAtTick: 0 }, entryPort: { ownerId: 'conveyor-1', kind: 'entry', tile: { x: 7, z: 8 }, facing: 'south', compatibility: 'transit' }, exitPort: { ownerId: 'conveyor-1', kind: 'exit', tile: { x: 7, z: 8 }, facing: 'north', compatibility: 'transit' } });
+    expect(store.getState().transitCounts).toEqual({ gardenSlide: 1, sproutConveyor: 1 });
+    bus.emit({ type: 'transit:artifactRemoved', artifactId: 'conveyor-1', artifactKind: 'sproutConveyor', refund: 15 });
+    expect(store.getState().transitCounts.sproutConveyor).toBe(0);
+
+    bus.emit({
+      type: 'save:loaded',
+      offlineSeconds: 0,
+      offlineDewdrops: 0,
+      snapshot: {
+        dewdrops: 100,
+        unlockedAutomations: ['gardenSlide'],
+        upgradeLevels: {},
+        unlockedAchievements: [],
+        journalDiscovered: [],
+        slides: [{ id: 'slide-2', tile: { x: 7, z: 6 } }, { id: 'slide-3', tile: { x: 9, z: 6 } }],
+        conveyors: [{ id: 'conveyor-2', tile: { x: 7, z: 9 } }],
+      },
+    });
+    expect(store.getState().transitCounts).toEqual({ gardenSlide: 2, sproutConveyor: 1 });
+  });
+
   it('starts with the three original habitat instances and no full kind', () => {
     const store = createUiStateStore(new EventBus());
     const state = store.getState();

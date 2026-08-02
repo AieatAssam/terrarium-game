@@ -75,6 +75,7 @@ const ui = mountUI(document.body, bus, {
   // pointer tracking and placement commit, so these just forward.
   onEnterBuildMode: (automationId) => inputHandle?.enterBuildMode(automationId),
   onEnterHabitatBuildMode: (habitatId) => inputHandle?.enterHabitatBuildMode(habitatId),
+  onEnterTransitBuildMode: (kind) => inputHandle?.enterTransitBuildMode(kind),
   onExitBuildMode: () => inputHandle?.exitBuildMode(),
   debug: {
     spawnSprout: (sproutType) => {
@@ -105,6 +106,27 @@ void bootstrap(root).then((result) => {
       },
       onPlaceHabitat: (habitatId, tile) => {
         void simRuntimePromise.then((sim) => sim.placeHabitat(habitatId, tile));
+      },
+      onPlaceTransit: (kind, tile) => {
+        void simRuntimePromise.then((sim) => {
+          if (kind === 'gardenSlide') {
+            // Destination configuration is the next transit phase; 7.6 keeps
+            // the paid placement flow focused on the shared path surface.
+            sim.placeSlide({ tile, destination: 'sunflowerMeadow' });
+          } else sim.placeConveyor(tile);
+        });
+      },
+      onMoveTransit: (kind, id, tile) => {
+        void simRuntimePromise.then((sim) => {
+          if (kind === 'gardenSlide') sim.moveSlide(id, tile);
+          else sim.moveConveyor(id, tile);
+        });
+      },
+      onRemoveTransit: (kind, id) => {
+        void simRuntimePromise.then((sim) => {
+          if (kind === 'gardenSlide') sim.removeSlide(id);
+          else sim.removeConveyor(id);
+        });
       },
     });
     inputHandle = input;
