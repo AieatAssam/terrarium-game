@@ -14,7 +14,7 @@ import type { GameEvent } from '../events/types';
 import { computeOfflineProgress } from '../data/offlineProgress';
 import { getNurseryRhythm, pickMood } from '../data/spawning';
 import { clearSave, loadGame, saveGame } from '../persistence';
-import { habitatAtTile, NURSERY_TILE, type ColourGateLane, type ColourGateLanes } from './layout';
+import { NURSERY_TILE, type ColourGateLane, type ColourGateLanes } from './layout';
 import { advanceClock, createSimClock } from './loop';
 import type { TileCoord } from './grid';
 import { createInitialSimState, type SimState } from './state';
@@ -26,8 +26,10 @@ import {
   colourGateBehavioralState,
   colourGateLaneNote,
   countWaitingSprouts,
+  habitatInstanceAtTile,
   moodBellBehavioralState,
   placeAutomation as placeAutomationSystem,
+  placeHabitat as placeHabitatSystem,
   purchaseUpgrade as purchaseUpgradeSystem,
   setColourGateLane as setColourGateLaneSystem,
   setMoodBellRule as setMoodBellRuleSystem,
@@ -60,6 +62,14 @@ export interface SimRuntime {
    */
   placeAutomation: (automationId: AutomationId, tile: TileCoord) => void;
   /**
+   * Player commits building a NEW habitat of an existing kind (Phase 2,
+   * plan.yaml Phase 2.2). Same plain-function reasoning as `placeAutomation`:
+   * no player-intent event in the GameEvent union, and the gates (full-now,
+   * affordability, valid site) all live in `placeHabitat`,
+   * src/sim/systems.ts — no-ops on any unmet gate.
+   */
+  placeHabitat: (habitatId: HabitatId, tile: TileCoord) => void;
+  /**
    * The Colour Gate's control surface, exposed as plain functions for exactly
    * the reason `purchaseUpgrade` is (see docs/ARCHITECTURE.md): the GameEvent
    * union is sim-originated announcements, there is no player-intent event, and
@@ -88,18 +98,16 @@ export interface SimRuntime {
 }
 
 /**
- * Habitats sitting at capacity right now. Needed in the `save:loaded` snapshot
- * because `habitat:full` only ever fires on the tick a habitat reaches
- * capacity — after a reload nothing downstream would otherwise know a home is
- * already full, and the renderer uses exactly that to show a Garden Slide as
- * blocked instead of idle (GameRules §9.7).
+ * Habitat INSTANCES sitting at capacity right now (Phase 2 — instance ids,
+ * not kinds). Needed in the `save:loaded` snapshot because `habitat:full`
+ * only ever fires on the tick a habitat reaches capacity — after a reload
+ * nothing downstream would otherwise know a home is already full, and the
+ * renderer uses exactly that to show a Garden Slide as blocked instead of
+ * idle (GameRules §9.7).
  */
-function fullHabitatsOf(state: SimState): HabitatId[] {
+function fullHabitatsOf(state: SimState): string[] {
   const capacityLevel = state.upgradeLevels.habitatCapacity ?? 0;
-  return (Object.keys(state.habitats) as HabitatId[]).filter((id) => {
-    const habitat = state.habitats[id];
-    return habitat !== undefined && habitat.count >= getEffectiveHabitatCapacity(id, capacityLevel);
-  });
+  return state.habitats.filter((h) => h.count >= getEffectiveHabitatCapacity(h.habitatId, capacityLevel)).map((h) => h.id);
 }
 
 /**
@@ -180,19 +188,22 @@ export async function startSimRuntime(
         upgradeLevels: state.upgradeLevels,
         unlockedAchievements: state.unlockedAchievements,
         journalDiscovered: state.journalDiscovered,
-        fullHabitats: fullHabitatsOf(state),
+        fullHabitatInstances: fullHabitatsOf(state),
         automationTargets: automationTargetsOf(state),
         automationSites: automationSitesOf(state),
-        sprouts: state.sprouts.map((s) => ({
-          id: s.id,
-          sproutType: s.sproutType,
-          mood: s.mood,
-          tile: s.tile,
-          settled: s.state === 'settled',
-          // SproutInstance has no explicit "which home" field — a settled
-          // Sprout's habitat is implied by the tile it was moved to.
-          habitatId: s.state === 'settled' ? (habitatAtTile(s.tile) ?? undefined) : undefined,
-        })),
+        habitatInstances: state.habitats.map((h) => ({ id: h.id, habitatId: h.habitatId, tile: h.tile, count: h.count })),
+        sprouts: state.sprouts.map((s) => {
+          const instance = s.state === 'settled' ? habitatInstanceAtTile(state.habitats, s.tile) : null;
+          return {
+            id: s.id,
+            sproutType: s.sproutType,
+            mood: s.mood,
+            tile: s.tile,
+            settled: s.state === 'settled',
+            habitatId: instance?.habitatId,
+            habitatInstanceId: instance?.id,
+          };
+        }),
         colourGateLanes: { ...state.colourGateLanes },
         moodBellRule: state.moodBellRule,
         // Recomputed here rather than read from `nurseryWaitingCount` (which is
@@ -259,7 +270,7 @@ export async function startSimRuntime(
     // ground) keeps going through the existing placement adjudication.
     const result = event.overAutomation
       ? adjudicateAutomationDrop(state, event.sproutId, event.overAutomation)
-      : adjudicatePlacement(state, event.sproutId, event.overHabitat);
+      : adjudicatePlacement(state, event.sproutId, event.overHabitatInstance ?? null);
     state = commit(emit, result.state, result.events);
   });
 
@@ -296,6 +307,10 @@ export async function startSimRuntime(
     },
     placeAutomation: (automationId, tile) => {
       const result = placeAutomationSystem(state, automationId, tile);
+      state = commit(emit, result.state, result.events);
+    },
+    placeHabitat: (habitatId, tile) => {
+      const result = placeHabitatSystem(state, habitatId, tile);
       state = commit(emit, result.state, result.events);
     },
     getUpgradeLockReason: (upgradeId) =>

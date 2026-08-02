@@ -23,7 +23,7 @@ import { createInitialSimState, type SimState } from '../../src/sim/state';
 import { adjudicatePlacement, countWaitingSprouts, spawnSystem, TICK_SYSTEMS } from '../../src/sim/systems';
 import { runTick } from '../../src/sim/tick';
 import { TICK_MS } from '../../src/sim/loop';
-import { NURSERY_TILE } from '../../src/sim/layout';
+import { HABITAT_TILES, NURSERY_TILE } from '../../src/sim/layout';
 import {
   BASE_POD_SPAWN_INTERVAL_MS,
   NURSERY_EASE_THRESHOLD,
@@ -36,6 +36,17 @@ import { UNLOCK_THRESHOLDS } from '../../src/data/unlocks';
 import type { GameEvent } from '../../src/events/types';
 
 const CAP = HABITATS.emberNook.baseCapacity;
+
+/** Every kind at full capacity, as its original instance (Phase 2 instance model). */
+function allHabitatsFull(): SimState['habitats'] {
+  return (Object.keys(HABITATS) as (keyof typeof HABITATS)[]).map((habitatId) => ({
+    id: `${habitatId}-1`,
+    habitatId,
+    tile: HABITAT_TILES[habitatId],
+    count: CAP,
+    builtAtTick: 0,
+  }));
+}
 
 /** A state already holding `count` idle Sprouts at the Nursery. */
 function waiting(count: number, overrides: Partial<SimState> = {}): SimState {
@@ -215,11 +226,7 @@ describe('recovery is never punished', () => {
     // earning Dewdrops, and more room restarts everything.
     let state: SimState = {
       ...waiting(NURSERY_REST_THRESHOLD),
-      habitats: {
-        emberNook: { id: 'emberNook', count: CAP, capacity: CAP },
-        dewPond: { id: 'dewPond', count: CAP, capacity: CAP },
-        sunflowerMeadow: { id: 'sunflowerMeadow', count: CAP, capacity: CAP },
-      },
+      habitats: allHabitatsFull(),
     };
     expect(runSpawn(state, TICKS_PER_INTERVAL * 10).spawned).toBe(0);
 
@@ -229,7 +236,7 @@ describe('recovery is never punished', () => {
     const toSettle = NURSERY_REST_THRESHOLD - NURSERY_EASE_THRESHOLD + 1;
     let settled = 0;
     for (const sprout of state.sprouts.slice(0, toSettle)) {
-      const result = adjudicatePlacement(state, sprout.id, 'emberNook');
+      const result = adjudicatePlacement(state, sprout.id, 'emberNook-1');
       if (result.events.some((e) => e.type === 'sprout:settled')) settled += 1;
       state = result.state;
     }
@@ -249,11 +256,7 @@ describe('the 768-Sprout regression', () => {
     // nothing can ever be delivered. Previously this grew without limit.
     let state: SimState = {
       ...createInitialSimState(11),
-      habitats: {
-        emberNook: { id: 'emberNook', count: CAP, capacity: CAP },
-        dewPond: { id: 'dewPond', count: CAP, capacity: CAP },
-        sunflowerMeadow: { id: 'sunflowerMeadow', count: CAP, capacity: CAP },
-      },
+      habitats: allHabitatsFull(),
     };
     let previousPopulation = 0;
     let everShrank = false;

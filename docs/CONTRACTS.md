@@ -101,13 +101,14 @@ type AchievementId =
 type GameEvent =
   | { type: 'sprout:spawned'; sproutId: string; sproutType: SproutTypeId; mood: MoodId; podId: string }
   | { type: 'sprout:pickedUp'; sproutId: string }
-  | { type: 'sprout:dropped'; sproutId: string; overHabitat: HabitatId | null; overAutomation?: AutomationId | null }
-  | { type: 'sprout:placed:correct'; sproutId: string; habitatId: HabitatId }
-  | { type: 'sprout:placed:incorrect'; sproutId: string; habitatId: HabitatId }
-  | { type: 'sprout:settled'; sproutId: string; habitatId: HabitatId }
+  | { type: 'sprout:dropped'; sproutId: string; overHabitat: HabitatId | null; overHabitatInstance: string | null; overAutomation?: AutomationId | null }
+  | { type: 'sprout:placed:correct'; sproutId: string; habitatId: HabitatId; habitatInstanceId: string }
+  | { type: 'sprout:placed:incorrect'; sproutId: string; habitatId: HabitatId; habitatInstanceId: string }
+  | { type: 'sprout:settled'; sproutId: string; habitatId: HabitatId; habitatInstanceId: string }
   | { type: 'sprout:automationDeclined'; sproutId: string; automationId: AutomationId; reason: 'notBuilt' | 'busy' | 'noRoute' | 'wrongKind' | 'destinationFull' }
-  | { type: 'habitat:dewdropTick'; habitatId: HabitatId; amount: number }
-  | { type: 'habitat:full'; habitatId: HabitatId }
+  | { type: 'habitat:dewdropTick'; habitatId: HabitatId; habitatInstanceId: string; amount: number }
+  | { type: 'habitat:full'; habitatId: HabitatId; habitatInstanceId: string }
+  | { type: 'habitat:built'; habitatId: HabitatId; habitatInstanceId: string; tile: TileCoord; cost: number }
   | { type: 'currency:dewdropsChanged'; total: number; delta: number }
   | { type: 'sprout:transportStarted'; sproutId: string; automationId: AutomationId; instanceId: string; fromTile: TileCoord; toTile: TileCoord; durationMs: number }
   | { type: 'sprout:transportCompleted'; sproutId: string; automationId: AutomationId; instanceId: string }
@@ -128,10 +129,11 @@ interface SaveLoadedSnapshot {
   upgradeLevels: Partial<Record<UpgradeId, number>>;
   unlockedAchievements: AchievementId[];
   journalDiscovered: SproutTypeId[];
-  fullHabitats?: HabitatId[];
+  fullHabitatInstances?: string[];
   automationTargets?: Partial<Record<AutomationId, HabitatId>>;
   automationSites?: Partial<Record<AutomationId, TileCoord>>;
-  sprouts?: { id: string; sproutType: SproutTypeId; mood: MoodId; tile: TileCoord; settled: boolean; habitatId?: HabitatId }[];
+  habitatInstances?: { id: string; habitatId: HabitatId; tile: TileCoord; count: number }[];
+  sprouts?: { id: string; sproutType: SproutTypeId; mood: MoodId; tile: TileCoord; settled: boolean; habitatId?: HabitatId; habitatInstanceId?: string }[];
   colourGateLanes?: { west: SproutTypeId | null; east: SproutTypeId | null };
   moodBellRule?: MoodId;
   nurseryRhythm?: 'lively' | 'easing' | 'resting';
@@ -170,8 +172,8 @@ downstream could not do its job without them. See the doc comments in
   `sprout:transportStarted` to infer a destination from.
 - **`save:loaded.snapshot`** — full restored-state snapshot so UI-side stores can
   hydrate on load rather than only mirroring live events going forward (see
-  docs/QA_REPORT.md finding #8). `snapshot.fullHabitats` was added alongside
-  `targetHabitatId`: `habitat:full` fires only on the exact tick a habitat
+  docs/QA_REPORT.md finding #8). `snapshot.fullHabitatInstances` was added
+  alongside `targetHabitatId`: `habitat:full` fires only on the exact tick a habitat
   *reaches* capacity, so after a reload nothing downstream would otherwise know a
   home is already full. It is carried in the snapshot rather than by replaying
   `habitat:full` on load, because replaying it would also replay its SFX and
@@ -311,6 +313,46 @@ automation is now player-PLACED, not auto-built the moment it unlocks.
   v4->v5 migration backfills it from the OLD fixed `AUTOMATION_SITE_TILES`
   default — the true historical value, since a v4 save's automations were
   always built there.
+
+### Members added for buildable habitats (2026-08-02 GameRules §10.0, plan.yaml Phase 2)
+
+Phase 2 lets the player build an ADDITIONAL habitat of an existing kind
+(originals stay `HABITAT_TILES`, player-built copies are placed anywhere valid
+on the path network). This adopts the same instance model automations already
+use: `HabitatId` stays the closed 3-kind union ("what kind is it?"), and each
+standing home is a `HabitatInstance` (id `'<kind>-<n>'`, tile, count, builtAtTick).
+
+- **`habitat:built`** — player committed a new habitat of an existing kind.
+  `habitatId` is the kind; `habitatInstanceId` is the concrete new home at
+  `tile`, starting empty; `cost` is what was deducted. The renderer creates a
+  fresh habitat visual here. Rides from already-built automations begin serving
+  the new instance on their next dispatch.
+- **`sprout:dropped.overHabitatInstance`** — which concrete home a drop landed
+  on. With player-built copies, the kind alone is ambiguous, so the sim
+  adjudicates against the exact instance. **`sprout:placed:correct` /
+  `sprout:placed:incorrect` / `sprout:settled` / `habitat:dewdropTick` /
+  `habitat:full`** all likewise gained a `habitatInstanceId` field.
+- **`save:loaded.snapshot.habitatInstances`** — every standing instance in the
+  restored save (originals + player-built). A restored save replays no
+  `habitat:built` and the originals' meshes are created at startup, so without
+  this the renderer would not know WHERE player-built copies stand. Carried
+  alongside `fullHabitatInstances` (instance ids, replacing the old
+  `fullHabitats` kind list so the sim can rebuild the full-now gate per kind).
+- **`placeHabitat(habitatId, tile)`** — new plain function on `SimRuntime`,
+  mirroring `placeAutomation`. Single source of truth for the gates (never the
+  client): (1) FULL-NOW — at least one existing instance of the kind is
+  currently at capacity; (2) AFFORDABLE — `state.dewdrops >= habitatBuildCost`,
+  an escalating curve (2nd = 500, 3rd = 950, 4th = 1805, see
+  `src/data/habitats.ts`); (3) VALID SITE — `isValidHabitatSite`. Cost is
+  deducted in full on commit. The build menu (src/ui/components/buildMenu.ts)
+  shows a button per full kind with the live cost; the input layer's habitat
+  build mode drives the ghost preview (valid/invalid per `isValidHabitatSite`)
+  and click-to-commit.
+- **`SIM_SHAPE_VERSION`/`CURRENT_SAVE_VERSION` 5 -> 6**: `SimState.habitats`
+  is now `HabitatInstance[]` (was `Record<HabitatId, { count: number }>`).
+  `src/persistence/save.ts`'s v5->v6 migration rebuilds the array from the old
+  kind-keyed record plus `HABITAT_TILES` (counts preserved, originals at their
+  fixed tiles, `builtAtTick: 0`).
 
 ## Simulation boundary
 

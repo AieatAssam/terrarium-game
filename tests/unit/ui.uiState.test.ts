@@ -53,6 +53,66 @@ describe('uiState store', () => {
     expect(store.getState().lastBuiltAutomation).toBe('gardenSlide');
   });
 
+  it('starts with the three original habitat instances and no full kind', () => {
+    const store = createUiStateStore(new EventBus());
+    const state = store.getState();
+    expect(state.habitatInstanceCounts).toEqual({ emberNook: 1, dewPond: 1, sunflowerMeadow: 1 });
+    expect(state.habitatFullKinds.size).toBe(0);
+  });
+
+  it('increments the kind count on habitat:built and marks the kind buildable on habitat:full', () => {
+    const bus = new EventBus();
+    const store = createUiStateStore(bus);
+    bus.emit({ type: 'habitat:full', habitatId: 'emberNook', habitatInstanceId: 'emberNook-1' });
+    expect([...store.getState().habitatFullKinds]).toEqual(['emberNook']);
+
+    bus.emit({ type: 'habitat:built', habitatId: 'emberNook', habitatInstanceId: 'emberNook-2', tile: { x: 5, z: 6 }, cost: 500 });
+    expect(store.getState().habitatInstanceCounts.emberNook).toBe(2);
+  });
+
+  it('clears the full-now gate for every kind when habitatCapacity is purchased (a capacity upgrade reopens room in all instances at once)', () => {
+    const bus = new EventBus();
+    const store = createUiStateStore(bus);
+    bus.emit({ type: 'habitat:full', habitatId: 'emberNook', habitatInstanceId: 'emberNook-1' });
+    bus.emit({ type: 'upgrade:purchased', upgradeId: 'habitatCapacity', level: 1 });
+    expect(store.getState().habitatFullKinds.size).toBe(0);
+  });
+
+  it('keeps the full-now gate across an unrelated upgrade purchase', () => {
+    const bus = new EventBus();
+    const store = createUiStateStore(bus);
+    bus.emit({ type: 'habitat:full', habitatId: 'dewPond', habitatInstanceId: 'dewPond-1' });
+    bus.emit({ type: 'upgrade:purchased', upgradeId: 'podRhythm', level: 1 });
+    expect([...store.getState().habitatFullKinds]).toEqual(['dewPond']);
+  });
+
+  it('hydrates habitat instance counts and full kinds from the save:loaded snapshot', () => {
+    const bus = new EventBus();
+    const store = createUiStateStore(bus);
+    bus.emit({
+      type: 'save:loaded',
+      offlineSeconds: 0,
+      offlineDewdrops: 0,
+      snapshot: {
+        dewdrops: 0,
+        unlockedAutomations: [],
+        upgradeLevels: {},
+        unlockedAchievements: [],
+        journalDiscovered: [],
+        habitatInstances: [
+          { id: 'emberNook-1', habitatId: 'emberNook', tile: { x: 4, z: 4 }, count: 8 },
+          { id: 'emberNook-2', habitatId: 'emberNook', tile: { x: 5, z: 6 }, count: 3 },
+          { id: 'dewPond-1', habitatId: 'dewPond', tile: { x: 12, z: 4 }, count: 0 },
+        ],
+        fullHabitatInstances: ['emberNook-1'],
+      },
+    });
+    const state = store.getState();
+    expect(state.habitatInstanceCounts.emberNook).toBe(2);
+    expect(state.habitatInstanceCounts.dewPond).toBe(1);
+    expect([...state.habitatFullKinds]).toEqual(['emberNook']);
+  });
+
   it('sets lastOfflineReturn when save:loaded reports positive offline Dewdrops', () => {
     const bus = new EventBus();
     const store = createUiStateStore(bus);

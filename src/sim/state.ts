@@ -8,7 +8,7 @@
 import type { AchievementId, AutomationId, HabitatId, MoodId, SproutTypeId, UpgradeId } from '../core/ids';
 import { INITIAL_SPAWN_ACCUMULATOR_MS, type NurseryRhythm } from '../data/spawning';
 import type { TileCoord } from './grid';
-import { defaultColourGateLanes, type ColourGateLanes } from './layout';
+import { defaultColourGateLanes, HABITAT_TILES, type ColourGateLanes } from './layout';
 
 export type SproutInstanceState = 'idle' | 'walking' | 'transporting' | 'settled';
 
@@ -21,10 +21,30 @@ export interface SproutInstance {
   state: SproutInstanceState;
 }
 
-export interface HabitatState {
-  id: HabitatId;
+/**
+ * One concrete habitat standing in the garden (Phase 2 — buildable habitats,
+ * the INSTANCE model: `HabitatId` stays the closed 3-kind union, and this
+ * layer sits under it the same way `AutomationInstance` sits under
+ * `AutomationId`). The three original homes are the first instance of each
+ * kind (`emberNook-1`, `dewPond-1`, `sunflowerMeadow-1`, `builtAtTick: 0`),
+ * seeded by `createInitialSimState`; a player builds further instances via
+ * `placeHabitat` (src/sim/systems.ts).
+ *
+ * `capacity` is deliberately NOT stored: it is always derived live from the
+ * instance's KIND via `getEffectiveHabitatCapacity`, so the garden-wide
+ * habitatCapacity upgrade can never go stale against a stored number.
+ */
+export interface HabitatInstance {
+  /** `${habitatId}-${n}` — n is 1 for the original, then 2/3/… per kind in build order. */
+  id: string;
+  /** The kind — the art/data/balance tables key on this, never on the instance. */
+  habitatId: HabitatId;
+  /** Where the structure stands. Originals sit at `HABITAT_TILES[kind]`; player-built ones on a path tile the player chose. */
+  tile: TileCoord;
+  /** Sprouts currently settled here. */
   count: number;
-  capacity: number;
+  /** Tick this instance was built — 0 for the garden's original three. */
+  builtAtTick: number;
 }
 
 export interface AutomationInstance {
@@ -57,7 +77,8 @@ export interface SimState {
   rngSeed: number;
   dewdrops: number;
   sprouts: SproutInstance[];
-  habitats: Partial<Record<HabitatId, HabitatState>>;
+  /** Every habitat standing in the garden — the three originals plus any the player built (Phase 2). */
+  habitats: HabitatInstance[];
   automations: AutomationInstance[];
   unlockedAutomations: AutomationId[];
   /** Level per purchased upgrade; absent key = not yet purchased. */
@@ -68,8 +89,8 @@ export interface SimState {
   spawnAccumulatorMs: number;
   /** Correct manual-or-automated placements ever made; gates gardenSlide's unlock. */
   correctPlacementCount: number;
-  /** Fractional Dewdrop remainder per habitat not yet flushed into `dewdrops` as a whole unit. */
-  habitatDewdropFraction: Partial<Record<HabitatId, number>>;
+  /** Fractional Dewdrop remainder per habitat INSTANCE not yet flushed into `dewdrops` as a whole unit. */
+  habitatDewdropFraction: Partial<Record<string, number>>;
   /**
    * The Colour Gate's active rule: which Sprout kind each lane of the fork
    * currently invites (`null` = "nobody yet"). Set by the player through the
@@ -104,7 +125,7 @@ export interface SimState {
   nurseryWaitingCount: number;
 }
 
-export const SIM_SHAPE_VERSION = 5;
+export const SIM_SHAPE_VERSION = 6;
 
 export function createInitialSimState(seed: number): SimState {
   return {
@@ -113,7 +134,18 @@ export function createInitialSimState(seed: number): SimState {
     rngSeed: seed,
     dewdrops: 0,
     sprouts: [],
-    habitats: {},
+    // The garden's three original homes, one instance per kind, standing at
+    // their canonical tiles (Phase 2 instance model). Seeded here rather than
+    // created lazily on first settle so "does this kind have a home at all"
+    // never depends on whether a Sprout has ever arrived, and so the v5→v6
+    // migration can rely on every kind always having at least one instance.
+    habitats: (Object.keys(HABITAT_TILES) as HabitatId[]).map((habitatId) => ({
+      id: `${habitatId}-1`,
+      habitatId,
+      tile: HABITAT_TILES[habitatId],
+      count: 0,
+      builtAtTick: 0,
+    })),
     automations: [],
     unlockedAutomations: [],
     upgradeLevels: {},

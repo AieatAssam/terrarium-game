@@ -5,7 +5,7 @@
 // advanced by the corresponding bus event, never optimistically by a click
 // handler — so the UI can never show progress the sim hasn't confirmed.
 
-import type { AchievementId, AutomationId, MoodId, SproutTypeId, UpgradeId } from '../core/ids';
+import type { AchievementId, AutomationId, HabitatId, MoodId, SproutTypeId, UpgradeId } from '../core/ids';
 import type { EventBus, GameEvent } from '../events';
 
 export interface OfflineReturnInfo {
@@ -40,6 +40,24 @@ export interface UiState {
   colourGateLanes: ColourGateLaneState;
   /** The Mood Bell's active rule — which mood it currently welcomes. */
   moodBellRule: MoodId;
+  /**
+   * Standing habitat INSTANCES per kind (Phase 2 — the three originals plus
+   * any the player built). The build menu reads this to show the escalating
+   * cost of a kind's NEXT home (habitatBuildCost). Seeded at 1 per kind by
+   * `createInitialState` because the originals always exist, then advanced by
+   * `habitat:built` and hydrated from the save:loaded snapshot.
+   */
+  habitatInstanceCounts: Partial<Record<HabitatId, number>>;
+  /**
+   * Kinds with at least one instance CURRENTLY at capacity — the full-now
+   * gate GameRules §10.0 and `placeHabitat` (src/sim/systems.ts) require
+   * before a second home of that kind may be built. The build menu shows a
+   * "build another" button per kind in this set. Tracked from `habitat:full`
+   * events plus the save:loaded snapshot's `fullHabitatInstances`; cleared
+   * when the habitatCapacity upgrade reopens room in every instance of a
+   * kind (a capacity upgrade can turn a formerly-full home un-full again).
+   */
+  habitatFullKinds: Set<HabitatId>;
   /** How briskly the Nursery pod is opening, and how many little ones are waiting. */
   nurseryRhythm: 'lively' | 'easing' | 'resting';
   waitingSproutCount: number;
@@ -70,6 +88,9 @@ function createInitialState(): UiState {
     // Matches the Bell's own safe default (src/sim/state.ts) so the panel
     // never flashes a wrong rule between mount and the first event.
     moodBellRule: 'sunny',
+    // The three originals always stand (seeded in createInitialSimState).
+    habitatInstanceCounts: { emberNook: 1, dewPond: 1, sunflowerMeadow: 1 },
+    habitatFullKinds: new Set(),
     nurseryRhythm: 'lively',
     waitingSproutCount: 0,
   };
@@ -125,6 +146,26 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
       ...prev,
       moodBellRule: event.mood,
     })),
+    on('habitat:built', (prev, event) => ({
+      ...prev,
+      habitatInstanceCounts: {
+        ...prev.habitatInstanceCounts,
+        [event.habitatId]: (prev.habitatInstanceCounts[event.habitatId] ?? 0) + 1,
+      },
+    })),
+    on('habitat:full', (prev, event) => ({
+      ...prev,
+      habitatFullKinds: new Set(prev.habitatFullKinds).add(event.habitatId),
+    })),
+    // habitatCapacity is garden-wide and strictly additive, so a purchase
+    // reopens room in EVERY instance of EVERY kind at once — the full-now
+    // gate goes false for all of them together (no instance can have a count
+    // that still exceeds the enlarged capacity).
+    on('upgrade:purchased', (prev, event) =>
+      event.upgradeId === 'habitatCapacity' && prev.habitatFullKinds.size > 0
+        ? { ...prev, habitatFullKinds: new Set() }
+        : prev,
+    ),
     on('nursery:rhythmChanged', (prev, event) => ({
       ...prev,
       nurseryRhythm: event.rhythm,
@@ -146,6 +187,11 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
       upgradeLevels: { ...event.snapshot.upgradeLevels },
       unlockedAchievements: new Set(event.snapshot.unlockedAchievements),
       journalDiscovered: new Set(event.snapshot.journalDiscovered),
+      // Rebuild instance counts + full-now gate from the restored save's own
+      // authoritative lists (the sim computed fullHabitatInstances against the
+      // same capacity level this save carries, so no capacity math here).
+      habitatInstanceCounts: instanceCountsOf(event.snapshot.habitatInstances),
+      habitatFullKinds: fullKindsOf(event.snapshot.habitatInstances, event.snapshot.fullHabitatInstances),
       lastOfflineReturn:
         event.offlineDewdrops > 0
           ? { offlineSeconds: event.offlineSeconds, offlineDewdrops: event.offlineDewdrops }
@@ -164,4 +210,33 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
       listeners.clear();
     },
   };
+}
+
+type SnapshotHabitatInstance = {
+  id: string;
+  habitatId: HabitatId;
+  count: number;
+};
+
+/** Per-kind standing instance counts from the save:loaded snapshot list. */
+function instanceCountsOf(instances: SnapshotHabitatInstance[] | undefined): Partial<Record<HabitatId, number>> {
+  const counts: Partial<Record<HabitatId, number>> = {};
+  for (const instance of instances ?? []) {
+    counts[instance.habitatId] = (counts[instance.habitatId] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/** Kinds with at least one currently-full instance, from the snapshot's own
+ * full-instance list mapped back through its instance records. */
+function fullKindsOf(
+  instances: SnapshotHabitatInstance[] | undefined,
+  fullInstanceIds: string[] | undefined,
+): Set<HabitatId> {
+  const fullIds = new Set(fullInstanceIds ?? []);
+  const kinds = new Set<HabitatId>();
+  for (const instance of instances ?? []) {
+    if (fullIds.has(instance.id)) kinds.add(instance.habitatId);
+  }
+  return kinds;
 }

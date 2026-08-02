@@ -13,6 +13,15 @@ export type GameEvent =
       sproutId: string;
       overHabitat: HabitatId | null;
       /**
+       * The habitat INSTANCE (Phase 2, buildable habitats) the drop landed
+       * on, if any — the concrete home, whose kind is `overHabitat`. The sim
+       * adjudicates against the instance; the kind alone is ambiguous once a
+       * player has built a second copy. A drop is over AT MOST one of
+       * `overHabitat`/`overAutomation`, never both, since the two are
+       * disjoint drop-target regions.
+       */
+      overHabitatInstance?: string | null;
+      /**
        * The built automation site (Garden Slide/Colour Gate) the drop landed
        * on, if any — a player putting a Sprout directly onto a helper rather
        * than waiting for it to notice one on its own (GameRules §9.1). A drop
@@ -23,9 +32,9 @@ export type GameEvent =
        */
       overAutomation?: AutomationId | null;
     }
-  | { type: 'sprout:placed:correct'; sproutId: string; habitatId: HabitatId }
-  | { type: 'sprout:placed:incorrect'; sproutId: string; habitatId: HabitatId }
-  | { type: 'sprout:settled'; sproutId: string; habitatId: HabitatId }
+  | { type: 'sprout:placed:correct'; sproutId: string; habitatId: HabitatId; habitatInstanceId: string }
+  | { type: 'sprout:placed:incorrect'; sproutId: string; habitatId: HabitatId; habitatInstanceId: string }
+  | { type: 'sprout:settled'; sproutId: string; habitatId: HabitatId; habitatInstanceId: string }
   | {
       /**
        * A drop onto a built automation site did NOT board the Sprout — the
@@ -43,8 +52,23 @@ export type GameEvent =
       automationId: AutomationId;
       reason: 'notBuilt' | 'busy' | 'noRoute' | 'wrongKind' | 'destinationFull';
     }
-  | { type: 'habitat:dewdropTick'; habitatId: HabitatId; amount: number }
-  | { type: 'habitat:full'; habitatId: HabitatId }
+  | { type: 'habitat:dewdropTick'; habitatId: HabitatId; habitatInstanceId: string; amount: number }
+  | { type: 'habitat:full'; habitatId: HabitatId; habitatInstanceId: string }
+  | {
+      type: 'habitat:built';
+      /**
+       * The player committed building a NEW habitat of an existing kind
+       * (Phase 2, plan.yaml Phase 2.2). `habitatId` is the kind; the concrete
+       * new home is `habitatInstanceId` at `tile`, starting empty. The
+       * renderer creates a fresh habitat visual here; rides from
+       * already-built automations begin serving it on their next dispatch.
+       * `cost` is what was deducted from the player's Dewdrops.
+       */
+      habitatId: HabitatId;
+      habitatInstanceId: string;
+      tile: TileCoord;
+      cost: number;
+    }
   | { type: 'currency:dewdropsChanged'; total: number; delta: number }
   | {
       type: 'sprout:transportStarted';
@@ -170,17 +194,18 @@ export type GameEvent =
         unlockedAchievements: AchievementId[];
         journalDiscovered: SproutTypeId[];
         /**
-         * Habitats that are already at capacity at load time. `habitat:full`
-         * only fires on the exact tick a habitat REACHES capacity, so after a
-         * reload there is otherwise no way for anything downstream to know a
-         * home is full — which the renderer needs in order to show a Garden
-         * Slide as blocked (GameRules §9.7) rather than merely idle. Carried in
+         * Habitat INSTANCES that are already at capacity at load time
+         * (Phase 2 — instance ids, not kinds). `habitat:full` only fires on
+         * the exact tick a habitat REACHES capacity, so after a reload there
+         * is otherwise no way for anything downstream to know a home is full
+         * — which the renderer needs in order to show a Garden Slide as
+         * blocked (GameRules §9.7) rather than merely idle. Carried in
          * the snapshot rather than by replaying `habitat:full` on load, because
          * replaying it would also replay its SFX and celebratory reactions.
          *
          * Optional so consumers/tests written before it still typecheck.
          */
-        fullHabitats?: HabitatId[];
+        fullHabitatInstances?: string[];
         /**
          * Where each built automation delivers to, for the same reason: a
          * restored save replays no `automation:built`, so without this the
@@ -205,6 +230,21 @@ export type GameEvent =
          */
         automationSites?: Partial<Record<AutomationId, TileCoord>>;
         /**
+         * Every habitat INSTANCE standing in the restored save (the three
+         * originals plus any the player built — Phase 2). A restored save
+         * replays no `habitat:built` and the originals' meshes are created at
+         * startup, so without this the renderer has no way to know WHERE the
+         * player-built copies stand (or even that they exist), and settled
+         * Sprouts could not be placed on them. Optional so consumers/tests
+         * written before it still typecheck.
+         */
+        habitatInstances?: {
+          id: string;
+          habitatId: HabitatId;
+          tile: { x: number; z: number };
+          count: number;
+        }[];
+        /**
          * Every Sprout alive in the restored save. Meshes are built from
          * `sprout:spawned`, which by definition never replays for Sprouts that
          * were already alive when the game was saved — so without this the
@@ -224,6 +264,8 @@ export type GameEvent =
           /** 'settled' Sprouts sit in their habitat; everything else waits at the Nursery. */
           settled: boolean;
           habitatId?: HabitatId;
+          /** The concrete home instance a settled Sprout sits in (Phase 2). */
+          habitatInstanceId?: string;
         }[];
         /**
          * The Colour Gate's restored rule, and the Nursery's restored rhythm.

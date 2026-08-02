@@ -328,3 +328,19 @@ export function isValidAutomationSite(automationId: AutomationId, tile: TileCoor
   if (automationId === 'colourGate') return isJunctionTile(tile);
   return true;
 }
+
+/**
+ * Whether `tile` is a legal site for a player-built habitat (Phase 2,
+ * plan.yaml Phase 2.2): on the path network (so automations' rides can
+ * actually reach it — `findPathRoute` requires both ends on the network),
+ * not the Nursery, and not already occupied by anything standing there. The
+ * caller is expected to pass EVERY occupied tile (all habitat instances +
+ * all automation site tiles) as `occupiedTiles` — this function cannot know
+ * about player-built instances itself, since the network it tests is the
+ * static original one.
+ */
+export function isValidHabitatSite(tile: TileCoord, occupiedTiles: ReadonlyArray<TileCoord>): boolean {
+  if (!PATH_TILE_KEY_SET.has(tileKeyOf(tile))) return false;
+  if (sameTile(tile, NURSERY_TILE)) return false;
+  return !occupiedTiles.some((t) => sameTile(t, tile));
+}

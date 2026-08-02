@@ -239,6 +239,11 @@ export const UI_CSS = /* css */ `
   background: color-mix(in srgb, var(--tt-panel) 60%, var(--tt-accent) 40%);
 }
 
+.tt-buildmenu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .tt-buildmenu-item svg {
   width: 24px;
   height: 24px;

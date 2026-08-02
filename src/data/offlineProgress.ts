@@ -15,7 +15,6 @@
 // See docs/GAME_DESIGN.md ("Offline progress") for the reasoning behind the
 // cap, efficiency, and ceiling below.
 
-import type { HabitatId } from '../core/ids';
 import { TICK_MS } from '../sim/loop';
 import type { SimState } from '../sim/state';
 import { HABITATS } from './habitats';
@@ -66,10 +65,9 @@ export function computeOfflineProgress(
   const creditedTicks = creditedMs / tickMs;
 
   let dewdropsPerTick = 0;
-  for (const habitatId of Object.keys(simStateAtClose.habitats) as HabitatId[]) {
-    const habitatState = simStateAtClose.habitats[habitatId];
-    if (!habitatState) continue;
-    dewdropsPerTick += habitatState.count * HABITATS[habitatId].baseDewdropRate;
+  for (const instance of simStateAtClose.habitats) {
+    if (instance.count === 0) continue;
+    dewdropsPerTick += instance.count * HABITATS[instance.habitatId].baseDewdropRate;
   }
 
   const multiplier = getDewdropMultiplier(simStateAtClose.upgradeLevels);

@@ -40,7 +40,7 @@ test.describe('persistence across reload (IndexedDB)', () => {
     expect(beforeReload.sim.dewdrops).toBeGreaterThan(0);
     expect(beforeReload.sim.correctPlacementCount).toBeGreaterThanOrEqual(3);
     expect(beforeReload.sim.journalDiscovered).toContain('ember');
-    expect(beforeReload.sim.habitats.emberNook?.count).toBe(3);
+    expect(beforeReload.sim.habitats.find((h) => h.habitatId === 'emberNook')?.count).toBe(3);
 
     await page.reload();
     await waitForDevHooks(page);
@@ -48,7 +48,7 @@ test.describe('persistence across reload (IndexedDB)', () => {
     const afterReload = await readSaveEnvelope(page);
     expect(afterReload.sim.correctPlacementCount).toBeGreaterThanOrEqual(beforeReload.sim.correctPlacementCount);
     expect(afterReload.sim.journalDiscovered).toContain('ember');
-    expect(afterReload.sim.habitats.emberNook?.count).toBeGreaterThanOrEqual(3);
+    expect(afterReload.sim.habitats.find((h) => h.habitatId === 'emberNook')?.count).toBeGreaterThanOrEqual(3);
     expect(afterReload.sim.dewdrops).toBeGreaterThanOrEqual(beforeReload.sim.dewdrops);
 
     // The reloaded sim resumed from the save (not from zero): the live HUD

@@ -273,8 +273,8 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
   // first decorative expansion (GameRules §6.6) — same pattern the Sprout and
   // automation managers below already use.
   const world = buildGardenWorld(scene, lighting.shadowGenerator, bus);
-  const habitats = createHabitatManager(scene, lighting.shadowGenerator);
-  const sprouts = createSproutManager(scene, bus);
+  const habitats = createHabitatManager(scene, lighting.shadowGenerator, bus);
+  const sprouts = createSproutManager(scene, bus, habitats);
   const automation = createAutomationManager(scene, bus, lighting.shadowGenerator);
   const stopVisibilityThrottle = installVisibilityThrottle(engine, scene);
 
@@ -317,10 +317,10 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
   // required settle channels restored by wiring, not by new design.
   const feedbackSubscriptions = [
     bus.subscribe('sprout:placed:correct', (event) => {
-      habitats.reactCorrect(event.habitatId, getMotionConfig(reducedMotion, getQualityLevel()));
+      habitats.reactCorrect(event.habitatInstanceId, getMotionConfig(reducedMotion, getQualityLevel()));
     }),
     bus.subscribe('sprout:placed:incorrect', (event) => {
-      habitats.reactIncorrect(event.habitatId, getMotionConfig(reducedMotion, getQualityLevel()));
+      habitats.reactIncorrect(event.habitatInstanceId, getMotionConfig(reducedMotion, getQualityLevel()));
     }),
     bus.subscribe('habitat:dewdropTick', (event) => {
       const motion = getMotionConfig(reducedMotion, getQualityLevel());
@@ -329,7 +329,8 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
       // without ever becoming a particle storm (GameRules §12's performance
       // guardrail, and §7.4's "never visual chaos").
       const motes = Math.max(1, Math.min(3, Math.round(event.amount)));
-      const origin = habitats.get(event.habitatId).topCenter;
+      const origin = habitats.get(event.habitatInstanceId)?.topCenter;
+      if (!origin) return;
       for (let i = 0; i < motes; i += 1) {
         createDewdropMote(
           scene,

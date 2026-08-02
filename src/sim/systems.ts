@@ -9,7 +9,7 @@ import type { AchievementId, AutomationId, HabitatId, MoodId, SproutTypeId, Upgr
 import type { GameEvent } from '../events/types';
 import { ACHIEVEMENT_LIST } from '../data/achievements';
 import { sproutMatchesHabitat, SPROUT_TYPES } from '../data/sproutTypes';
-import { getEffectiveHabitatCapacity, HABITATS } from '../data/habitats';
+import { getEffectiveHabitatCapacity, habitatBuildCost, HABITATS } from '../data/habitats';
 import { getDewdropMultiplier, UPGRADES } from '../data/upgrades';
 import {
   getNurseryPaceMultiplier,
@@ -33,9 +33,10 @@ import {
   COLOUR_GATE_LANE_LIST,
   COLOUR_GATE_TILE,
   defaultColourGateLanes,
-  habitatAtTile,
+  findPathRoute,
   HABITAT_TILES,
   isValidAutomationSite,
+  isValidHabitatSite,
   nearestReachableHabitat,
   NURSERY_TILE,
   sameTile,
@@ -43,10 +44,61 @@ import {
   type ColourGateLane,
   type ColourGateLanes,
 } from './layout';
-import type { AutomationInstance, HabitatState, SimState, SproutInstance } from './state';
+import type { AutomationInstance, HabitatInstance, SimState, SproutInstance } from './state';
 import type { TickResult } from './tick';
 
-const HABITAT_ORDER: HabitatId[] = ['emberNook', 'dewPond', 'sunflowerMeadow'];
+// ---------------------------------------------------------------------------
+// Habitat-instance helpers (Phase 2 — buildable habitats, the INSTANCE model)
+// ---------------------------------------------------------------------------
+// `state.habitats` is an array of HabitatInstance (the three originals plus
+// anything the player built). These helpers are the only sanctioned way to
+// look habitats up once instances exist — the static `habitatAtTile` in
+// src/sim/layout.ts only knows the original three.
+
+/** The habitat instance standing on `tile`, if any. */
+export function habitatInstanceAtTile(instances: readonly HabitatInstance[], tile: TileCoord): HabitatInstance | null {
+  return instances.find((h) => sameTile(h.tile, tile)) ?? null;
+}
+
+/** Whether this instance has no room left right now (capacity is always derived live from its kind). */
+function instanceIsFull(state: SimState, instance: HabitatInstance): boolean {
+  const capacity = getEffectiveHabitatCapacity(instance.habitatId, state.upgradeLevels.habitatCapacity ?? 0);
+  return instance.count >= capacity;
+}
+
+/**
+ * The NEAREST reachable instance of `habitatId` that has room, from
+ * `fromTile` over the real path network — the Phase 2 instance-aware ride
+ * rule. Both the Slide/Gate/Bell dispatch (`planRide`) and manual automation
+ * drops (`adjudicateAutomationDrop`) resolve their destination through this,
+ * so an automation serves whichever concrete home of its kind is nearest and
+ * has room right now, and starts serving a player-built instance the moment
+ * it appears. `findPathRoute` requires both ends on the network, so a
+ * built habitat is only reachable if it was placed on a path tile
+ * (`isValidHabitatSite` guarantees this at build time).
+ *
+ * Returns null when no instance of the kind has room and is reachable —
+ * exactly the "wait rather than force a rejected delivery" state.
+ *
+ * Tie-break for equidistant instances: lowest instance id, so a tie between
+ * the original and a player-built copy is deterministic across saves/replays.
+ */
+export function nearestReachableHabitatInstance(
+  state: SimState,
+  fromTile: TileCoord,
+  habitatId: HabitatId,
+): HabitatInstance | null {
+  const candidates = state.habitats
+    .filter((h) => h.habitatId === habitatId && !instanceIsFull(state, h))
+    .map((h) => {
+      const route = findPathRoute(fromTile, h.tile);
+      return route ? { instance: h, length: route.length } : null;
+    })
+    .filter((c): c is { instance: HabitatInstance; length: number } => c !== null)
+    .sort((a, b) => a.length - b.length || a.instance.id.localeCompare(b.instance.id));
+  return candidates[0]?.instance ?? null;
+}
+
 /**
  * Unupgraded ride time per tile of Manhattan distance. This is the ONLY place
  * transport pace is defined: the renderer used to hold its own copy of the same
@@ -156,23 +208,22 @@ export function spawnSystem(state: SimState): TickResult {
   };
 }
 
-/** Accrues Dewdrops from every settled Sprout, per habitat, flushing whole units as they cross 1.0 (self-throttling — no fixed timer needed). */
+/** Accrues Dewdrops from every settled Sprout, per habitat INSTANCE, flushing whole units as they cross 1.0 (self-throttling — no fixed timer needed). */
 export function dewdropSystem(state: SimState): TickResult {
   const multiplier = getDewdropMultiplier(state.upgradeLevels);
   let dewdrops = state.dewdrops;
   const fraction = { ...state.habitatDewdropFraction };
   const events: GameEvent[] = [];
 
-  for (const id of HABITAT_ORDER) {
-    const habitatState = state.habitats[id];
-    if (!habitatState || habitatState.count === 0) continue;
-    const rate = HABITATS[id].baseDewdropRate * multiplier;
-    const total = (fraction[id] ?? 0) + habitatState.count * rate;
+  for (const instance of state.habitats) {
+    if (instance.count === 0) continue;
+    const rate = HABITATS[instance.habitatId].baseDewdropRate * multiplier;
+    const total = (fraction[instance.id] ?? 0) + instance.count * rate;
     const whole = Math.floor(total);
-    fraction[id] = total - whole;
+    fraction[instance.id] = total - whole;
     if (whole > 0) {
       dewdrops += whole;
-      events.push({ type: 'habitat:dewdropTick', habitatId: id, amount: whole });
+      events.push({ type: 'habitat:dewdropTick', habitatId: instance.habitatId, habitatInstanceId: instance.id, amount: whole });
       events.push({ type: 'currency:dewdropsChanged', total: dewdrops, delta: whole });
     }
   }
@@ -260,6 +311,58 @@ export function placeAutomation(state: SimState, automationId: AutomationId, til
   };
 }
 
+/**
+ * Player commits building a NEW habitat of an existing kind (Phase 2,
+ * plan.yaml Phase 2.2, GameRules §10.0). Same shape as `placeAutomation`: a
+ * plain function the runtime exposes, since the GameEvent union has no
+ * player-intent member. No-ops (state unchanged, no events) unless EVERY
+ * gate passes — this function is the single source of truth for the gates,
+ * never the client:
+ *
+ *   1. FULL-NOW GATE: at least one existing instance of `habitatId` is
+ *      currently AT capacity (can't build an extension to a home that isn't
+ *      even full — GameRules §10.0).
+ *   2. AFFORDABLE: `state.dewdrops >= habitatBuildCost(kind, instancesOfKind)`.
+ *   3. VALID SITE: `isValidHabitatSite` (on the path network, not the
+ *      Nursery, not on top of anything already standing).
+ *
+ * The cost is deducted on commit (full amount now, no installments) and the
+ * new instance starts empty; rides from already-built automations begin
+ * serving it automatically on their next dispatch (see
+ * `nearestReachableHabitatInstance`).
+ */
+export function placeHabitat(state: SimState, habitatId: HabitatId, tile: TileCoord): TickResult {
+  const kindInstances = state.habitats.filter((h) => h.habitatId === habitatId);
+  // The garden's three originals are always present (seeded in
+  // createInitialSimState), so a kind can never have zero instances here.
+  if (kindInstances.length === 0) return { state, events: [] };
+
+  if (!kindInstances.some((h) => instanceIsFull(state, h))) return { state, events: [] }; // full-now gate
+
+  const cost = habitatBuildCost(kindInstances.length);
+  if (state.dewdrops < cost) return { state, events: [] };
+
+  const occupiedTiles = [...state.habitats.map((h) => h.tile), ...state.automations.map((a) => a.siteTile)];
+  if (!isValidHabitatSite(tile, occupiedTiles)) return { state, events: [] };
+
+  const instanceId = `${habitatId}-${kindInstances.length + 1}`;
+  const instance: HabitatInstance = {
+    id: instanceId,
+    habitatId,
+    tile,
+    count: 0,
+    builtAtTick: state.tickCount,
+  };
+
+  return {
+    state: { ...state, habitats: [...state.habitats, instance], dewdrops: state.dewdrops - cost },
+    events: [
+      { type: 'habitat:built', habitatId, habitatInstanceId: instanceId, tile, cost },
+      { type: 'currency:dewdropsChanged', total: state.dewdrops - cost, delta: -cost },
+    ],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Colour Gate routing (GameRules §9.4)
 // ---------------------------------------------------------------------------
@@ -337,12 +440,6 @@ export function colourGateLaneNote(lanes: ColourGateLanes, lane: ColourGateLane)
   return `${HABITATS[habitatId].displayName} is not home to ${SPROUT_TYPES[sproutType].displayName}s — they are looking for the ${homeName}, so the Gate is letting them wait by the pods instead.`;
 }
 
-/** True when `habitat` has no room left right now. */
-function habitatIsFull(state: SimState, habitatId: HabitatId): boolean {
-  const capacity = getEffectiveHabitatCapacity(habitatId, state.upgradeLevels.habitatCapacity ?? 0);
-  return (state.habitats[habitatId]?.count ?? 0) >= capacity;
-}
-
 // ---------------------------------------------------------------------------
 // Mood Bell routing (GameRules §9.5/§7.3/§9.6 stage 4) — a second, orthogonal
 // Sprout attribute ("mood") and a third automation that routes on it.
@@ -402,10 +499,14 @@ function findIdleAt(sprouts: SproutInstance[], tile: TileCoord, accept: (s: Spro
 /**
  * What this automation should carry next, or null if it should stay put.
  *
- * The Garden Slide is unchanged: one fixed home, one matching kind, straight
- * there. The Colour Gate has TWO dispatch paths, and checks them in this order
- * on purpose — clearing the crossroads always comes before adding to it, so
- * Sprouts never stack up at the signpost while the trunk keeps feeding it.
+ * Every automation targets a KIND and resolves the concrete INSTANCE at
+ * dispatch time (`nearestReachableHabitatInstance`), so a ride goes to
+ * whichever home of its kind is nearest and has room right now — and starts
+ * serving a player-built instance the moment it appears (Phase 2 instance
+ * model). The Colour Gate has TWO dispatch paths, and checks them in this
+ * order on purpose — clearing the crossroads always comes before adding to
+ * it, so Sprouts never stack up at the signpost while the trunk keeps
+ * feeding it.
  */
 function planRide(
   state: SimState,
@@ -417,27 +518,33 @@ function planRide(
     const sprout = findIdleAt(sprouts, NURSERY_TILE, (s) => {
       if (s.mood !== state.moodBellRule) return false;
       const dest = moodBellDestination(s.sproutType);
-      return dest !== null && !habitatIsFull(state, dest);
+      return dest !== null && nearestReachableHabitatInstance(state, NURSERY_TILE, dest) !== null;
     });
     if (!sprout) return null;
     const dest = moodBellDestination(sprout.sproutType) as HabitatId;
-    return { sprout, fromTile: NURSERY_TILE, toTile: HABITAT_TILES[dest] };
+    const target = nearestReachableHabitatInstance(state, NURSERY_TILE, dest);
+    if (!target) return null;
+    return { sprout, fromTile: NURSERY_TILE, toTile: target.tile };
   }
 
   if (instance.automationId === 'gardenSlide') {
-    const dest = instance.targetHabitatId;
-    if (!dest || habitatIsFull(state, dest)) return null; // target full — wait rather than force a rejected delivery
-    const wantType = HABITATS[dest].matchSproutType;
+    const kind = instance.targetHabitatId;
+    if (!kind) return null;
+    // Resolved from the structure's own site tile, so the Slide serves
+    // whichever instance of its kind is nearest to it — not just the original.
+    const target = nearestReachableHabitatInstance(state, instance.siteTile, kind);
+    if (!target) return null; // every reachable instance full — wait rather than force a rejected delivery
+    const wantType = HABITATS[kind].matchSproutType;
     // Excludes a Sprout the Mood Bell has claimed (see isMoodBellClaimed) —
     // once the Bell exists, a Sprout of its current mood is the Bell's, even
     // if it also matches the Slide's fixed target type.
     const sprout = findIdleAt(sprouts, NURSERY_TILE, (s) => s.sproutType === wantType && !isMoodBellClaimed(state, s));
-    return sprout ? { sprout, fromTile: NURSERY_TILE, toTile: HABITAT_TILES[dest] } : null;
+    return sprout ? { sprout, fromTile: NURSERY_TILE, toTile: target.tile } : null;
   }
 
-  const canGoOn = (s: SproutInstance): HabitatId | null => {
+  const targetFor = (s: SproutInstance): HabitatInstance | null => {
     const dest = colourGateDestination(state.colourGateLanes, s.sproutType);
-    return dest && !habitatIsFull(state, dest) ? dest : null;
+    return dest ? nearestReachableHabitatInstance(state, COLOUR_GATE_TILE, dest) : null;
   };
 
   // Leg 2: someone already standing at the Gate whose lane is open — send them on.
@@ -455,15 +562,16 @@ function planRide(
   // at the signpost started this journey before (or independent of) the
   // Bell's claim on its mood, and must be allowed to finish it — only a FRESH
   // Nursery pickup (leg 1, below) is partitioned away from the Bell.
-  const atGate = findIdleAt(sprouts, COLOUR_GATE_TILE, (s) => !justArrived.has(s.id) && canGoOn(s) !== null);
+  const atGate = findIdleAt(sprouts, COLOUR_GATE_TILE, (s) => !justArrived.has(s.id) && targetFor(s) !== null);
   if (atGate) {
-    return { sprout: atGate, fromTile: COLOUR_GATE_TILE, toTile: HABITAT_TILES[canGoOn(atGate) as HabitatId] };
+    const target = targetFor(atGate) as HabitatInstance;
+    return { sprout: atGate, fromTile: COLOUR_GATE_TILE, toTile: target.tile };
   }
 
   // Leg 1: call one forward from the Nursery — but only one the Gate can
   // actually place, so nobody is invited to a journey that ends nowhere.
   // Also excludes a Sprout the Mood Bell has claimed (see isMoodBellClaimed).
-  const atNursery = findIdleAt(sprouts, NURSERY_TILE, (s) => canGoOn(s) !== null && !isMoodBellClaimed(state, s));
+  const atNursery = findIdleAt(sprouts, NURSERY_TILE, (s) => targetFor(s) !== null && !isMoodBellClaimed(state, s));
   return atNursery ? { sprout: atNursery, fromTile: NURSERY_TILE, toTile: COLOUR_GATE_TILE } : null;
 }
 
@@ -533,32 +641,29 @@ export function transportDuration(
 }
 
 /**
- * Settles a Sprout into a habitat: marks it settled, increments the
- * habitat's count, counts it toward the manual-placement unlock threshold,
- * fires the first-sighting Journal entry if this is the first time this
- * species has ever settled, and flags `habitat:full` on the exact tick
- * capacity is reached (not on every later rejected drop — see
- * adjudicatePlacement). Shared by manual placement and automation dispatch
- * so both paths behave identically.
+ * Settles a Sprout into a habitat INSTANCE: marks it settled at the
+ * instance's own tile, increments the instance's count, counts it toward the
+ * manual-placement unlock threshold, fires the first-sighting Journal entry
+ * if this is the first time this species has ever settled, and flags
+ * `habitat:full` on the exact tick capacity is reached (not on every later
+ * rejected drop — see adjudicatePlacement). Shared by manual placement and
+ * automation dispatch so both paths behave identically.
  */
-function settleSprout(state: SimState, sproutId: string, habitatId: HabitatId): TickResult {
+function settleSprout(state: SimState, sproutId: string, habitatInstanceId: string): TickResult {
   const sprout = state.sprouts.find((s) => s.id === sproutId);
-  if (!sprout) return { state, events: [] };
+  const instance = state.habitats.find((h) => h.id === habitatInstanceId);
+  if (!sprout || !instance) return { state, events: [] };
 
   const events: GameEvent[] = [];
-  const sprouts = state.sprouts.map((s) => (s.id === sproutId ? { ...s, tile: HABITAT_TILES[habitatId], state: 'settled' as const } : s));
+  const sprouts = state.sprouts.map((s) => (s.id === sproutId ? { ...s, tile: instance.tile, state: 'settled' as const } : s));
 
-  const prevHabitatState = state.habitats[habitatId];
-  const capacity = getEffectiveHabitatCapacity(habitatId, state.upgradeLevels.habitatCapacity ?? 0);
-  const newCount = (prevHabitatState?.count ?? 0) + 1;
-  const habitats: SimState['habitats'] = {
-    ...state.habitats,
-    [habitatId]: { id: habitatId, count: newCount, capacity } satisfies HabitatState,
-  };
+  const capacity = getEffectiveHabitatCapacity(instance.habitatId, state.upgradeLevels.habitatCapacity ?? 0);
+  const newCount = instance.count + 1;
+  const habitats: SimState['habitats'] = state.habitats.map((h) => (h.id === habitatInstanceId ? { ...h, count: newCount } : h));
 
-  events.push({ type: 'sprout:placed:correct', sproutId, habitatId });
-  events.push({ type: 'sprout:settled', sproutId, habitatId });
-  if (newCount === capacity) events.push({ type: 'habitat:full', habitatId });
+  events.push({ type: 'sprout:placed:correct', sproutId, habitatId: instance.habitatId, habitatInstanceId });
+  events.push({ type: 'sprout:settled', sproutId, habitatId: instance.habitatId, habitatInstanceId });
+  if (newCount === capacity) events.push({ type: 'habitat:full', habitatId: instance.habitatId, habitatInstanceId });
 
   let journalDiscovered = state.journalDiscovered;
   if (!journalDiscovered.includes(sprout.sproutType)) {
@@ -608,9 +713,9 @@ export function automationSystem(state: SimState): TickResult {
           automationId: instance.automationId,
           instanceId: instance.id,
         });
-        const arrivedAt = habitatAtTile(instance.toTile);
-        if (arrivedAt) {
-          const result = settleSprout(working, sprout.id, arrivedAt);
+        const arrivedInstance = habitatInstanceAtTile(working.habitats, instance.toTile);
+        if (arrivedInstance) {
+          const result = settleSprout(working, sprout.id, arrivedInstance.id);
           working = result.state;
           events.push(...result.events);
         } else {
@@ -703,23 +808,36 @@ export function setMoodBellRule(state: SimState, mood: MoodId): TickResult {
 // src/sim/runtime.ts, not part of the runTick systems array.
 // ---------------------------------------------------------------------------
 
-/** Adjudicates a player's drop of a Sprout onto (or off of) a habitat. Guards against a Sprout no longer being idle (already mid-transport, or already settled) so a stray late drop can't double-place it. */
-export function adjudicatePlacement(state: SimState, sproutId: string, overHabitat: HabitatId | null): TickResult {
-  if (!overHabitat) return { state, events: [] };
+/**
+ * Adjudicates a player's drop of a Sprout onto (or off of) a habitat
+ * INSTANCE (Phase 2: `overHabitatInstance` is the concrete home the drop
+ * landed on, whose kind then decides correctness). Guards against a Sprout no
+ * longer being idle (already mid-transport, or already settled) so a stray
+ * late drop can't double-place it.
+ */
+export function adjudicatePlacement(state: SimState, sproutId: string, overHabitatInstance: string | null): TickResult {
+  if (!overHabitatInstance) return { state, events: [] };
   const sprout = state.sprouts.find((s) => s.id === sproutId);
   if (!sprout || sprout.state !== 'idle') return { state, events: [] };
 
-  if (!sproutMatchesHabitat(sprout.sproutType, overHabitat)) {
-    return { state, events: [{ type: 'sprout:placed:incorrect', sproutId, habitatId: overHabitat }] };
+  const instance = state.habitats.find((h) => h.id === overHabitatInstance);
+  if (!instance) return { state, events: [] };
+
+  if (!sproutMatchesHabitat(sprout.sproutType, instance.habitatId)) {
+    return {
+      state,
+      events: [{ type: 'sprout:placed:incorrect', sproutId, habitatId: instance.habitatId, habitatInstanceId: instance.id }],
+    };
   }
 
-  const capacity = getEffectiveHabitatCapacity(overHabitat, state.upgradeLevels.habitatCapacity ?? 0);
-  const currentCount = state.habitats[overHabitat]?.count ?? 0;
-  if (currentCount >= capacity) {
-    return { state, events: [{ type: 'sprout:placed:incorrect', sproutId, habitatId: overHabitat }] };
+  if (instanceIsFull(state, instance)) {
+    return {
+      state,
+      events: [{ type: 'sprout:placed:incorrect', sproutId, habitatId: instance.habitatId, habitatInstanceId: instance.id }],
+    };
   }
 
-  return settleSprout(state, sproutId, overHabitat);
+  return settleSprout(state, sproutId, instance.id);
 }
 
 /**
@@ -765,27 +883,38 @@ export function adjudicateAutomationDrop(state: SimState, sproutId: string, auto
 
   let toTile: TileCoord;
   if (automationId === 'gardenSlide') {
-    const dest = instance.targetHabitatId;
-    if (!dest) return decline('noRoute');
-    if (sprout.sproutType !== HABITATS[dest].matchSproutType) return decline('wrongKind');
-    if (habitatIsFull(state, dest)) return decline('destinationFull');
-    toTile = HABITAT_TILES[dest];
+    const kind = instance.targetHabitatId;
+    if (!kind) return decline('noRoute');
+    if (sprout.sproutType !== HABITATS[kind].matchSproutType) return decline('wrongKind');
+    const target = nearestReachableHabitatInstance(state, sprout.tile, kind);
+    if (!target) return decline('destinationFull');
+    toTile = target.tile;
   } else if (automationId === 'moodBell') {
     if (sprout.mood !== state.moodBellRule) return decline('wrongKind');
     const dest = moodBellDestination(sprout.sproutType);
     if (!dest) return decline('wrongKind'); // Star: no single correct habitat
-    if (habitatIsFull(state, dest)) return decline('destinationFull');
-    toTile = HABITAT_TILES[dest]; // single leg, no "which leg" split unlike the Gate
+    const target = nearestReachableHabitatInstance(state, sprout.tile, dest);
+    if (!target) return decline('destinationFull');
+    toTile = target.tile; // single leg, no "which leg" split unlike the Gate
   } else {
     const dest = colourGateDestination(state.colourGateLanes, sprout.sproutType);
     if (!dest) return decline('wrongKind');
-    if (habitatIsFull(state, dest)) return decline('destinationFull');
-    // Whichever leg this Sprout is actually due for: leg 2 (Gate -> home) if
-    // it happens to already be standing at the signpost, leg 1 (Nursery/
-    // wherever it was picked up -> Gate) otherwise — the same split
-    // `planRide` makes, keyed here to THIS Sprout's own current tile rather
-    // than a search over every idle Sprout.
-    toTile = sameTile(sprout.tile, COLOUR_GATE_TILE) ? HABITAT_TILES[dest] : COLOUR_GATE_TILE;
+    if (sameTile(sprout.tile, COLOUR_GATE_TILE)) {
+      // Leg 2: the Sprout is already standing at the signpost — send it
+      // straight on to the nearest reachable home of its lane's kind.
+      const target = nearestReachableHabitatInstance(state, sprout.tile, dest);
+      if (!target) return decline('destinationFull');
+      toTile = target.tile;
+    } else {
+      // Leg 1: Nursery (wherever it was picked up) → Gate. Verify the
+      // eventual leg-2 destination has room so the Sprout isn't invited to a
+      // journey that ends nowhere — the same split `planRide` makes, keyed
+      // here to THIS Sprout's own current tile rather than a search over
+      // every idle Sprout.
+      const target = nearestReachableHabitatInstance(state, COLOUR_GATE_TILE, dest);
+      if (!target) return decline('destinationFull');
+      toTile = COLOUR_GATE_TILE;
+    }
   }
 
   const result = beginRide(state.sprouts, state.upgradeLevels, state.tickCount, instance, sproutId, sprout.tile, toTile);

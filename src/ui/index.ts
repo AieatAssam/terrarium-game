@@ -88,6 +88,7 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
   const hud = createHud(store);
   const buildMenu = createBuildMenu(bus, store, {
     onEnterBuildMode: options.onEnterBuildMode,
+    onEnterHabitatBuildMode: options.onEnterHabitatBuildMode,
     onExitBuildMode: options.onExitBuildMode,
   });
   const toastRegion = createAchievementToastRegion(bus);

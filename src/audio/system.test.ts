@@ -126,10 +126,10 @@ describe('audio system', () => {
     system.resume();
 
     expect(() => {
-      bus.emit({ type: 'sprout:placed:correct', sproutId: 's1', habitatId: 'emberNook' });
-      bus.emit({ type: 'sprout:placed:incorrect', sproutId: 's1', habitatId: 'emberNook' });
-      bus.emit({ type: 'habitat:dewdropTick', habitatId: 'emberNook', amount: 1 });
-      bus.emit({ type: 'habitat:full', habitatId: 'emberNook' });
+      bus.emit({ type: 'sprout:placed:correct', sproutId: 's1', habitatId: 'emberNook', habitatInstanceId: 'emberNook-1' });
+      bus.emit({ type: 'sprout:placed:incorrect', sproutId: 's1', habitatId: 'emberNook', habitatInstanceId: 'emberNook-1' });
+      bus.emit({ type: 'habitat:dewdropTick', habitatId: 'emberNook', habitatInstanceId: 'emberNook-1', amount: 1 });
+      bus.emit({ type: 'habitat:full', habitatId: 'emberNook', habitatInstanceId: 'emberNook-1' });
       bus.emit({ type: 'sprout:spawned', sproutId: 's2', sproutType: 'star', mood: 'sunny', podId: 'p1' });
       bus.emit({ type: 'upgrade:purchased', upgradeId: 'podRhythm', level: 1 });
       bus.emit({ type: 'achievement:unlocked', achievementId: 'firstPlacement' });
@@ -145,7 +145,7 @@ describe('audio system', () => {
     // even though only the first should actually sound.
     expect(() => {
       for (let i = 0; i < 50; i++) {
-        bus.emit({ type: 'habitat:dewdropTick', habitatId: 'dewPond', amount: 1 });
+        bus.emit({ type: 'habitat:dewdropTick', habitatId: 'dewPond', habitatInstanceId: 'dewPond-1', amount: 1 });
       }
     }).not.toThrow();
   });
@@ -165,7 +165,7 @@ describe('audio system', () => {
     system.resume();
     system.dispose();
     expect(() => {
-      bus.emit({ type: 'sprout:placed:correct', sproutId: 's1', habitatId: 'emberNook' });
+      bus.emit({ type: 'sprout:placed:correct', sproutId: 's1', habitatId: 'emberNook', habitatInstanceId: 'emberNook-1' });
       system.playUiClick();
     }).not.toThrow();
   });

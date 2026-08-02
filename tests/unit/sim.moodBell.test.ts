@@ -160,7 +160,7 @@ describe('a Sprout riding the Bell home (single leg, destination computed per-sp
 
     state = result.state;
     expect(sproutById(state, 'test-sprout')?.state).toBe('settled');
-    expect(state.habitats.emberNook?.count).toBe(1);
+    expect(state.habitats.find((h) => h.id === 'emberNook-1')?.count).toBe(1);
   });
 
   it('does the same for a DIFFERENT type in the same run — proves the destination is per-sprout, not fixed at build time', () => {
@@ -187,7 +187,10 @@ describe('a Sprout riding the Bell home (single leg, destination computed per-sp
 
   it('waits rather than delivering into a full habitat', () => {
     let state = withSprout(withBell('sunny'), 'ember', 'sunny');
-    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: 8, capacity: 8 } } };
+    state = {
+      ...state,
+      habitats: [{ id: 'emberNook-1', habitatId: 'emberNook', tile: HABITAT_TILES.emberNook, count: 8, builtAtTick: 0 }],
+    };
     const result = drive(state, 200);
     expect(result.events.some((e) => e.type === 'sprout:transportStarted')).toBe(false);
     expect(sproutById(result.state, 'test-sprout')?.state).toBe('idle');

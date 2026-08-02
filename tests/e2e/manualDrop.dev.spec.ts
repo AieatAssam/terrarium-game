@@ -8,6 +8,7 @@ import {
   grantDewdrops,
   HABITAT_TILES,
   installBusRecorder,
+  placeAutomationViaBuildMenu,
   projectToScreen,
   waitForDevHooks,
 } from './helpers';
@@ -195,14 +196,16 @@ async function debugSpawnAndDrop(page: Page, sproutType: SproutTypeId, habitat: 
 }
 
 /**
- * Drives the real unlock path to a built Garden Slide. The Slide always
- * targets Sunflower Meadow once built (unlockSystem, src/sim/systems.ts —
- * the earlier "whichever habitat has been fed most" heuristic this helper's
- * ember-heavy feed mix was originally written for no longer decides the
- * target, only the total placement count matters for the unlock threshold).
- * `capacityLevel` controls how much headroom Sunflower Meadow keeps: the
- * boarding spec wants several free slots because every race the dispatcher
- * steals ends with one more Sprout settled there.
+ * Drives the real unlock path to a built Garden Slide, which always targets
+ * Sunflower Meadow once built. The Slide always targets Sunflower Meadow
+ * (unlockSystem, src/sim/systems.ts — the earlier "whichever habitat has been
+ * fed most" heuristic this helper's ember-heavy feed mix was originally
+ * written for no longer decides the target, only the total placement count
+ * matters for the unlock threshold). `capacityLevel` controls how much
+ * headroom Sunflower Meadow keeps: the boarding spec wants several free slots
+ * because every race the dispatcher steals ends with one more Sprout settled
+ * there. After unlock the Slide is PLACED via the build menu (2026-08-01
+ * manual placement — GameRules §9.8).
  */
 async function buildGardenSlide(page: Page, capacityLevel: 1 | 2 | 3): Promise<void> {
   await buyHabitatCapacityTo(page, capacityLevel);
@@ -210,6 +213,7 @@ async function buildGardenSlide(page: Page, capacityLevel: 1 | 2 | 3): Promise<v
   for (let i = 0; i < 6; i += 1) await debugSpawnAndDrop(page, 'dew', 'dewPond');
   for (let i = 0; i < 6; i += 1) await debugSpawnAndDrop(page, 'sun', 'sunflowerMeadow');
   await expect.poll(async () => (await getUiState(page)).unlockedAutomations, { timeout: 20_000 }).toContain('gardenSlide');
+  await placeAutomationViaBuildMenu(page, 'gardenSlide');
 }
 
 const TYPE_TO_HABITAT = { ember: 'emberNook', dew: 'dewPond', sun: 'sunflowerMeadow', star: 'emberNook' } as const;
@@ -447,7 +451,10 @@ test.describe('Manual drop onto automation: real pointer events', () => {
         fire('pointerdown', toClient(8, 1.13, 8)); // Nursery centre, pre-reveal mesh position
         fire('pointermove', toClient(4, 0, 4)); // Ember Nook's own ground-plane centre
         const debug = window.__debug as unknown as { meshInfo: (n: string) => { scaling: number[] } | null | undefined };
-        const hoverScaling = debug.meshInfo('terrarium.habitat.emberNook')?.scaling;
+        // Phase 2 instance model: the habitat mesh is named by INSTANCE id
+        // (`emberNook-1`), and the originals are always seeded, so that's the
+        // deterministic first-instance name here.
+        const hoverScaling = debug.meshInfo('terrarium.habitat.emberNook-1')?.scaling;
         (window as unknown as { __ttHoverScaling: unknown }).__ttHoverScaling = hoverScaling;
         fire('pointerup', toClient(4, 0, 4));
         return id;

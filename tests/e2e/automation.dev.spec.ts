@@ -7,6 +7,7 @@ import {
   getUiState,
   grantDewdrops,
   installBusRecorder,
+  placeAutomationViaBuildMenu,
   spawnAndDrop,
   waitForDevHooks,
 } from './helpers';
@@ -17,15 +18,17 @@ import { GARDEN_PATH_TILES } from '../../src/render/layout';
 import { UPGRADES } from '../../src/data/upgrades';
 import { getEffectiveHabitatCapacity } from '../../src/data/habitats';
 
-// Both automations auto-build the instant their conditions are met — there is
-// no manual "place it in the world" step in this build (see this session's
-// brief: buildMenu's onEnterBuildMode/onExitBuildMode are wired but not
-// consequential, a documented Phase-1 scope decision). These specs exercise
-// the real unlock/build conditions in src/sim/systems.ts against the live
-// sim via the bus fast path, not mocks.
+// Automations are UNLOCKED by their condition (correct placements for the
+// Garden Slide, a paid upgrade for the Colour Gate) and then PLACED by the
+// player through the build menu (2026-08-01 revision, plan.yaml Phase 1.2/1.4
+// — the old "auto-builds the instant its condition is met" behaviour was
+// deliberately removed; see this session's brief and docs/GAME_DESIGN.md §9.8).
+// These specs exercise the real unlock/build/placement conditions in
+// src/sim/systems.ts against the live sim via the bus fast path plus the real
+// build-menu + canvas click for placement, not mocks.
 
-test.describe('Garden Slide: unlock + auto-build at 20 correct placements', () => {
-  test('unlocks and auto-builds once correctPlacementCount reaches 20, always targeting Sunflower Meadow', async ({ page }) => {
+test.describe('Garden Slide: unlock + manual placement at 20 correct placements', () => {
+  test('unlocks at 20 correct placements, then places via the build menu, always targeting Sunflower Meadow', async ({ page }) => {
     test.slow(); // 20 spawn+drop round-trips plus a real Upgrades-panel purchase
     const console_ = collectConsoleErrors(page);
     await page.goto('/');
@@ -57,6 +60,11 @@ test.describe('Garden Slide: unlock + auto-build at 20 correct placements', () =
 
     await expect.poll(async () => (await getUiState(page)).unlockedAutomations, { timeout: 20_000 }).toContain('gardenSlide');
 
+    // Unlocked != placed: the player still has to open the build menu and
+    // click the site (2026-08-01 manual placement). Do that here through the
+    // real build-menu button + canvas click.
+    await placeAutomationViaBuildMenu(page, 'gardenSlide');
+
     const state = await getUiState(page);
     expect(state.unlockedAutomations).toContain('gardenSlide');
     expect(state.lastBuiltAutomation).toBe('gardenSlide');
@@ -67,9 +75,9 @@ test.describe('Garden Slide: unlock + auto-build at 20 correct placements', () =
     const builtIndex = events.findIndex((e) => e.type === 'automation:built' && e.automationId === 'gardenSlide');
     expect(unlockedIndex).toBeGreaterThanOrEqual(0);
     expect(builtIndex).toBeGreaterThanOrEqual(0);
-    // "unlocks and auto-builds" (docs/GAME_DESIGN.md) — both fire back-to-back
-    // in the same batch, so unlocked must not come after built.
-    expect(unlockedIndex).toBeLessThanOrEqual(builtIndex);
+    // Unlock must precede the (player-driven) build — the build menu only
+    // offers automations that are unlocked, so this ordering is structural.
+    expect(unlockedIndex).toBeLessThan(builtIndex);
     // Deterministic since 2026-07-31 (previously "most-fed habitat", which
     // this test could only make unambiguous by rigging the distribution).
     expect((events[builtIndex] as { targetHabitatId?: string }).targetHabitatId).toBe('sunflowerMeadow');
@@ -107,16 +115,22 @@ test.describe('Colour Gate: behavioral purchase gate', () => {
     console_.assertNone();
   });
 
-  test('purchase succeeds and auto-builds once Garden Slide is built, has fed for 300+ ticks, and 3+ Sprouts of another type are piled up', async ({
+  test('purchase succeeds once Garden Slide is built, has fed for 300+ ticks, and 3+ Sprouts of another type are piled up, then places the Colour Gate via the build menu', async ({
     page,
   }) => {
+    // test.slow() → 90s; this spec is heavier than that under GPU-stalled CI
+    // (the dev runner's software GL stalls make each Playwright round-trip
+    // take many seconds), so set an explicit, generous budget.
+    test.setTimeout(240_000);
     test.slow(); // multiple UI round-trips + a real (if short) wait for tick-based ticks to accrue
     const console_ = collectConsoleErrors(page);
     await page.goto('/');
     await waitForDevHooks(page);
     await installBusRecorder(page, ['automation:built', 'automation:unlocked', 'currency:dewdropsChanged']);
 
-    // 1) Get Garden Slide built (same approach as the unlock spec above).
+    // 1) Unlock AND PLACE Garden Slide (same approach as the unlock spec
+    // above — the behavioural gate counts ticks since the Slide was BUILT,
+    // so it must be placed, not merely unlocked).
     await grantDewdrops(page, 3);
     await buyUpgradeViaUI(page, 'Habitat Capacity');
     await expect.poll(async () => (await getUiState(page)).upgradeLevels.habitatCapacity).toBe(1);
@@ -124,6 +138,7 @@ test.describe('Colour Gate: behavioral purchase gate', () => {
     for (let i = 0; i < 6; i += 1) await spawnAndDrop(page, 'dew', 'dewPond');
     for (let i = 0; i < 6; i += 1) await spawnAndDrop(page, 'sun', 'sunflowerMeadow');
     await expect.poll(async () => (await getUiState(page)).unlockedAutomations, { timeout: 20_000 }).toContain('gardenSlide');
+    await placeAutomationViaBuildMenu(page, 'gardenSlide');
 
     // 2) Fast-forward past the 300-tick (30 real-second) continuous-feed
     // requirement using the debug speed control — this is progression logic,
@@ -131,12 +146,14 @@ test.describe('Colour Gate: behavioral purchase gate', () => {
     await page.click('[data-testid="debug-speed-20x"]');
     await page.waitForTimeout(3_000); // >=300 ticks at 20x well within 3s of real time
 
-    // 3) Pile up 4 idle Sprouts of a type Garden Slide isn't feeding (it's
-    // targeting emberNook, so `dew` and `sun` both qualify as "another
-    // type" for the unsorted-pile condition — use `sun` fresh so it can't be
-    // confused with the 6 `dew` already settled from step 1).
+    // 3) Pile up 4 idle Sprouts of a type Garden Slide isn't feeding. The
+    // Slide always targets Sunflower Meadow (feeds `sun`), so `dew` and
+    // `ember` both qualify as "another type" for the unsorted-pile condition
+    // — use `dew` fresh so it can't be confused with the 8 `ember` already
+    // settled from step 1, and (unlike `sun`) the Slide's dispatcher won't
+    // carry it away, so it stays idle and counts toward the pile.
     for (let i = 0; i < 4; i += 1) {
-      await page.click('[data-testid="debug-spawn-sun"]');
+      await page.click('[data-testid="debug-spawn-dew"]');
     }
 
     // 4) Afford the Colour Gate and buy it via the real Upgrades panel.
@@ -150,6 +167,10 @@ test.describe('Colour Gate: behavioral purchase gate', () => {
     await buyUpgradeViaUI(page, 'Colour Gate');
 
     await expect.poll(async () => (await getUiState(page)).unlockedAutomations, { timeout: 5_000 }).toContain('colourGate');
+
+    // 5) Purchasing only UNLOCKS the Colour Gate; the player still has to
+    // place it through the build menu (2026-08-01 manual placement).
+    await placeAutomationViaBuildMenu(page, 'colourGate');
 
     const after = await getUiState(page);
     expect(after.upgradeLevels.colourGateUnlock).toBe(1);
@@ -221,25 +242,33 @@ async function grantUntilAffordable(page: Page, target: number): Promise<void> {
   throw new Error(`could not reach ${target} Dewdrops via the debug grant button`);
 }
 
-/** Drives the real unlock path to a built Garden Slide, which always targets Sunflower Meadow. */
+/** Drives the real unlock path to a BUILT Garden Slide, which always targets Sunflower Meadow. Unlock happens at 20 correct placements; the player then places it via the build menu (2026-08-01 manual placement — GameRules §9.8). */
 async function buildGardenSlide(page: Page): Promise<void> {
   await grantUntilAffordable(page, UPGRADES.habitatCapacity.costForLevel(1));
   await buyUpgradeViaUI(page, 'Habitat Capacity'); // +3 slots per habitat
   await expect.poll(async () => (await getUiState(page)).upgradeLevels.habitatCapacity).toBe(1);
-  // unlockSystem always targets sunflowerMeadow (2026-07-31). 10 Ember + 10
-  // Sun hits the 20-placement threshold exactly AND lands Sunflower Meadow
-  // at exactly capacity-1 (11-1=10, at habitatCapacity level 1) as a direct
-  // side effect — efficient in the common case (no separate top-up round
-  // trips needed). Callers that need this exact count GUARANTEED (not just
-  // "usually right") still call drainIdleSunSprouts +
-  // topUpSunflowerMeadowToOneShort afterward: those self-correct for a
-  // natural pod spawn racing the real wall-clock time this setup takes
-  // (work_progress.yaml, 2026-08-01) without redoing all 10 sun placements
-  // from scratch — the top-up loop only adds what's actually still missing.
-  // No Dew: unnecessary once Sun itself supplies half the threshold.
+  // unlockSystem always targets sunflowerMeadow (2026-07-31). 10 Ember
+  // placements plus enough Sun placements to land Sunflower Meadow at EXACTLY
+  // capacity-1 (11-1=10, at habitatCapacity level 1) — and to hit the
+  // 20-placement unlock the 10 Embers do their half of the threshold.
+  //
+  // Strays are absorbed, not raced: any natural Sun that spawned before the
+  // pod freeze is drained into Sunflower Meadow FIRST (while it is empty and
+  // has room), and the Sun loop then places only what is still missing
+  // (capacity-1 minus strays). A drained stray also counts toward the unlock
+  // (settleSprout emits sprout:placed:correct), so the arithmetic closes at
+  // exactly 20 regardless of how many strays slipped in. A settle-into-SM
+  // AFTER the loop would be the old failure mode: draining into an already
+  // one-short SM overfills it, `habitat:full` fires, and a blocked Slide
+  // shows its wait bead while the test still believes it is idle.
+  await drainIdleSunSprouts(page);
   for (let i = 0; i < 10; i += 1) await spawnAndDrop(page, 'ember', 'emberNook');
-  for (let i = 0; i < 10; i += 1) await spawnAndDrop(page, 'sun', 'sunflowerMeadow');
+  const sunTarget = getEffectiveHabitatCapacity('sunflowerMeadow', 1) - 1;
+  while ((await sunflowerMeadowSettledCount(page)) < sunTarget) {
+    await spawnAndDrop(page, 'sun', 'sunflowerMeadow');
+  }
   await expect.poll(async () => (await getUiState(page)).unlockedAutomations, { timeout: 20_000 }).toContain('gardenSlide');
+  await placeAutomationViaBuildMenu(page, 'gardenSlide');
 }
 
 /** Number of Sun Sprouts recorded as `sprout:settled` into Sunflower Meadow so far (caller's installBusRecorder must include 'sprout:settled'). */
@@ -273,23 +302,6 @@ async function drainIdleSunSprouts(page: Page): Promise<void> {
   }
 }
 
-/**
- * Tops Sunflower Meadow up to exactly one slot short of its current
- * effective capacity, by manually placing Sun Sprouts one at a time and
- * re-reading the REAL settled count before each — not a precomputed loop
- * bound — so it self-corrects if a stray natural Sun Sprout gets auto-
- * carried by the Slide mid-loop and increments the count out from under it.
- * Call drainIdleSunSprouts first so there's nothing already idle for the
- * Slide to grab unexpectedly once this leaves one slot open.
- */
-async function topUpSunflowerMeadowToOneShort(page: Page): Promise<void> {
-  const level = (await getUiState(page)).upgradeLevels.habitatCapacity ?? 0;
-  const target = getEffectiveHabitatCapacity('sunflowerMeadow', level) - 1;
-  while ((await sunflowerMeadowSettledCount(page)) < target) {
-    await spawnAndDrop(page, 'sun', 'sunflowerMeadow');
-  }
-}
-
 /** Waits until more than `seenBefore` transports have started, then returns the one at that index. */
 async function waitForNextTransport(page: Page, seenBefore: number): Promise<{ sproutId: string; durationMs: number }> {
   await page.waitForFunction(
@@ -308,6 +320,7 @@ async function waitForNextTransport(page: Page, seenBefore: number): Promise<{ s
 test.describe('Garden Slide: visibly carries Sprouts, along the path, at the upgraded speed', () => {
   test('a carried Sprout follows the garden path, the Slide shows its load, and Slide Speed shortens the ride', async ({ page }) => {
     test.slow(); // 20 spawn+drop round-trips, three real Upgrades-panel purchases, and two full rides
+    test.setTimeout(240_000); // GPU-stalled dev runner makes each round-trip slow (see test-3)
     const console_ = collectConsoleErrors(page);
     await page.goto('/');
     await waitForDevHooks(page);
@@ -319,52 +332,101 @@ test.describe('Garden Slide: visibly carries Sprouts, along the path, at the upg
       'habitat:full',
     ]);
 
+    // Freeze the pod at 'resting' (src/data/spawning.ts) BEFORE any setup, so
+    // no natural pod can land for the rest of the test. The Slide targets
+    // Sunflower Meadow, which this test keeps exactly one slot short of full —
+    // a natural `sun` pod spawning mid-setup would get boarded, settle, and
+    // fill SM, and the sun this test deliberately spawns for its rides would
+    // then sit unboarded while waitForNextTransport times out. 12 idle Dew
+    // Sprouts (never boarded — the Slide only carries its target type, `sun`)
+    // push the waiting count past the rest threshold deterministically.
+    for (let i = 0; i < 12; i += 1) {
+      await page.click('[data-testid="debug-spawn-dew"]');
+    }
+    // The nursery note gains the `is-resting` class exactly when the pod rests
+    // (src/ui/components/nurseryNote.ts) — the world-state guarantee that no
+    // natural pod can open from here on.
+    await expect(page.locator('.tt-nursery-note')).toHaveClass(/is-resting/, { timeout: 10_000 });
+
     await buildGardenSlide(page);
-    // Settle every idle Sun Sprout (ours or a stray natural pod spawn) into
-    // Sunflower Meadow, then bring it up to exactly one slot short of full —
-    // see drainIdleSunSprouts/topUpSunflowerMeadowToOneShort's own doc
-    // comments for why this replaced a hardcoded count in buildGardenSlide.
-    await drainIdleSunSprouts(page);
-    await topUpSunflowerMeadowToOneShort(page);
+    // buildGardenSlide ITSELF ends with Sunflower Meadow at exactly one slot
+    // short of full and every idle Sun drained into it (see its doc comment):
+    // the drain runs first, while SM is empty, so a stray natural Sun that
+    // spawned in the pre-freeze window is absorbed into the count instead of
+    // overfilling SM the way draining into an already-one-short habitat did.
 
     // A built but idle Slide shows no load at all: both the belt procession and
-    // the parked "waiting" parcel exist as meshes but are hidden.
-    const idleBead = await meshProbe(page, SLIDE_BEAD_MESH);
-    const idleWait = await meshProbe(page, SLIDE_WAIT_MESH);
-    expect(idleBead, 'the Slide belt parcel mesh should exist').not.toBeNull();
-    expect(idleWait, 'the Slide waiting-parcel mesh should exist').not.toBeNull();
-    expect(idleBead?.enabled, 'an idle Slide runs no belt').toBe(false);
-    expect(idleWait?.enabled, 'an idle Slide is not showing a blockage').toBe(false);
+    // the parked "waiting" parcel exist as meshes but are hidden. POLL, don't
+    // probe once: the setup above ends with Sunflower Meadow one slot short of
+    // full, so a natural pod spawn of the Slide's own type (`sun`) that lands
+    // during the final moments gets boarded, and the carry/block blends take a
+    // beat to decay out of whatever ride the setup's last moments left behind.
+    await expect
+      .poll(
+        async () => {
+          const bead = await meshProbe(page, SLIDE_BEAD_MESH);
+          const wait = await meshProbe(page, SLIDE_WAIT_MESH);
+          return { beadOk: bead !== null && !bead.enabled, waitOk: wait !== null && !wait.enabled };
+        },
+        { timeout: 15_000 },
+      )
+      .toEqual({ beadOk: true, waitOk: true });
 
     // --- Ride 1, un-upgraded ---------------------------------------------
     // Sun, not Ember: the Slide only ever carries the type it targets
     // (Sunflower Meadow's Sun Sprouts) — an Ember spawn would just sit idle,
     // uncarried, and waitForNextTransport would time out.
-    await page.click('[data-testid="debug-spawn-sun"]');
-    const ride1 = await waitForNextTransport(page, 0);
-    expect(ride1.durationMs, 'sim must supply the ride duration').toBeGreaterThan(0);
-
-    // Sample the carried Sprout's real world position while the ride is in
-    // flight, stopping the moment the sim reports arrival — a SETTLED Sprout
-    // stands on an offset slot on the habitat, which is legitimately off-path.
-    const samples = await page.evaluate(
-      async ([sproutId, meshName]) => {
-        const carried: number[][] = [];
-        const bead: number[][] = [];
-        const debug = window.__debug as unknown as { meshInfo: (n: string) => { pos: number[] } | null | undefined };
-        const arrived = () =>
-          (window.__ttEvents ?? []).some((e) => e.type === 'sprout:transportCompleted' && e.sproutId === sproutId);
-        for (let i = 0; i < 80 && !arrived(); i += 1) {
-          const sprout = debug.meshInfo(`terrarium.sprout.${sproutId}`);
-          if (sprout) carried.push([sprout.pos[0], sprout.pos[2]]);
-          const load = debug.meshInfo(meshName);
-          if (load) bead.push([load.pos[0], load.pos[2]]);
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-        return { carried, bead };
-      },
-      [ride1.sproutId, SLIDE_BEAD_MESH] as const,
+    // One in-page evaluate that (a) waits for the next transport to START and
+    // (b) samples the carried Sprout + belt bead every 100ms until arrival.
+    // The sampler is STARTED FIRST (a promise), and only then is the debug
+    // button clicked: if the click had to round-trip before the poll loop even
+    // began, a GPU-stalled page could consume most of the ride in that gap and
+    // leave the sampler nothing to catch. Kicking the loop off before the
+    // click means it is already polling when the ride begins.
+    // The snapshot-of-seen-transports is passed in because natural pod spawns
+    // board the Slide during setup, so "the first transport ever recorded"
+    // would be a stale, already-completed ride.
+    const seenTransports = await page.evaluate(
+      () => (window.__ttEvents ?? []).filter((e) => e.type === 'sprout:transportStarted').length,
     );
+    const rideSampler = page.evaluate(
+      async ([seenBefore, meshName]) => {
+        const debug = window.__debug as unknown as {
+          meshInfo: (n: string) => { pos: number[] } | null | undefined;
+        };
+        const events = () => window.__ttEvents ?? [];
+        // (a) Wait for the next transport, in-page, no Playwright round-trip.
+        const deadline = performance.now() + 30_000;
+        while (performance.now() < deadline) {
+          const started = events().filter((e) => e.type === 'sprout:transportStarted');
+          if (started.length > seenBefore) {
+            const event = started[seenBefore];
+            if (event.type !== 'sprout:transportStarted') throw new Error('unreachable');
+            const sproutId = event.sproutId;
+            const durationMs = event.durationMs;
+            // (b) Sample immediately, still in the same evaluate.
+            const carried: number[][] = [];
+            const bead: number[][] = [];
+            const arrived = () =>
+              events().some((e) => e.type === 'sprout:transportCompleted' && e.sproutId === sproutId);
+            for (let i = 0; i < 80 && !arrived(); i += 1) {
+              const sprout = debug.meshInfo(`terrarium.sprout.${sproutId}`);
+              if (sprout) carried.push([sprout.pos[0], sprout.pos[2]]);
+              const load = debug.meshInfo(meshName);
+              if (load) bead.push([load.pos[0], load.pos[2]]);
+              await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+            return { ride1: { sproutId, durationMs }, samples: { carried, bead } };
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        throw new Error('no sprout:transportStarted arrived');
+      },
+      [seenTransports, SLIDE_BEAD_MESH] as const,
+    );
+    await page.click('[data-testid="debug-spawn-sun"]');
+    const { ride1, samples } = await rideSampler;
+    expect(ride1.durationMs, 'sim must supply the ride duration').toBeGreaterThan(0);
 
     expect(samples.carried.length, 'should have caught the Sprout mid-ride').toBeGreaterThan(4);
 

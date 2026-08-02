@@ -32,7 +32,7 @@ import { SPROUT_FLOAT_HEIGHT, SPROUT_SPRITE_SIZE } from '../render/sprouts';
 // (2026-08-01, manual placement — GameRules §9.8), reused here so the
 // build-mode ghost preview and the actual placement commit ask the exact
 // same question, rather than a second, potentially-diverging guess.
-import { isValidAutomationSite } from '../sim/layout';
+import { isValidAutomationSite, isValidHabitatSite } from '../sim/layout';
 
 const GROUND_PLANE = new Plane(0, 1, 0, 0); // y = 0
 // The horizontal plane a dragged Sprout is moved on. This has to be EXACTLY
@@ -63,6 +63,10 @@ export interface InputHooks {
    * exposes" pattern as onPurchaseUpgrade/onSetColourGateLane in main.ts.
    */
   onPlaceAutomation?: (automationId: AutomationId, tile: TileCoord) => void;
+  /** Phase 2 — habitat build mode's commit, mirroring onPlaceAutomation.
+   * The sim's `placeHabitat` re-checks the full-now gate + cost + site on
+   * commit, so this path can't overdraw even if the preview drifted. */
+  onPlaceHabitat?: (habitatId: HabitatId, tile: TileCoord) => void;
 }
 
 export interface InputHandle {
@@ -78,6 +82,9 @@ export interface InputHandle {
    * dragging a Sprout — entering build mode cancels any drag in progress.
    */
   enterBuildMode: (automationId: AutomationId) => void;
+  /** Phase 2 — habitat build mode, mirroring `enterBuildMode`: the ghost
+   * previews via `habitats.previewAt` and commits via `onPlaceHabitat`. */
+  enterHabitatBuildMode: (habitatId: HabitatId) => void;
   /** Exits build mode (if active) and clears the ghost preview. Safe to call when not in build mode. */
   exitBuildMode: () => void;
   dispose: () => void;
@@ -100,7 +107,8 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   let pinching = false;
   let pinchStartDistance = 0;
   let pinchStartRadius = 0;
-  let buildModeAutomationId: AutomationId | null = null;
+  type BuildMode = { kind: 'automation'; id: AutomationId } | { kind: 'habitat'; id: HabitatId } | null;
+  let buildMode: BuildMode = null;
   // Every PLACED automation's own site tile, tracked locally so build-mode
   // hit-testing (isValidAutomationSite needs "what's already occupied")
   // doesn't require reaching into SimState — this module only ever talks to
@@ -112,6 +120,15 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
       occupiedSiteTiles.set(id, tile);
     }
   });
+
+  // Every tile something already stands on: automation sites plus every
+  // habitat INSTANCE (originals + player-built). `habitats.entries()` is the
+  // renderer's live instance list, kept in sync by habitat:built/save:loaded
+  // — so no SimState reach is needed here either.
+  const allOccupiedTiles = (): TileCoord[] => [
+    ...habitats.entries().map((entry) => entry.tile),
+    ...occupiedSiteTiles.values(),
+  ];
 
   const canvasPoint = (event: PointerEvent): { x: number; y: number } => {
     const rect = canvas.getBoundingClientRect();
@@ -199,7 +216,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   const endDrag = (x: number, y: number): void => {
     if (!dragSproutId) return;
     const ground = groundPointAt(x, y, GROUND_PLANE);
-    const overHabitat = ground ? habitats.nearestWithin(ground, HOVER_MARGIN_TILES) : null;
+    const hit = ground ? habitats.nearestWithin(ground, HOVER_MARGIN_TILES) : null;
     // A drop lands on at most one of the two: a habitat is checked first
     // (unchanged behaviour), and only when it isn't one is a built
     // automation site considered — handing a Sprout straight to the Garden
@@ -207,8 +224,17 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     // on its own (GameRules §9.1). The site tiles and habitat tiles sit far
     // enough apart in the garden's layout that the two regions never
     // actually overlap; the ordering is just belt-and-braces.
-    const overAutomation = !overHabitat && ground ? automation.nearestBuiltWithin(ground, HOVER_MARGIN_TILES) : null;
-    bus.emit({ type: 'sprout:dropped', sproutId: dragSproutId, overHabitat, overAutomation });
+    const overAutomation = !hit && ground ? automation.nearestBuiltWithin(ground, HOVER_MARGIN_TILES) : null;
+    bus.emit({
+      type: 'sprout:dropped',
+      sproutId: dragSproutId,
+      overHabitat: hit?.habitatId ?? null,
+      // The concrete home instance, so the sim adjudicates against the exact
+      // habitat the drop landed on (Phase 2 — with player-built copies, the
+      // kind alone is ambiguous).
+      overHabitatInstance: hit?.habitatInstanceId ?? null,
+      overAutomation,
+    });
     habitats.setHover(null, null);
     sprouts.setDragValidity(dragSproutId, null);
     dragSproutId = null;
@@ -221,17 +247,26 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     activePointers.set(event.pointerId, { x, y });
     canvas.setPointerCapture(event.pointerId);
 
-    if (buildModeAutomationId) {
+    if (buildMode) {
       const ground = groundPointAt(x, y, GROUND_PLANE);
       const tile = ground ? worldToTile(ground) : null;
-      const automationId = buildModeAutomationId;
-      const valid = tile ? isValidAutomationSite(automationId, tile, Array.from(occupiedSiteTiles.values())) : false;
+      const valid =
+        buildMode.kind === 'automation'
+          ? tile !== null && isValidAutomationSite(buildMode.id, tile, Array.from(occupiedSiteTiles.values()))
+          : tile !== null && isValidHabitatSite(tile, allOccupiedTiles());
       console.debug(
         '[terrarium/debug buildmode commit] ' +
-          JSON.stringify({ automationId, ground, tile, valid, occupied: Array.from(occupiedSiteTiles.entries()) }),
+          JSON.stringify({
+            buildMode,
+            ground,
+            tile,
+            valid,
+            occupied: Array.from(occupiedSiteTiles.entries()),
+          }),
       );
       if (tile && valid) {
-        hooks.onPlaceAutomation?.(automationId, tile);
+        if (buildMode.kind === 'automation') hooks.onPlaceAutomation?.(buildMode.id, tile);
+        else hooks.onPlaceHabitat?.(buildMode.id, tile);
         exitBuildMode();
       }
       // Invalid tile: stay in build mode (the red-tinted ghost preview
@@ -268,14 +303,17 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   };
 
   const handlePointerMove = (event: PointerEvent): void => {
-    if (buildModeAutomationId) {
+    if (buildMode) {
       // Deliberately NOT gated on activePointers.has(...): unlike a drag,
       // build-mode preview must track a plain hover with no button held —
       // that's how a mouse player sees the ghost before ever clicking.
       const { x, y } = canvasPoint(event);
       const ground = groundPointAt(x, y, GROUND_PLANE);
       const tile = ground ? worldToTile(ground) : null;
-      if (tile) previewAutomation(buildModeAutomationId, tile);
+      if (tile) {
+        if (buildMode.kind === 'automation') previewAutomation(buildMode.id, tile);
+        else previewHabitat(buildMode.id, tile);
+      }
       return;
     }
 
@@ -310,10 +348,10 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
       // Nursery on release.
       const ground = groundPointAt(x, y, GROUND_PLANE);
       if (!ground) return;
-      const habitatId = habitats.nearestWithin(ground, HOVER_MARGIN_TILES);
-      if (habitatId) {
-        const valid = habitatMatch(habitatId, dragSproutId);
-        habitats.setHover(habitatId, valid);
+      const hit = habitats.nearestWithin(ground, HOVER_MARGIN_TILES);
+      if (hit) {
+        const valid = habitatMatch(hit.habitatId, dragSproutId);
+        habitats.setHover(hit.habitatInstanceId, valid);
         sprouts.setDragValidity(dragSproutId, valid);
         return;
       }
@@ -392,6 +430,10 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     automation.previewAt(automationId, tile, isValidAutomationSite(automationId, tile, Array.from(occupiedSiteTiles.values())));
   };
 
+  const previewHabitat = (habitatId: HabitatId, tile: TileCoord): void => {
+    habitats.previewAt(habitatId, tile, isValidHabitatSite(tile, allOccupiedTiles()));
+  };
+
   const enterBuildMode = (automationId: AutomationId): void => {
     // One interaction mode at a time — same discipline pinch/drag/pan
     // already follow in handlePointerDown below.
@@ -402,12 +444,24 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
       dragSproutId = null;
       dragPointerId = null;
     }
-    buildModeAutomationId = automationId;
+    buildMode = { kind: 'automation', id: automationId };
+  };
+
+  const enterHabitatBuildMode = (habitatId: HabitatId): void => {
+    if (dragSproutId) {
+      sprouts.setDragValidity(dragSproutId, null);
+      const visual = sprouts.get(dragSproutId);
+      if (visual) visual.held = false;
+      dragSproutId = null;
+      dragPointerId = null;
+    }
+    buildMode = { kind: 'habitat', id: habitatId };
   };
 
   const exitBuildMode = (): void => {
-    buildModeAutomationId = null;
+    buildMode = null;
     automation.clearPreview();
+    habitats.clearPreview();
   };
 
   const dispose = (): void => {
@@ -423,6 +477,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     previewAutomation,
     clearAutomationPreview: automation.clearPreview,
     enterBuildMode,
+    enterHabitatBuildMode,
     exitBuildMode,
     dispose,
   };

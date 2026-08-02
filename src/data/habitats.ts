@@ -77,3 +77,31 @@ export function getEffectiveHabitatCapacity(habitatId: HabitatId, habitatCapacit
   const base = HABITATS[habitatId].baseCapacity;
   return base + habitatCapacityLevel * UPGRADES.habitatCapacity.effect.magnitudePerLevel;
 }
+
+// ---------------------------------------------------------------------------
+// Buildable habitats (Phase 2 — plan.yaml Phase 2.2, GameRules §10.0)
+// ---------------------------------------------------------------------------
+// A player builds an ADDITIONAL habitat of an existing kind for a Dewdrop
+// cost, gated on that kind already being full (see placeHabitat,
+// src/sim/systems.ts). The cost grows geometrically per instance of that
+// kind, rounded to the nearest 5 to match the upgrade tree's own cost idiom
+// (src/data/upgrades.ts): 2nd = 500, 3rd = 950, 4th = 1805. Checked against
+// the real income rate of 4.8 Dewdrops/min per settled Sprout, same as the
+// upgrade tree — see docs/GAME_DESIGN.md.
+const HABITAT_BUILD_COST_BASE = 500;
+const HABITAT_BUILD_COST_GROWTH = 1.9;
+
+function roundTo5(value: number): number {
+  return Math.round(value / 5) * 5;
+}
+
+/**
+ * What the NEXT habitat of an existing kind costs, given how many instances
+ * of that kind already stand (Phase 2). `existingInstanceCount` includes the
+ * original (always ≥ 1), so the first player-built one is the 2nd overall
+ * and costs `round5(base * growth^(count - 1))` with count = 1. The curve is
+ * the same for every kind — Phase 2 gives no biome a cheaper second home.
+ */
+export function habitatBuildCost(existingInstanceCount: number): number {
+  return roundTo5(HABITAT_BUILD_COST_BASE * HABITAT_BUILD_COST_GROWTH ** Math.max(0, existingInstanceCount - 1));
+}

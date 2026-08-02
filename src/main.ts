@@ -74,6 +74,7 @@ const ui = mountUI(document.body, bus, {
   // GameRules §9.8). The menu owns selection state; input owns the actual
   // pointer tracking and placement commit, so these just forward.
   onEnterBuildMode: (automationId) => inputHandle?.enterBuildMode(automationId),
+  onEnterHabitatBuildMode: (habitatId) => inputHandle?.enterHabitatBuildMode(habitatId),
   onExitBuildMode: () => inputHandle?.exitBuildMode(),
   debug: {
     spawnSprout: (sproutType) => {
@@ -101,6 +102,9 @@ void bootstrap(root).then((result) => {
     const input = initInput(renderer, bus, {
       onPlaceAutomation: (automationId, tile) => {
         void simRuntimePromise.then((sim) => sim.placeAutomation(automationId, tile));
+      },
+      onPlaceHabitat: (habitatId, tile) => {
+        void simRuntimePromise.then((sim) => sim.placeHabitat(habitatId, tile));
       },
     });
     inputHandle = input;

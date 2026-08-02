@@ -43,6 +43,17 @@ function withSprout(state: SimState, sproutType: 'ember' | 'dew' | 'sun' | 'star
   };
 }
 
+// Phase 2 instance model: every kind's original home is always `<kind>-1`.
+type HabitatKind = 'emberNook' | 'dewPond' | 'sunflowerMeadow';
+const originalInstance = (habitatId: HabitatKind): string => `${habitatId}-1`;
+// An original instance at the given (default: full) occupancy, for "no room
+// left" fixtures — the count is the whole instance, not a stored capacity.
+function fullInstance(habitatId: HabitatKind, count: number = CAP): SimState['habitats'][number] {
+  return { id: originalInstance(habitatId), habitatId, tile: HABITAT_TILES[habitatId], count, builtAtTick: 0 };
+}
+const habitatCount = (state: SimState, habitatId: HabitatKind): number | undefined =>
+  state.habitats.find((h) => h.id === originalInstance(habitatId))?.count;
+
 describe('spawnSystem', () => {
   // GameRules §6.1 requires a Sprout on screen within the first five seconds,
   // so a FRESH garden starts with its spawn accumulator pre-elapsed
@@ -117,59 +128,73 @@ describe('spawnSystem', () => {
 describe('adjudicatePlacement', () => {
   it('settles a correctly matched Sprout and counts it toward the unlock threshold', () => {
     const state = withSprout(createInitialSimState(1), 'ember');
-    const result = adjudicatePlacement(state, 'test-sprout', 'emberNook');
+    const result = adjudicatePlacement(state, 'test-sprout', originalInstance('emberNook'));
     expect(result.events.some((e) => e.type === 'sprout:placed:correct')).toBe(true);
     expect(result.events.some((e) => e.type === 'sprout:settled')).toBe(true);
     expect(result.state.correctPlacementCount).toBe(1);
-    expect(result.state.habitats.emberNook?.count).toBe(1);
+    expect(habitatCount(result.state, 'emberNook')).toBe(1);
     expect(result.state.sprouts[0].state).toBe('settled');
   });
 
   it('rejects a mismatched Sprout without settling it, and is a friendly retry (no error, no state loss)', () => {
     const state = withSprout(createInitialSimState(1), 'ember');
-    const result = adjudicatePlacement(state, 'test-sprout', 'dewPond');
-    expect(result.events).toEqual([{ type: 'sprout:placed:incorrect', sproutId: 'test-sprout', habitatId: 'dewPond' }]);
+    const result = adjudicatePlacement(state, 'test-sprout', originalInstance('dewPond'));
+    expect(result.events).toEqual([
+      {
+        type: 'sprout:placed:incorrect',
+        sproutId: 'test-sprout',
+        habitatId: 'dewPond',
+        habitatInstanceId: originalInstance('dewPond'),
+      },
+    ]);
     expect(result.state.correctPlacementCount).toBe(0);
     expect(result.state.sprouts[0].state).toBe('idle');
   });
 
   it('lets a Star Sprout settle in any habitat', () => {
-    for (const habitat of ['emberNook', 'dewPond', 'sunflowerMeadow'] as const) {
+      for (const habitat of ['emberNook', 'dewPond', 'sunflowerMeadow'] as const) {
       const state = withSprout(createInitialSimState(1), 'star');
-      const result = adjudicatePlacement(state, 'test-sprout', habitat);
+      const result = adjudicatePlacement(state, 'test-sprout', originalInstance(habitat));
       expect(result.events.some((e) => e.type === 'sprout:placed:correct')).toBe(true);
     }
   });
 
   it('rejects placement into an already-full habitat', () => {
     let state = createInitialSimState(1);
-    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: CAP, capacity: CAP } } };
+    state = { ...state, habitats: [fullInstance('emberNook')] };
     state = withSprout(state, 'ember');
-    const result = adjudicatePlacement(state, 'test-sprout', 'emberNook');
-    expect(result.events).toEqual([{ type: 'sprout:placed:incorrect', sproutId: 'test-sprout', habitatId: 'emberNook' }]);
+    const result = adjudicatePlacement(state, 'test-sprout', originalInstance('emberNook'));
+    expect(result.events).toEqual([
+      {
+        type: 'sprout:placed:incorrect',
+        sproutId: 'test-sprout',
+        habitatId: 'emberNook',
+        habitatInstanceId: originalInstance('emberNook'),
+      },
+    ]);
   });
 
   it('ignores a drop for a Sprout that is no longer idle (already mid-transport)', () => {
     const state = withSprout(createInitialSimState(1), 'ember', { state: 'transporting' });
-    const result = adjudicatePlacement(state, 'test-sprout', 'emberNook');
+    const result = adjudicatePlacement(state, 'test-sprout', originalInstance('emberNook'));
     expect(result.events).toEqual([]);
   });
 
   it('fires a journal discovery event only the first time a species settles', () => {
     const state = withSprout(createInitialSimState(1), 'ember');
-    const first = adjudicatePlacement(state, 'test-sprout', 'emberNook');
+    const first = adjudicatePlacement(state, 'test-sprout', originalInstance('emberNook'));
     expect(first.events.some((e) => e.type === 'journal:entryDiscovered')).toBe(true);
 
     const secondState = withSprout(first.state, 'ember', { id: 'test-sprout-2' });
-    const second = adjudicatePlacement(secondState, 'test-sprout-2', 'emberNook');
+    const second = adjudicatePlacement(secondState, 'test-sprout-2', originalInstance('emberNook'));
     expect(second.events.some((e) => e.type === 'journal:entryDiscovered')).toBe(false);
   });
 
   it('emits habitat:full exactly on the tick capacity is reached, not before or after', () => {
     let state = createInitialSimState(1);
-    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: CAP - 1, capacity: CAP } } };
+    state = { ...state, habitats: [fullInstance('emberNook', CAP - 1)] };
     state = withSprout(state, 'ember');
-    const result = adjudicatePlacement(state, 'test-sprout', 'emberNook');
+    const result = adjudicatePlacement(state, 'test-sprout', originalInstance('emberNook'));
     expect(result.events.some((e) => e.type === 'habitat:full')).toBe(true);
   });
 });
@@ -178,7 +203,7 @@ describe('dewdropSystem', () => {
   it('accrues Dewdrops from settled sprouts and flushes whole units', () => {
     let state = createInitialSimState(1);
     const settled = 3;
-    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: settled, capacity: CAP } } };
+    state = { ...state, habitats: [fullInstance('emberNook', settled)] };
     // Derived, not hardcoded: the accrual rate is a balance value that has
     // already changed once, and pinning a literal tick count here silently
     // turned this assertion into "expected 0 to be greater than 0" rather than
@@ -320,13 +345,13 @@ describe('automationSystem', () => {
     }
     expect(settled).toBe(true);
     expect(state.sprouts[0].state).toBe('settled');
-    expect(state.habitats.emberNook?.count).toBe(1);
+    expect(habitatCount(state, 'emberNook')).toBe(1);
   });
 
   it('does not dispatch toward an already-full habitat', () => {
     let state: SimState = {
       ...createInitialSimState(1),
-      habitats: { emberNook: { id: 'emberNook', count: CAP, capacity: CAP } },
+      habitats: [fullInstance('emberNook')],
       automations: [
         {
           id: 'gardenSlide-1',
@@ -393,7 +418,7 @@ describe('adjudicateAutomationDrop', () => {
 
   it('declines when the destination habitat is already full', () => {
     let state = withSprout(slideState(), 'ember');
-    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: CAP, capacity: CAP } } };
+    state = { ...state, habitats: [fullInstance('emberNook')] };
     const result = adjudicateAutomationDrop(state, 'test-sprout', 'gardenSlide');
     expect(result.events).toEqual([
       { type: 'sprout:automationDeclined', sproutId: 'test-sprout', automationId: 'gardenSlide', reason: 'destinationFull' },
@@ -617,7 +642,14 @@ describe('transport duration (sim is the single authority)', () => {
 describe('checkAchievements', () => {
   it('unlocks firstPlacement exactly once', () => {
     const state = createInitialSimState(1);
-    const events = [{ type: 'sprout:placed:correct' as const, sproutId: 'a', habitatId: 'emberNook' as const }];
+    const events = [
+      {
+        type: 'sprout:placed:correct' as const,
+        sproutId: 'a',
+        habitatId: 'emberNook' as const,
+        habitatInstanceId: originalInstance('emberNook'),
+      },
+    ];
     const first = checkAchievements(state, events);
     expect(first.events).toEqual([{ type: 'achievement:unlocked', achievementId: 'firstPlacement' }]);
     const second = checkAchievements(first.state, events);
@@ -665,7 +697,7 @@ describe('automation chain reachability (GameRules.md §9, §16)', () => {
     for (let i = 0; i < needed; i += 1) {
       const [habitat, type] = homes[i % homes.length];
       state = withSprout(state, type, { id: `manual-${i}` });
-      state = adjudicatePlacement(state, `manual-${i}`, habitat).state;
+      state = adjudicatePlacement(state, `manual-${i}`, originalInstance(habitat)).state;
     }
     expect(state.correctPlacementCount).toBe(needed); // no placement silently refused by a full home
     state = unlockSystem(state).state;

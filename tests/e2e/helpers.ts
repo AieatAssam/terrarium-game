@@ -11,10 +11,14 @@
 // but computed defensively rather than assumed, since a future viewport or
 // devicePixelRatio change could break that assumption silently).
 
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import type { EventBus, GameEvent, GameEventType } from '../../src/events';
 import type { UiState } from '../../src/ui/uiState';
 import type { SaveEnvelope } from '../../src/persistence/save';
+// Safe to import: src/render/layout.ts pulls in only src/sim/grid + src/sim/layout,
+// no Babylon deep specifiers (same rationale as the top-of-file header).
+import { AUTOMATION_SITE_TILES } from '../../src/render/layout';
+import type { AutomationId } from '../../src/core/ids';
 
 // Mirrors the dev-only globals src/ui/index.ts (__terrariumUIF) and
 // src/render/index.ts (__debug) attach to `window` when `isDev` is true —
@@ -180,6 +184,8 @@ export interface UiStateSnapshot {
   journalDiscovered: string[];
   lastBuiltAutomation: string | undefined;
   lastAchievementUnlocked: string | undefined;
+  habitatInstanceCounts: Record<string, number>;
+  habitatFullKinds: string[];
 }
 
 export async function getUiState(page: Page): Promise<UiStateSnapshot> {
@@ -193,6 +199,8 @@ export async function getUiState(page: Page): Promise<UiStateSnapshot> {
       journalDiscovered: Array.from(state.journalDiscovered).sort(),
       lastBuiltAutomation: state.lastBuiltAutomation,
       lastAchievementUnlocked: state.lastAchievementUnlocked,
+      habitatInstanceCounts: { ...state.habitatInstanceCounts },
+      habitatFullKinds: Array.from(state.habitatFullKinds).sort(),
     };
   });
 }
@@ -247,11 +255,16 @@ export async function popLastSpawnedId(page: Page): Promise<string> {
   return id;
 }
 
-/** Emits `sprout:dropped` directly on the bus for a known sprout id — the "fast path" the brief describes for exercising the real sim without a pointer drag (used for progression-heavy specs like the 20-placement Garden Slide unlock, where the point is sim logic, not input fidelity). */
+/** Emits `sprout:dropped` directly on the bus for a known sprout id — the "fast path" the brief describes for exercising the real sim without a pointer drag (used for progression-heavy specs like the 20-placement Garden Slide unlock, where the point is sim logic, not input fidelity). The drop targets the kind's ORIGINAL instance (`<kind>-1`, always present since Phase 2's instance model seeds it) — enough for specs that only ever drop on an original home. */
 export async function emitDropped(page: Page, sproutId: string, overHabitat: HabitatKey | null): Promise<void> {
   await page.evaluate(
     ([id, habitat]) => {
-      window.__terrariumUIF!.bus.emit({ type: 'sprout:dropped', sproutId: id as string, overHabitat: habitat as HabitatKey | null });
+      window.__terrariumUIF!.bus.emit({
+        type: 'sprout:dropped',
+        sproutId: id as string,
+        overHabitat: habitat as HabitatKey | null,
+        overHabitatInstance: habitat ? `${habitat}-1` : null,
+      });
     },
     [sproutId, overHabitat] as const,
   );
@@ -315,6 +328,38 @@ export async function buyUpgradeViaUI(page: Page, displayNameSubstring: string):
 export async function spawnAndDrop(page: Page, sproutType: SproutTypeKey, habitat: HabitatKey): Promise<void> {
   const id = await debugSpawnAndGetId(page, sproutType);
   await emitDropped(page, id, habitat);
+}
+
+const AUTOMATION_MENU_LABEL: Record<AutomationId, string> = {
+  gardenSlide: 'Garden Slide',
+  colourGate: 'Colour Gate',
+  moodBell: 'Mood Bell',
+};
+
+/**
+ * Places an already-unlocked automation through the REAL build menu + a
+ * canvas click at its canonical site tile (2026-08-01 manual placement —
+ * GameRules §9.8; the auto-build-on-unlock those older specs asserted was
+ * removed in Phase 1.2). Exercises exactly the path a player uses: build-menu
+ * button -> enterBuildMode -> ghost preview -> click-to-commit ->
+ * sim.placeAutomation. Requires installBusRecorder to have run first.
+ */
+export async function placeAutomationViaBuildMenu(page: Page, automationId: AutomationId): Promise<void> {
+  const label = AUTOMATION_MENU_LABEL[automationId];
+  const site = AUTOMATION_SITE_TILES[automationId];
+  // Non-exact name match on purpose: once selected, the build menu appends
+  // " (selected — click to cancel placement)" to the label, so an exact
+  // match would find nothing after the first click. Scoped to the build menu
+  // toolbar because the Garden menu's nav bar also carries a same-named
+  // button (it opens the build-mode sheet for that automation).
+  const toolbar = page.getByRole('toolbar', { name: 'Build menu' });
+  const button = toolbar.getByRole('button', { name: new RegExp(`^${label}`) });
+  await expect(button, `build menu should offer "${label}" once it is unlocked`).toBeVisible();
+  await button.click();
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  const screen = await projectToScreen(page, { x: site.x, y: 0, z: site.z });
+  await page.mouse.click(screen.x, screen.y);
+  await expect.poll(async () => (await getUiState(page)).lastBuiltAutomation, { timeout: 10_000 }).toBe(automationId);
 }
 
 /**

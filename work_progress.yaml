@@ -449,6 +449,66 @@ completed:
 # In flight — uncommitted work in the tree RIGHT NOW
 # ---------------------------------------------------------------------------
 in_flight:
+  - owner: claude session 2026-08-02 (Phase 2 — buildable habitats, instance model)
+    files: >
+      PLAN: src/core/ids.ts (docs only), src/sim/state.ts, src/sim/systems.ts,
+      src/sim/layout.ts, src/sim/runtime.ts, src/data/habitats.ts,
+      src/data/offlineProgress.ts, src/persistence/save.ts, src/events/types.ts,
+      src/render/habitats.ts, src/render/sprouts.ts, src/render/automation.ts,
+      src/render/index.ts, src/input/index.ts, src/ui/uiState.ts,
+      src/ui/components/buildMenu.ts, src/main.ts, tests (sim.systems,
+      persistence.save, data.offlineProgress, sim.layout + new), docs
+      (CONTRACTS.md, ARCHITECTURE.md, GAME_DESIGN.md, plan.yaml status).
+      DO NOT touch src/render/propDims.ts or the conveyor subagent's additive
+      edits in src/render/automation.ts (see the entry below this one).
+    task: >
+      Implement plan.yaml Phase 2 (buildable habitats, GameRules §10.0): a
+      player can build an ADDITIONAL habitat of an existing kind for a Dewdrop
+      cost, reusing Phase 1's placement/build-mode infrastructure.
+    status: >
+      IN PROGRESS (design recorded before edits; nothing committed yet).
+      THE ONE DECISION THIS SESSION EXISTS TO PIN — habitat id model for
+      player-built habitats. User chose the INSTANCE MODEL (recommended),
+      superseding the handoff summary's "own HabitatIds (emberNook2 etc.)":
+        * HabitatId stays the closed 3-kind union ('emberNook'|'dewPond'|
+          'sunflowerMeadow').
+        * New HabitatInstance layer mirrors AutomationInstance: {id: string
+          ('emberNook-1','emberNook-2',...), habitatId: HabitatId, tile:
+          TileCoord, count, capacity, builtAtTick}. The 3 originals become
+          instances at HABITAT_TILES with builtAtTick 0.
+        * SimState.habitats becomes HabitatInstance[] (array, like
+          automations) instead of Partial<Record<HabitatId, HabitatState>>;
+          habitatDewdropFraction keys become instance ids.
+        * Keep 3-key Record<HabitatId, X> ART/DATA tables where they are
+          per-KIND (HABITAT_BODIES, HABITAT_FALLBACK_COLOR/GLOW_COLOR, base
+          defs) — the instance layer sits on top and points at a kind.
+      OTHER APPROVED DESIGN (from the handoff, unchanged): build cost =
+      round5(500 * 1.9^(instancesOfKind - 1)) so the 2nd of a kind costs 500,
+      3rd 950, 4th 1805; FULL-NOW build gate (can only start building a new
+      habitat of kind X while some instance of X is AT capacity) plus enough
+      Dewdrops, deducted at commit; INSTANCE-AWARE RIDES — automations target
+      a KIND, and the sim resolves the nearest reachable instance of that
+      kind WITH ROOM at dispatch time (was: single fixed destination habitat).
+      Rides therefore reroute to a new instance the moment it's built; the
+      Slide only sits blocked when EVERY reachable instance of its kind is full.
+      RENDER APPROXIMATION (deliberate, mirrors the sim): the renderer tracks
+      all instances (tile/kind/count/capacity) from events + snapshot and shows
+      a Slide blocked iff every instance of its target kind is full — no BFS,
+      correct in every case the sim actually waits.
+      EVENTS: keep habitatId (kind) everywhere for art/UX; ADD
+      habitatInstanceId on sprout:dropped.overHabitat*, placed:correct/incorrect,
+      settled, habitat:full, habitat:dewdropTick; NEW habitat:built
+      {habitatId, habitatInstanceId, tile}. save:loaded snapshot gains
+      habitatInstances[] and fullHabitatInstances replaces fullHabitats.
+      SAVE: CURRENT_SAVE_VERSION 5 -> 6; migrateEnvelope converts v5's
+      Record<HabitatId,...> habitats into originals-seeded instances +
+      dewdropFraction re-keyed; normaliseEnvelope fills for v6 shape.
+      GATE: full-now + affordability are validated in the sim's
+      placeHabitat (single source of truth); UI only offers what it can see
+      via events (a new habitat:buildUnlock/hint is NOT added — the build
+      menu reads full habitat states from habitat:full events).
+    # checks: pending — record the real command results when green.
+
   - owner: claude session 2026-08-02 (Garden Transit — rules + plan revision)
     files: >
       COMMITTED as fecefe8 (docs/_scratch/GameRules.md, plan.yaml). A

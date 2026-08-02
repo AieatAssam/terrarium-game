@@ -30,6 +30,7 @@ import { createRippleRing, createSparkleBurst } from './particles';
 import { createStoneBodyMaterial } from './pbrMaterials';
 import { bodyRings, footprintRadius, halfHeight, HABITAT_BODIES, habitatTopY } from './propDims';
 import type { HabitatId } from '../core/ids';
+import type { EventBus } from '../events/bus';
 
 const HABITAT_FALLBACK_COLOR: Record<HabitatId, Color3> = {
   emberNook: new Color3(0.62, 0.32, 0.22),
@@ -43,8 +44,12 @@ const HABITAT_GLOW_COLOR: Record<HabitatId, Color3> = {
   sunflowerMeadow: new Color3(1, 0.9, 0.4),
 };
 
+/** One concrete habitat standing in the world (Phase 2 instance model). `id`
+ * is the habitat INSTANCE id (`emberNook-1`, `emberNook-2`, …); `habitatId`
+ * is its kind, which is what every art/data table keys on. */
 interface HabitatVisual {
-  id: HabitatId;
+  id: string;
+  habitatId: HabitatId;
   mesh: Mesh;
   /** The flat cap disc's material — this is what actually shows C's habitat
    * illustration (see buildHabitatMesh / flatArt.ts) and what reactive glow
@@ -65,14 +70,35 @@ interface HabitatVisual {
   baseEmissive: Color3;
 }
 
+/** Sim-side facts about a habitat instance, exposed so Sprouts/automations
+ * can lay themselves out against player-built habitats without reaching into
+ * SimState. */
+export interface HabitatInstanceInfo {
+  id: string;
+  habitatId: HabitatId;
+  tile: TileCoord;
+}
+
+/** Where a dropped Sprout landed: the concrete instance plus its kind. */
+export interface HabitatHit {
+  habitatInstanceId: string;
+  habitatId: HabitatId;
+}
+
 export interface HabitatManager {
-  get: (id: HabitatId) => HabitatVisual;
+  get: (habitatInstanceId: string) => HabitatVisual | undefined;
   all: () => HabitatVisual[];
+  getEntry: (habitatInstanceId: string) => HabitatInstanceInfo | null;
+  entries: () => HabitatInstanceInfo[];
   /** Nearest habitat whose footprint (plus `marginTiles` of extra forgiveness) contains `world`, or null. Used by input for drop-target + hover detection. */
-  nearestWithin: (world: { x: number; z: number }, marginTiles: number) => HabitatId | null;
-  setHover: (id: HabitatId | null, valid: boolean | null) => void;
-  reactCorrect: (id: HabitatId, motion: MotionConfig) => void;
-  reactIncorrect: (id: HabitatId, motion: MotionConfig) => void;
+  nearestWithin: (world: { x: number; z: number }, marginTiles: number) => HabitatHit | null;
+  setHover: (habitatInstanceId: string | null, valid: boolean | null) => void;
+  reactCorrect: (habitatInstanceId: string, motion: MotionConfig) => void;
+  reactIncorrect: (habitatInstanceId: string, motion: MotionConfig) => void;
+  /** Build-mode ghost for a player-built habitat (Phase 2): a translucent drum
+   * silhouette of the kind's art at `tile`, tinted valid/invalid. */
+  previewAt: (habitatId: HabitatId, tile: TileCoord, valid: boolean) => void;
+  clearPreview: () => void;
   dispose: () => void;
 }
 
@@ -90,10 +116,10 @@ export interface HabitatManager {
  * and outer radii are unchanged, so nothing that measures off the top face
  * moved.
  */
-function buildHabitatMesh(scene: Scene, id: HabitatId): Mesh {
-  const body = HABITAT_BODIES[id];
+function buildHabitatMesh(scene: Scene, name: string, habitatId: HabitatId): Mesh {
+  const body = HABITAT_BODIES[habitatId];
   return createRoundedPrism(
-    `terrarium.habitat.${id}`,
+    name,
     {
       halfWidth: body.halfWidth,
       halfDepth: body.halfDepth,
@@ -105,18 +131,19 @@ function buildHabitatMesh(scene: Scene, id: HabitatId): Mesh {
   );
 }
 
-export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenerator): HabitatManager {
-  const visuals = {} as Record<HabitatId, HabitatVisual>;
+export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenerator, bus: EventBus): HabitatManager {
+  const visuals = new Map<string, HabitatVisual>();
 
-  for (const id of Object.keys(HABITAT_TILES) as HabitatId[]) {
-    const tile = HABITAT_TILES[id];
+  const add = (info: HabitatInstanceInfo): void => {
+    if (visuals.has(info.id)) return;
+    const { id, habitatId, tile } = info;
     const world = tileToWorld(tile);
-    const body = HABITAT_BODIES[id];
-    const mesh = buildHabitatMesh(scene, id);
+    const body = HABITAT_BODIES[habitatId];
+    const mesh = buildHabitatMesh(scene, `terrarium.habitat.${id}`, habitatId);
     mesh.position.set(world.x, body.centreY, world.z);
     mesh.receiveShadows = true;
     mesh.isPickable = true;
-    mesh.metadata = { kind: 'habitat', habitatId: id, tile };
+    mesh.metadata = { kind: 'habitat', habitatId, habitatInstanceId: id, tile };
     shadowGenerator.addShadowCaster(mesh);
 
     // Drum body: no manifest texture (see flatArt.ts for why — default
@@ -124,7 +151,7 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
     // wall instead of showing it top-down) but a real PBR stone/ceramic
     // material — rounded bevels + bump + roughness variation + AO rather
     // than a flat StandardMaterial fill.
-    const bodyMaterial = createStoneBodyMaterial(scene, `terrarium.habitat.${id}.body.mat`, HABITAT_FALLBACK_COLOR[id]);
+    const bodyMaterial = createStoneBodyMaterial(scene, `terrarium.habitat.${id}.body.mat`, HABITAT_FALLBACK_COLOR[habitatId]);
     bodyMaterial.emissiveColor = Color3.Black();
     mesh.material = bodyMaterial;
 
@@ -143,27 +170,48 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
       scene,
       mesh,
       `terrarium.habitat.${id}.cap`,
-      `habitat.${id}.base`,
-      HABITAT_FALLBACK_COLOR[id],
+      `habitat.${habitatId}.base`,
+      HABITAT_FALLBACK_COLOR[habitatId],
       standeeSize,
       standeeSize,
       halfHeight(body),
     );
     cap.material.emissiveColor = Color3.Black();
 
-    visuals[id] = {
+    visuals.set(id, {
       id,
+      habitatId,
       mesh,
       material: cap.material,
       bodyMaterial,
       tile,
       worldCenter: world,
-      topCenter: { x: world.x, y: habitatTopY(id), z: world.z },
+      topCenter: { x: world.x, y: habitatTopY(habitatId), z: world.z },
       baseEmissive: Color3.Black(),
-    };
+    });
+  };
+
+  // The garden's three original homes, seeded before any bus event arrives so
+  // the very first frame already has them (same as the old HABITAT_TILES
+  // loop). A restored save's `save:loaded` replaces this set wholesale; a
+  // live `habitat:built` adds one.
+  for (const habitatId of Object.keys(HABITAT_TILES) as HabitatId[]) {
+    add({ id: `${habitatId}-1`, habitatId, tile: HABITAT_TILES[habitatId] });
   }
 
-  const nearestWithin = (world: { x: number; z: number }, marginTiles: number): HabitatId | null => {
+  const disposeVisual = (visual: HabitatVisual): void => {
+    visual.mesh.dispose(); // recursively disposes the cap child mesh too
+    visual.material.dispose();
+    visual.bodyMaterial.dispose();
+  };
+
+  const sync = (instances: HabitatInstanceInfo[]): void => {
+    for (const visual of visuals.values()) disposeVisual(visual);
+    visuals.clear();
+    for (const instance of instances) add(instance);
+  };
+
+  const nearestWithin = (world: { x: number; z: number }, marginTiles: number): HabitatHit | null => {
     // Continuous Euclidean distance against each habitat's real footprint,
     // not round-to-nearest-tile Manhattan distance against its centre tile.
     // The old approach rounded the drop point to a tile FIRST, so a drop near
@@ -173,16 +221,16 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
     // overcounts diagonal offsets. `marginTiles` is forgiveness ADDED beyond
     // the drum's visual edge (GameRules §10: "generous snapping ... no
     // pixel-perfect placement"), not the whole tolerance.
-    let best: HabitatId | null = null;
+    let best: HabitatHit | null = null;
     let bestDist = Infinity;
-    for (const visual of Object.values(visuals)) {
+    for (const visual of visuals.values()) {
       const dx = world.x - visual.worldCenter.x;
       const dz = world.z - visual.worldCenter.z;
       const d = Math.hypot(dx, dz);
-      const limit = footprintRadius(HABITAT_BODIES[visual.id]) + marginTiles;
+      const limit = footprintRadius(HABITAT_BODIES[visual.habitatId]) + marginTiles;
       if (d <= limit && d < bestDist) {
         bestDist = d;
-        best = visual.id;
+        best = { habitatInstanceId: visual.id, habitatId: visual.habitatId };
       }
     }
     return best;
@@ -193,15 +241,15 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
     visual.bodyMaterial.emissiveColor = color;
   };
 
-  const setHover = (id: HabitatId | null, valid: boolean | null): void => {
-    for (const visual of Object.values(visuals)) {
+  const setHover = (id: string | null, valid: boolean | null): void => {
+    for (const visual of visuals.values()) {
       if (visual.id !== id) {
         setGlow(visual, Color3.Black());
         visual.mesh.scaling.set(1, 1, 1);
         continue;
       }
       if (valid === true) {
-        setGlow(visual, HABITAT_GLOW_COLOR[id].scale(0.35));
+        setGlow(visual, HABITAT_GLOW_COLOR[visual.habitatId].scale(0.35));
         visual.mesh.scaling.set(1.05, 1.05, 1.05);
       } else if (valid === false) {
         setGlow(visual, new Color3(0.15, 0.05, 0.05));
@@ -213,8 +261,10 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
     }
   };
 
-  const reactCorrect = (id: HabitatId, motion: MotionConfig): void => {
-    const visual = visuals[id];
+  const reactCorrect = (id: string, motion: MotionConfig): void => {
+    const visual = visuals.get(id);
+    if (!visual) return;
+    const habitatId = visual.habitatId;
     visual.mesh.scaling.set(1, 1, 1);
     // Emitted from the drum's TOP face, not its tile centre: the burst's own
     // +0.3 internal offset off a tile-centre y of 0 landed at 0.30, inside an
@@ -225,13 +275,13 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
       color: undefined,
       count: Math.round(28 * motion.particleDensity) || 1,
     });
-    if (id === 'dewPond') createRippleRing(scene, visual.topCenter, 900 * (motion.backgroundMotion > 0 ? 1 : 0.6));
+    if (habitatId === 'dewPond') createRippleRing(scene, visual.topCenter, 900 * (motion.backgroundMotion > 0 ? 1 : 0.6));
 
-    swapManifestMaterialTexture(scene, visual.material, `habitat.${id}.base`); // re-affirm base texture in case a future "growth" variant key gets swapped in on repeated correct placements
+    swapManifestMaterialTexture(scene, visual.material, `habitat.${habitatId}.base`); // re-affirm base texture in case a future "growth" variant key gets swapped in on repeated correct placements
 
     const durationMs = motion.placementDurationMs;
     const start = performance.now();
-    const glow = HABITAT_GLOW_COLOR[id];
+    const glow = HABITAT_GLOW_COLOR[habitatId];
     const observer = scene.onBeforeRenderObservable.add(() => {
       const t = Math.min(1, (performance.now() - start) / durationMs);
       const pulse = Math.sin(Math.min(1, t) * Math.PI); // up then down within the duration
@@ -246,8 +296,9 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
     });
   };
 
-  const reactIncorrect = (id: HabitatId, motion: MotionConfig): void => {
-    const visual = visuals[id];
+  const reactIncorrect = (id: string, motion: MotionConfig): void => {
+    const visual = visuals.get(id);
+    if (!visual) return;
     const durationMs = Math.max(220, motion.placementDurationMs * 0.7);
     const start = performance.now();
     const amplitude = 0.06 * (motion.ambientIntensity > 0 ? 1 : 0.4);
@@ -261,21 +312,71 @@ export function createHabitatManager(scene: Scene, shadowGenerator: ShadowGenera
     });
   };
 
-  const dispose = (): void => {
-    for (const visual of Object.values(visuals)) {
-      visual.mesh.dispose(); // recursively disposes the cap child mesh too
-      visual.material.dispose();
-      visual.bodyMaterial.dispose();
+  // -------------------------------------------------------------------------
+  // Build-mode ghost for a player-built habitat (Phase 2, plan.yaml 2.2).
+  // A translucent drum silhouette of the kind's art — no standee card, since a
+  // ghost must read as a placement hint, not a finished habitat.
+  // -------------------------------------------------------------------------
+  let previewMesh: Mesh | null = null;
+  let previewKind: HabitatId | null = null;
+  let previewMaterial: PBRMetallicRoughnessMaterial | null = null;
+  const previewAt = (habitatId: HabitatId, tile: TileCoord, valid: boolean): void => {
+    if (!previewMaterial) {
+      previewMaterial = createStoneBodyMaterial(scene, 'terrarium.habitat.preview.mat', HABITAT_FALLBACK_COLOR[habitatId]);
+      previewMaterial.emissiveColor = Color3.Black();
+      previewMaterial.alpha = 0.55;
+      previewMaterial.transparencyMode = 2; // MATERIAL_ALPHABLEND
     }
+    if (!previewMesh || previewKind !== habitatId) {
+      if (previewMesh) previewMesh.dispose();
+      previewKind = habitatId;
+      previewMesh = buildHabitatMesh(scene, 'terrarium.habitat.preview', habitatId);
+      previewMesh.material = previewMaterial;
+      previewMesh.isPickable = false;
+    }
+    const world = tileToWorld(tile);
+    previewMesh.position.set(world.x, HABITAT_BODIES[habitatId].centreY, world.z);
+    previewMaterial.emissiveColor = valid ? new Color3(0.2, 0.5, 0.25) : new Color3(0.5, 0.12, 0.1);
+    previewMesh.setEnabled(true);
+  };
+  const clearPreview = (): void => {
+    previewMesh?.setEnabled(false);
+  };
+
+  const unsubscribers = [
+    bus.subscribe('habitat:built', (e) => add({ id: e.habitatInstanceId, habitatId: e.habitatId, tile: e.tile })),
+    // A restored save replays no `habitat:built` (and the originals are seeded
+    // above), so sync the exact instance set from the snapshot — including any
+    // player-built copies and their real tiles.
+    bus.subscribe('save:loaded', (e) => {
+      const restored = e.snapshot.habitatInstances;
+      if (restored) sync(restored.map(({ id, habitatId, tile }) => ({ id, habitatId, tile })));
+    }),
+  ];
+
+  const dispose = (): void => {
+    for (const unsubscribe of unsubscribers) unsubscribe();
+    for (const visual of visuals.values()) disposeVisual(visual);
+    visuals.clear();
+    previewMesh?.dispose();
+    previewMaterial?.dispose();
   };
 
   return {
-    get: (id) => visuals[id],
-    all: () => Object.values(visuals),
+    get: (id) => visuals.get(id),
+    all: () => Array.from(visuals.values()),
+    getEntry: (id) => {
+      const visual = visuals.get(id);
+      return visual ? { id: visual.id, habitatId: visual.habitatId, tile: visual.tile } : null;
+    },
+    entries: () =>
+      Array.from(visuals.values()).map((visual) => ({ id: visual.id, habitatId: visual.habitatId, tile: visual.tile })),
     nearestWithin,
     setHover,
     reactCorrect,
     reactIncorrect,
+    previewAt,
+    clearPreview,
     dispose,
   };
 }
@@ -691,23 +792,37 @@ interface SignVisual {
 
 export interface HabitatOccupancySigns {
   /**
-   * Shows/hides and (re)paints one habitat's sign. Cheap and idempotent: a
-   * call whose state and contrast mode match the last paint touches no canvas
-   * and allocates nothing. `animate` is false for a restored save, which must
-   * hydrate silently rather than replay a celebration for a population the
-   * player settled long ago.
+   * Shows/hides and (re)paints one habitat INSTANCE's sign, planting it at
+   * the instance's own tile (Phase 2 — a player-built Ember Nook gets its own
+   * sign in front of its own drum). Cheap and idempotent: a call whose state
+   * and contrast mode match the last paint touches no canvas and allocates
+   * nothing. `animate` is false for a restored save, which must hydrate
+   * silently rather than replay a celebration for a population the player
+   * settled long ago.
    */
-  set: (id: HabitatId, state: OccupancySignState, motion: MotionConfig, animate: boolean) => void;
+  set: (
+    habitatInstanceId: string,
+    tile: TileCoord,
+    state: OccupancySignState,
+    motion: MotionConfig,
+    animate: boolean,
+  ) => void;
   dispose: () => void;
 }
 
 export function createHabitatOccupancySigns(scene: Scene): HabitatOccupancySigns {
-  const signs = {} as Record<HabitatId, SignVisual>;
+  // Signs are created LAZILY, keyed by habitat INSTANCE id. The old code
+  // pre-built one per kind at HABITAT_TILES; with player-built copies there
+  // is no finite set to pre-build, and a sign for a habitat the player never
+  // overfills would be a disabled mesh sitting around for nothing.
+  const signs = new Map<string, SignVisual>();
 
-  for (const id of Object.keys(HABITAT_TILES) as HabitatId[]) {
-    const world = tileToWorld(HABITAT_TILES[id]);
+  const ensureSign = (habitatInstanceId: string, tile: TileCoord): SignVisual | null => {
+    const existing = signs.get(habitatInstanceId);
+    if (existing) return existing;
+    const world = tileToWorld(tile);
     const mesh = MeshBuilder.CreatePlane(
-      `terrarium.habitat.${id}.occupancy`,
+      `terrarium.habitat.${habitatInstanceId}.occupancy`,
       { width: SIGN_WIDTH, height: SIGN_HEIGHT },
       scene,
     );
@@ -721,7 +836,7 @@ export function createHabitatOccupancySigns(scene: Scene): HabitatOccupancySigns
     mesh.setEnabled(false);
 
     const texture = new DynamicTexture(
-      `terrarium.habitat.${id}.occupancy.tex`,
+      `terrarium.habitat.${habitatInstanceId}.occupancy.tex`,
       { width: SIGN_TEXTURE_WIDTH, height: SIGN_TEXTURE_HEIGHT },
       scene,
       true,
@@ -729,7 +844,7 @@ export function createHabitatOccupancySigns(scene: Scene): HabitatOccupancySigns
     );
     texture.hasAlpha = true;
 
-    const material = new PBRMetallicRoughnessMaterial(`terrarium.habitat.${id}.occupancy.mat`, scene);
+    const material = new PBRMetallicRoughnessMaterial(`terrarium.habitat.${habitatInstanceId}.occupancy.mat`, scene);
     material.baseTexture = texture;
     material.baseColor = Color3.White();
     material.metallic = 0;
@@ -751,8 +866,10 @@ export function createHabitatOccupancySigns(scene: Scene): HabitatOccupancySigns
     material.transparencyMode = Material.MATERIAL_ALPHABLEND;
     mesh.material = material;
 
-    signs[id] = { mesh, material, texture, drawn: '', popObserver: null };
-  }
+    const sign = { mesh, material, texture, drawn: '', popObserver: null };
+    signs.set(habitatInstanceId, sign);
+    return sign;
+  };
 
   const paint = (sign: SignVisual, state: OccupancySignState): void => {
     const highContrast = prefersHighContrast();
@@ -792,13 +909,21 @@ export function createHabitatOccupancySigns(scene: Scene): HabitatOccupancySigns
     });
   };
 
-  const set = (id: HabitatId, state: OccupancySignState, motion: MotionConfig, animate: boolean): void => {
-    const sign = signs[id];
-    if (!sign) return;
+  const set = (
+    habitatInstanceId: string,
+    tile: TileCoord,
+    state: OccupancySignState,
+    motion: MotionConfig,
+    animate: boolean,
+  ): void => {
     if (!state.visible) {
-      sign.mesh.setEnabled(false);
+      // Hidden: drop the mesh without creating anything for this instance yet
+      // (lazy sign creation is for populations that actually outgrow the slots).
+      signs.get(habitatInstanceId)?.mesh.setEnabled(false);
       return;
     }
+    const sign = ensureSign(habitatInstanceId, tile);
+    if (!sign) return;
     const wasHidden = !sign.mesh.isEnabled();
     const before = sign.drawn;
     paint(sign, state);
@@ -810,28 +935,32 @@ export function createHabitatOccupancySigns(scene: Scene): HabitatOccupancySigns
   // keep the palette they happened to be painted with. Same mechanism
   // motion.ts uses to watch the reduced-motion attribute.
   let contrastObserver: MutationObserver | undefined;
-  const lastState = new Map<HabitatId, OccupancySignState>();
+  const lastState = new Map<string, OccupancySignState>();
   if (typeof MutationObserver === 'function' && typeof document !== 'undefined' && document.documentElement) {
     contrastObserver = new MutationObserver(() => {
-      for (const [id, state] of lastState) paint(signs[id], state);
+      for (const [id, state] of lastState) {
+        const sign = signs.get(id);
+        if (sign) paint(sign, state);
+      }
     });
     contrastObserver.observe(document.documentElement, { attributes: true, attributeFilter: [CONTRAST_ATTRIBUTE] });
   }
 
   return {
-    set: (id, state, motion, animate) => {
-      lastState.set(id, state);
-      set(id, state, motion, animate);
+    set: (habitatInstanceId, tile, state, motion, animate) => {
+      lastState.set(habitatInstanceId, state);
+      set(habitatInstanceId, tile, state, motion, animate);
     },
     dispose: () => {
       contrastObserver?.disconnect();
       lastState.clear();
-      for (const sign of Object.values(signs) as SignVisual[]) {
+      for (const sign of signs.values()) {
         if (sign.popObserver) scene.onBeforeRenderObservable.remove(sign.popObserver);
         sign.mesh.dispose();
         sign.material.dispose();
         sign.texture.dispose();
       }
+      signs.clear();
     },
   };
 }

@@ -739,12 +739,41 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     }
   }
 
-  // Habitats known to be at capacity. Kept as a set rather than resolved
-  // eagerly onto each site because `habitat:full` routinely fires BEFORE the
-  // Garden Slide exists: the Slide unlocks at 20 correct manual placements,
-  // which at base capacity means a habitat has already filled and reported it.
-  // Seeded on load from `save:loaded`, since `habitat:full` never replays.
-  const fullHabitats = new Set<HabitatId>();
+  // Habitats known to be at capacity. Kept per INSTANCE (Phase 2) rather than
+  // resolved eagerly onto each site because `habitat:full` routinely fires
+  // BEFORE the Garden Slide exists: the Slide unlocks at 20 correct manual
+  // placements, which at base capacity means a habitat has already filled and
+  // reported it. Seeded on load from `save:loaded`, since `habitat:full`
+  // never replays.
+  const fullHabitatInstances = new Set<string>();
+  // Every instance of each kind, so "is this kind blocked by fullness" can be
+  // derived as "every instance of it is full" — a player-built second Ember
+  // Nook with room still takes deliveries even while the original is full.
+  // Fed from the seeded originals + `save:loaded.habitatInstances` +
+  // `habitat:built`. The originals MUST be seeded here (mirroring
+  // createHabitatManager in habitats.ts) or `kindBlocked` returns false for
+  // every kind on a FRESH load — no `save:loaded` and no `habitat:built` for
+  // seeded instances means the map stays empty, `destinationFull` never gets
+  // set from `habitat:full`, and the Slide can never show its blocked wait
+  // bead even with a genuinely full destination.
+  const habitatInstancesByKind = new Map<HabitatId, Set<string>>();
+  const registerHabitatInstance = (habitatId: HabitatId, instanceId: string): void => {
+    let instances = habitatInstancesByKind.get(habitatId);
+    if (!instances) {
+      instances = new Set();
+      habitatInstancesByKind.set(habitatId, instances);
+    }
+    instances.add(instanceId);
+  };
+  for (const habitatId of Object.keys(HABITAT_TILES) as HabitatId[]) {
+    registerHabitatInstance(habitatId, `${habitatId}-1`);
+  }
+  const kindBlocked = (habitatId: HabitatId): boolean => {
+    const instances = habitatInstancesByKind.get(habitatId);
+    if (!instances || instances.size === 0) return false;
+    for (const id of instances) if (!fullHabitatInstances.has(id)) return false;
+    return true;
+  };
 
   /** The Gate's rule as last announced, so a lamp can be re-evaluated when a
    * home fills or frees up without waiting for the rule itself to change. */
@@ -777,7 +806,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       const assigned = gateLanes[lane];
       const home = COLOUR_GATE_LANE_HABITATS[lane];
       const welcome = assigned ? SPROUT_TYPES[assigned]?.habitatId === home : false;
-      const waiting = assigned !== null && (!welcome || fullHabitats.has(home));
+      const waiting = assigned !== null && (!welcome || kindBlocked(home));
       const colour = waiting ? BLOCKED_GLOW.clone() : laneColour(assigned);
       lamp.material.baseColor.copyFrom(colour);
       lamp.material.emissiveColor.copyFrom(colour.scale(assigned ? 0.75 : 0.15));
@@ -795,7 +824,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     if (!site) return;
     if (targetHabitatId) {
       site.targetHabitatId = targetHabitatId;
-      site.destinationFull = fullHabitats.has(targetHabitatId);
+      site.destinationFull = kindBlocked(targetHabitatId);
     }
     if (site.built) return;
     // siteTile is only absent from the sprout:transportStarted fallback path
@@ -835,11 +864,12 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     // placement) — an unlocked-but-unplaced automation has nothing to mark
     // built yet.
     bus.subscribe('save:loaded', (e) => {
-      for (const habitatId of e.snapshot.fullHabitats ?? []) fullHabitats.add(habitatId);
+      for (const instanceId of e.snapshot.fullHabitatInstances ?? []) fullHabitatInstances.add(instanceId);
+      for (const instance of e.snapshot.habitatInstances ?? []) registerHabitatInstance(instance.habitatId, instance.id);
       const targets = e.snapshot.automationTargets ?? {};
       const restoredSites = e.snapshot.automationSites ?? {};
-      // Targets first, then fullHabitats above, so a garden that was jammed
-      // when the player left still reads as jammed when they return.
+      // Targets first, then fullHabitatInstances above, so a garden that was
+      // jammed when the player left still reads as jammed when they return.
       for (const id of Object.keys(restoredSites) as AutomationId[]) {
         const siteTile = restoredSites[id];
         if (siteTile) markBuilt(id, siteTile, targets[id] ?? null);
@@ -882,12 +912,23 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     // fires on the exact tick a habitat reaches capacity, which is the same
     // condition automationSystem checks before declining to dispatch.
     bus.subscribe('habitat:full', (e) => {
-      fullHabitats.add(e.habitatId);
+      fullHabitatInstances.add(e.habitatInstanceId);
       for (const site of Object.values(sites)) {
-        if (site.targetHabitatId === e.habitatId) site.destinationFull = true;
+        if (site.targetHabitatId === e.habitatId) site.destinationFull = kindBlocked(e.habitatId);
       }
       // The Colour Gate has no single `targetHabitatId` — it routes per lane, so
       // its congestion lives on the lamps rather than on the structure.
+      refreshLaneLamps();
+    }),
+
+    // A brand-new habitat starts empty, so its kind is never blocked by
+    // fullness the moment one is built (Phase 2 — even if another copy is
+    // full, the new one takes deliveries).
+    bus.subscribe('habitat:built', (e) => {
+      registerHabitatInstance(e.habitatId, e.habitatInstanceId);
+      for (const site of Object.values(sites)) {
+        if (site.targetHabitatId === e.habitatId) site.destinationFull = kindBlocked(e.habitatId);
+      }
       refreshLaneLamps();
     }),
 
@@ -895,7 +936,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     // settled Sprout, so a capacity upgrade is the only way out of "full".
     bus.subscribe('upgrade:purchased', (e) => {
       if (e.upgradeId !== 'habitatCapacity') return;
-      fullHabitats.clear();
+      fullHabitatInstances.clear();
       for (const site of Object.values(sites)) site.destinationFull = false;
       refreshLaneLamps();
     }),

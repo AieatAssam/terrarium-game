@@ -20,8 +20,8 @@ import type { Scene } from '@babylonjs/core/scene';
 import { createManifestMaterial } from './assets';
 import { GARDEN_CAMERA_ALPHA } from './camera';
 import { tileToWorld, type TileCoord } from './coords';
-import { createHabitatOccupancySigns, occupancySignState } from './habitats';
-import { findPathRoute, HABITAT_TILES, NURSERY_TILE } from './layout';
+import { createHabitatOccupancySigns, occupancySignState, type HabitatManager } from './habitats';
+import { findPathRoute, NURSERY_TILE } from './layout';
 import { easingFn, getMotionConfig, prefersReducedMotion, type MotionConfig } from './motion';
 import { createMoodBadgeMaterial } from './pbrMaterials';
 import { createSparkleBurst } from './particles';
@@ -490,7 +490,13 @@ export interface SproutVisual {
   state: SproutVisualState;
   tile: TileCoord;
   held: boolean;
-  settledHabitat: HabitatId | null;
+  /**
+   * The habitat INSTANCE this Sprout is settled in (Phase 2 — instance ids
+   * like `emberNook-1`), or null. The concrete home is the instance; the kind
+   * is derived from it via the habitat manager whenever a capacity/art table
+   * is needed.
+   */
+  settledHabitatInstance: string | null;
   /** Which standing slot this Sprout claimed when it settled, or null if it
    * hasn't settled. Stored rather than recomputed because the crowd is laid
    * out again every time the population or capacity changes (see
@@ -535,7 +541,7 @@ const TYPE_FALLBACK_COLOR: Record<SproutTypeId, Color3> = {
  * (motion.ts's rule: core feedback gets calmer, never absent.) */
 const SETTLE_TUCK_DURATION_MS = 280;
 
-export function createSproutManager(scene: Scene, bus: EventBus): SproutManager {
+export function createSproutManager(scene: Scene, bus: EventBus, habitats: HabitatManager): SproutManager {
   const visuals = new Map<string, SproutVisual>();
   const signs = createHabitatOccupancySigns(scene);
 
@@ -807,7 +813,7 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
       state: 'reveal',
       tile: NURSERY_TILE,
       held: false,
-      settledHabitat: null,
+      settledHabitatInstance: null,
       settleIndex: null,
       waitSlot: null,
       wanderSeed: Math.random() * 1000,
@@ -906,16 +912,18 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
    * frame, and it allocates only the small offset object the pure slot helper
    * returns.
    */
-  const refreshHabitat = (habitatId: HabitatId, animate: boolean): void => {
-    const capacity = capacityOf(habitatId);
+  const refreshHabitat = (instanceId: string, animate: boolean): void => {
+    const entry = habitats.getEntry(instanceId);
+    if (!entry) return;
+    const capacity = capacityOf(entry.habitatId);
     let count = 0;
     for (const visual of visuals.values()) {
-      if (visual.settledHabitat === habitatId) count += 1;
+      if (visual.settledHabitatInstance === instanceId) count += 1;
     }
-    const world = tileToWorld(HABITAT_TILES[habitatId]);
-    const y = sproutSettleHeight(habitatId);
+    const world = tileToWorld(entry.tile);
+    const y = sproutSettleHeight(entry.habitatId);
     for (const visual of visuals.values()) {
-      if (visual.settledHabitat !== habitatId || visual.settleIndex === null) continue;
+      if (visual.settledHabitatInstance !== instanceId || visual.settleIndex === null) continue;
       const offset = sproutSettleOffset(visual.settleIndex, count, capacity);
       if (!offset) {
         // Beyond the visible slots: this Sprout is represented by the sign's
@@ -926,21 +934,23 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
       }
       visual.mesh.position.set(world.x + offset.x, y, world.z + offset.z);
     }
-    signs.set(habitatId, occupancySignState(count, capacity, SETTLE_VISIBLE_SLOTS), motionNow(), animate);
+    signs.set(instanceId, entry.tile, occupancySignState(count, capacity, SETTLE_VISIBLE_SLOTS), motionNow(), animate);
   };
 
   const refreshAllHabitats = (animate: boolean): void => {
-    for (const habitatId of Object.keys(HABITAT_TILES) as HabitatId[]) refreshHabitat(habitatId, animate);
+    for (const entry of habitats.entries()) refreshHabitat(entry.id, animate);
   };
 
   /** Plays the "and this one squeezes inside" shrink for an arrival that has no
    * standing slot left, then hides its sprite. */
-  const tuckAway = (visual: SproutVisual, habitatId: HabitatId, count: number, capacity: number): void => {
+  const tuckAway = (visual: SproutVisual, instanceId: string, count: number, capacity: number): void => {
+    const entry = habitats.getEntry(instanceId);
+    if (!entry) return;
     const motion = motionNow();
-    const world = tileToWorld(HABITAT_TILES[habitatId]);
+    const world = tileToWorld(entry.tile);
     // Slot 1 is the front row's middle position — the crowd's "doorway".
     const doorway = sproutSettleOffset(1, count, capacity);
-    if (doorway) visual.mesh.position.set(world.x + doorway.x, sproutSettleHeight(habitatId), world.z + doorway.z);
+    if (doorway) visual.mesh.position.set(world.x + doorway.x, sproutSettleHeight(entry.habitatId), world.z + doorway.z);
     const durationMs = motion.ambientIntensity > 0 ? SETTLE_TUCK_DURATION_MS : motion.revealDurationMs;
     const start = performance.now();
     tucking.add(visual.id);
@@ -1051,18 +1061,18 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
       // habitat's standee card — see sproutSettleOffset. The slot is claimed
       // once, here, and kept for the rest of the session.
       const alreadySettled = Array.from(visuals.values()).filter(
-        (v) => v.settledHabitat === e.habitatId && v.id !== e.sproutId,
+        (v) => v.settledHabitatInstance === e.habitatInstanceId && v.id !== e.sproutId,
       ).length;
-      visual.settledHabitat = e.habitatId;
+      visual.settledHabitatInstance = e.habitatInstanceId;
       visual.settleIndex = alreadySettled;
       visual.mesh.isPickable = false;
       setState(visual, 'settled');
       if (alreadySettled >= SETTLE_VISIBLE_SLOTS) {
         // No standing room left: this arrival is counted on the habitat's
         // occupancy sign instead of being stacked on an earlier Sprout.
-        tuckAway(visual, e.habitatId, alreadySettled + 1, capacityOf(e.habitatId));
+        tuckAway(visual, e.habitatInstanceId, alreadySettled + 1, capacityOf(e.habitatId));
       }
-      refreshHabitat(e.habitatId, true);
+      refreshHabitat(e.habitatInstanceId, true);
     }),
     // Restored save: Sprouts alive when the game was saved never re-emit
     // `sprout:spawned`, so without this the garden comes back visually empty
@@ -1083,10 +1093,11 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
         const visual = visuals.get(restored.id);
         if (!visual) continue;
         visual.mesh.scaling.set(1, 1, 1); // skip the reveal pop-in
-        if (restored.settled && restored.habitatId) {
-          visual.settledHabitat = restored.habitatId;
+        if (restored.settled && (restored.habitatInstanceId ?? (restored.habitatId && `${restored.habitatId}-1`))) {
+          const instanceId = restored.habitatInstanceId ?? `${restored.habitatId!}-1`;
+          visual.settledHabitatInstance = instanceId;
           visual.settleIndex = Array.from(visuals.values()).filter(
-            (v) => v.settledHabitat === restored.habitatId && v.id !== restored.id,
+            (v) => v.settledHabitatInstance === instanceId && v.id !== restored.id,
           ).length;
           visual.mesh.isPickable = false;
           setState(visual, 'settled');
@@ -1310,7 +1321,10 @@ export function createSproutManager(scene: Scene, bus: EventBus): SproutManager 
    * over open ground, and anything else is at the Nursery mound.
    */
   const shadowSurfaceY = (visual: SproutVisual): number => {
-    if (visual.settledHabitat !== null && visual.state === 'settled') return habitatTopY(visual.settledHabitat);
+    if (visual.settledHabitatInstance !== null && visual.state === 'settled') {
+      const entry = habitats.getEntry(visual.settledHabitatInstance);
+      if (entry) return habitatTopY(entry.habitatId);
+    }
     if (rides.has(visual.id)) return automationSiteTopY();
     if (visual.held) return 0;
     return nurseryTopY();

@@ -10,7 +10,7 @@ export type { SimRuntime } from './runtime';
 export { createInitialSimState, SIM_SHAPE_VERSION } from './state';
 export type {
   AutomationInstance,
-  HabitatState,
+  HabitatInstance,
   SimState,
   SproutInstance,
   SproutInstanceState,
@@ -20,6 +20,9 @@ export {
   automationSystem,
   checkAchievements,
   dewdropSystem,
+  habitatInstanceAtTile,
+  nearestReachableHabitatInstance,
+  placeHabitat,
   purchaseUpgrade,
   spawnSystem,
   TICK_SYSTEMS,

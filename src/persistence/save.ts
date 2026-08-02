@@ -3,11 +3,11 @@
 // SimState shape together; any SimState shape change bumps it, and a new
 // case is added to migrateEnvelope. v1 migration is a no-op stub.
 
-import { AUTOMATION_SITE_TILES, defaultColourGateLanes } from '../sim/layout';
+import { AUTOMATION_SITE_TILES, defaultColourGateLanes, HABITAT_TILES } from '../sim/layout';
 import { createInitialSimState, type SimState } from '../sim/state';
 import { idbDelete, idbGet, idbSet } from './db';
 
-export const CURRENT_SAVE_VERSION = 5;
+export const CURRENT_SAVE_VERSION = 6;
 
 const SAVE_KEY = 'default';
 
@@ -170,7 +170,40 @@ function migrateEnvelope(envelope: SaveEnvelope): SaveEnvelope {
       };
       return migrateEnvelope({ ...envelope, version: 5, sim: migratedSim });
     }
-    case 5:
+    case 5: {
+      // v5 predates buildable habitats (Phase 2, plan.yaml Phase 2.1/2.2 —
+      // the INSTANCE model): SimState.habitats was a
+      // Partial<Record<HabitatId, HabitatState>> (one entry per kind that had
+      // ever held a Sprout), and habitatDewdropFraction was keyed by kind.
+      // Every pre-existing home was by definition the original instance of
+      // its kind at HABITAT_TILES[kind], so each becomes `{kind}-1`; kinds
+      // with no entry get a fresh empty original instance (a v5 save could
+      // legitimately lack a kind nobody had ever settled, and `settleSprout`
+      // in v6 requires the instance to exist).
+      const sim = envelope.sim as unknown as Omit<SimState, 'habitats' | 'habitatDewdropFraction'> & {
+        habitats: Partial<Record<string, { id: string; count: number }>>;
+        habitatDewdropFraction: Partial<Record<string, number>>;
+      };
+      const habitats = (Object.keys(HABITAT_TILES) as Array<keyof typeof HABITAT_TILES>).map((habitatId) => ({
+        id: `${habitatId}-1`,
+        habitatId,
+        tile: HABITAT_TILES[habitatId],
+        count: sim.habitats[habitatId]?.count ?? 0,
+        builtAtTick: 0,
+      }));
+      const habitatDewdropFraction: Record<string, number> = {};
+      for (const [key, value] of Object.entries(sim.habitatDewdropFraction)) {
+        if (value === undefined) continue;
+        // Re-key from kind to that kind's original instance id.
+        habitatDewdropFraction[`${key}-1`] = value;
+      }
+      return migrateEnvelope({
+        ...envelope,
+        version: 6,
+        sim: { ...sim, shapeVersion: 6, habitats, habitatDewdropFraction } as SimState,
+      });
+    }
+    case 6:
       return envelope;
     default:
       // Unknown version (older pre-migration save, or a newer one this build

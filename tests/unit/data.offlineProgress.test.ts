@@ -5,17 +5,20 @@ import {
   OFFLINE_DEWDROP_CEILING,
 } from '../../src/data/offlineProgress';
 import { createInitialSimState, type SimState } from '../../src/sim/state';
+import { HABITAT_TILES } from '../../src/sim/layout';
 import { UPGRADES } from '../../src/data/upgrades';
 
 function stateWithSettledHabitats(counts: Partial<Record<'emberNook' | 'dewPond' | 'sunflowerMeadow', number>>): SimState {
   const base = createInitialSimState(1);
   return {
     ...base,
-    habitats: {
-      emberNook: { id: 'emberNook', count: counts.emberNook ?? 0, capacity: 6 },
-      dewPond: { id: 'dewPond', count: counts.dewPond ?? 0, capacity: 6 },
-      sunflowerMeadow: { id: 'sunflowerMeadow', count: counts.sunflowerMeadow ?? 0, capacity: 6 },
-    },
+    habitats: (Object.keys(HABITAT_TILES) as (keyof typeof HABITAT_TILES)[]).map((habitatId) => ({
+      id: `${habitatId}-1`,
+      habitatId,
+      tile: HABITAT_TILES[habitatId],
+      count: counts[habitatId] ?? 0,
+      builtAtTick: 0,
+    })),
   };
 }
 

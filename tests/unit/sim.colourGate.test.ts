@@ -44,6 +44,15 @@ import type { SproutTypeId } from '../../src/core/ids';
 
 const CAP = HABITATS.emberNook.baseCapacity;
 
+// Phase 2 instance model: every kind's original home is always `<kind>-1`.
+type HabitatKind = 'emberNook' | 'dewPond' | 'sunflowerMeadow';
+const originalInstance = (habitatId: HabitatKind): string => `${habitatId}-1`;
+function fullInstance(habitatId: HabitatKind): SimState['habitats'][number] {
+  return { id: originalInstance(habitatId), habitatId, tile: HABITAT_TILES[habitatId], count: CAP, builtAtTick: 0 };
+}
+const habitatCount = (state: SimState, habitatId: HabitatKind): number | undefined =>
+  state.habitats.find((h) => h.id === originalInstance(habitatId))?.count;
+
 /** A state with a built Colour Gate and nothing else automating. */
 function withGate(overrides: Partial<SimState> = {}): SimState {
   const base = createInitialSimState(1);
@@ -252,7 +261,7 @@ describe('a Sprout physically passing through the Gate', () => {
     const finished = drive(state, 100);
     expect(finished.events.some((e) => e.type === 'sprout:settled' && e.habitatId === 'emberNook')).toBe(true);
     expect(sproutById(finished.state, 'test-sprout')?.state).toBe('settled');
-    expect(finished.state.habitats.emberNook?.count).toBe(1);
+    expect(habitatCount(finished.state, 'emberNook')).toBe(1);
   });
 
   it('takes essentially as long in total as one direct ride would have', () => {
@@ -276,8 +285,8 @@ describe('a Sprout physically passing through the Gate', () => {
     state = drive(state, 400).state;
     expect(sproutById(state, 'e1')?.tile).toEqual(HABITAT_TILES.emberNook);
     expect(sproutById(state, 'd1')?.tile).toEqual(HABITAT_TILES.dewPond);
-    expect(state.habitats.emberNook?.count).toBe(1);
-    expect(state.habitats.dewPond?.count).toBe(1);
+    expect(habitatCount(state, 'emberNook')).toBe(1);
+    expect(habitatCount(state, 'dewPond')).toBe(1);
   });
 });
 
@@ -316,7 +325,7 @@ describe('the fallback: nobody vanishes, nobody is carried nowhere', () => {
     // move on by itself once room appears — never be lost, never bounce.
     let state = withSprout(withGate(), 'ember');
     state = runTick(state, [automationSystem]).state; // leg 1 boards
-    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: CAP, capacity: CAP } } };
+    state = { ...state, habitats: [fullInstance('emberNook')] };
 
     state = drive(state, 200).state;
     const waiting = sproutById(state, 'test-sprout');
@@ -324,7 +333,7 @@ describe('the fallback: nobody vanishes, nobody is carried nowhere', () => {
     expect(waiting?.tile).toEqual(COLOUR_GATE_TILE); // parked at the crossroads, visible and pickable
 
     // Habitat Room is bought: the way is clear and it carries on unaided.
-    state = { ...state, habitats: { emberNook: { id: 'emberNook', count: CAP, capacity: CAP } }, upgradeLevels: { habitatCapacity: 1 } };
+    state = { ...state, habitats: [fullInstance('emberNook')], upgradeLevels: { habitatCapacity: 1 } };
     state = drive(state, 300).state;
     expect(sproutById(state, 'test-sprout')?.state).toBe('settled');
   });
@@ -333,7 +342,7 @@ describe('the fallback: nobody vanishes, nobody is carried nowhere', () => {
     // §7.4: waiting Sprouts must never become unreachable. One paused at the
     // Gate is an ordinary idle Sprout and a drop on its home still works.
     const state = withSprout(withGate(), 'ember', 'test-sprout', COLOUR_GATE_TILE);
-    const result = adjudicatePlacement(state, 'test-sprout', 'emberNook');
+    const result = adjudicatePlacement(state, 'test-sprout', originalInstance('emberNook'));
     expect(result.events.some((e) => e.type === 'sprout:settled')).toBe(true);
   });
 
