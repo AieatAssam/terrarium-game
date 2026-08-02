@@ -19,7 +19,7 @@ meta:
   head: latest Phase 7.2 transit-migration commit (main; 52a0c98 = Phase 2 buildable habitats; 67bea9b = dependent-doc reconciliation, fecefe8 = Garden Transit rules+plan revision)
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
-  tests_passing: "348 unit tests / 31 files (re-verified 2026-08-02 via `npm test` — all green)"
+  tests_passing: "350 unit tests / 32 files (re-verified 2026-08-02 via `npm test` — all green)"
   check_command: npm run typecheck && npm run lint && npm test && npm run build
   note: >
     This meta block had gone stale twice (read a98b552/258 tests through
@@ -501,6 +501,23 @@ in_flight:
       Phase 2's lost owner marker. plan.yaml retains its documented repeated
       top-level `steps:` format, which strict YAML parsers reject. Next: 7.3
       runtime/domain integration.
+      7.3 INTENT (2026-08-02): add the serializable Transit port/configuration
+      types and pure route-state derivation without touching rendering, UI,
+      pricing, or save versioning. Keep legacy Colour Gate/Mood Bell
+      AutomationInstance entries intact while Slides/Conveyors remain their
+      own N-instance collections; add only domain events and focused unit
+      coverage. Browser verification will be a fresh-tab app smoke test after
+      the full check command, since plan 7.3 has no player-facing flow yet.
+      7.3 DONE (2026-08-02): added TransitArtifactKind, Port and optional
+      Slide/Conveyor port/filter/destination fields with deterministic legacy
+      fallbacks, three transit events, deterministic artifact enumeration, and
+      O(artifacts) route-state derivation. Added 2 tests covering JSON
+      round-trip, 3 Slides, 10/30 Conveyor fixtures, disabled/invalid/missing
+      states. Verification passed: typecheck, lint, 350 tests, build, and a
+      fresh in-app-browser tab with one Babylon canvas and no runtime errors.
+      Browser note: existing warning only — missing Mood Bell manifest key uses
+      the renderer placeholder. No browser gameplay scenario was applicable;
+      7.3 has no player-facing flow.
   - owner: claude session 2026-08-02 (Phase 2 — buildable habitats, instance model)
     files: >
       PLAN: src/core/ids.ts (docs only), src/sim/state.ts, src/sim/systems.ts,

@@ -2,8 +2,9 @@
 // redefine or rename members here; report needed changes back for a
 // CONTRACTS.md update first.
 
-import type { AchievementId, AutomationId, HabitatId, MoodId, SproutTypeId, UpgradeId } from '../core/ids';
+import type { AchievementId, AutomationId, HabitatId, MoodId, SproutTypeId, TransitArtifactKind, UpgradeId } from '../core/ids';
 import type { TileCoord } from '../sim/grid';
+import type { ConveyorSegment, Port, RouteState, SlideInstance } from '../sim/state';
 
 export type GameEvent =
   | { type: 'sprout:spawned'; sproutId: string; sproutType: SproutTypeId; mood: MoodId; podId: string }
@@ -123,6 +124,9 @@ export type GameEvent =
        */
       targetHabitatId?: HabitatId;
     }
+  | { type: 'transit:slideBuilt'; slide: SlideInstance; entryPort: Port; exitPort: Port }
+  | { type: 'transit:conveyorBuilt'; conveyor: ConveyorSegment; entryPort: Port; exitPort: Port }
+  | { type: 'transit:routeStateChanged'; artifactId: string; artifactKind: TransitArtifactKind; state: RouteState }
   | { type: 'automation:unlocked'; automationId: AutomationId }
   | {
       /**

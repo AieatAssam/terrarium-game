@@ -1708,7 +1708,7 @@ steps:
 
   - phase: "7.3"
     title: Define the transit domain model — multiple Slides, Conveyors, ports, filters, route state
-    status: planned
+    status: completed
     why: >
       Every later task reads or writes this model. Getting the entities right
       once prevents the Slide, the Conveyor and the Gate each growing their
@@ -1752,7 +1752,11 @@ steps:
     save_compat: Shapes defined here are what 7.2 migrates INTO; land 7.2's test first.
     risk: Medium — the model is hard to change later. Review against GameRules §9.13–§9.15 line by line before implementing.
     commit: "feat(sim): define the Garden Transit domain model"
-    verification: Serialize/restore round-trip tests; pure-function route-state derivation tests.
+    verification: >
+      `tests/unit/sim.transit.test.ts` round-trips three Slides and a ten-segment
+      Conveyor route through JSON, checks all 33 artifacts in a 30-segment
+      fixture, and covers disabled, invalid and missing-artifact states.
+      Typecheck, lint, 350 unit tests, and production build pass.
     depends_on: ["7.1", "7.2"]
 
   - phase: "7.4"

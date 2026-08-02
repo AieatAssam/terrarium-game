@@ -5,7 +5,7 @@
 // intent: a drop, a purchase) from src/sim/runtime.ts, the one module
 // allowed to hold live mutable state and talk to the event bus.
 
-import type { AchievementId, AutomationId, HabitatId, MoodId, SproutTypeId, UpgradeId } from '../core/ids';
+import type { AchievementId, AutomationId, HabitatId, MoodId, SproutTypeId, TransitArtifactKind, UpgradeId } from '../core/ids';
 import type { GameEvent } from '../events/types';
 import { ACHIEVEMENT_LIST } from '../data/achievements';
 import { sproutMatchesHabitat, SPROUT_TYPES } from '../data/sproutTypes';
@@ -44,7 +44,7 @@ import {
   type ColourGateLane,
   type ColourGateLanes,
 } from './layout';
-import type { AutomationInstance, HabitatInstance, SimState, SproutInstance } from './state';
+import type { AutomationInstance, HabitatInstance, RouteState, SimState, SproutInstance } from './state';
 import type { TickResult } from './tick';
 
 // ---------------------------------------------------------------------------
@@ -58,6 +58,81 @@ import type { TickResult } from './tick';
 /** The habitat instance standing on `tile`, if any. */
 export function habitatInstanceAtTile(instances: readonly HabitatInstance[], tile: TileCoord): HabitatInstance | null {
   return instances.find((h) => sameTile(h.tile, tile)) ?? null;
+}
+
+export interface TransitArtifactRef {
+  id: string;
+  kind: TransitArtifactKind;
+  tile: TileCoord;
+}
+
+/** All route-bearing state in one deterministic order: Slides, Conveyors, then singleton helpers. */
+export function transitArtifacts(state: SimState): TransitArtifactRef[] {
+  return [
+    ...state.slides.map((slide) => ({ id: slide.id, kind: 'gardenSlide' as const, tile: slide.tile })),
+    ...state.conveyors.map((segment) => ({ id: segment.id, kind: 'sproutConveyor' as const, tile: segment.tile })),
+    ...state.automations.map((automation) => ({ id: automation.id, kind: automation.automationId, tile: automation.siteTile })),
+  ];
+}
+
+function transitTileKey(tile: TileCoord): string {
+  return `${tile.x},${tile.z}`;
+}
+
+function hasOrthogonalConveyorNeighbour(tile: TileCoord, conveyorKeys: ReadonlySet<string>): boolean {
+  return (
+    conveyorKeys.has(`${tile.x + 1},${tile.z}`) ||
+    conveyorKeys.has(`${tile.x - 1},${tile.z}`) ||
+    conveyorKeys.has(`${tile.x},${tile.z + 1}`) ||
+    conveyorKeys.has(`${tile.x},${tile.z - 1}`)
+  );
+}
+
+/**
+ * Derives the legible §9.15 state for every transit artifact in O(artifacts).
+ * This phase only owns model truth: active transport/backpressure details are
+ * added later, while disabled, invalid, waiting and idle are already useful.
+ */
+export function deriveTransitRouteStates(state: SimState): Record<string, RouteState> {
+  const states: Record<string, RouteState> = {};
+  const conveyorKeys = new Set(state.conveyors.map((segment) => transitTileKey(segment.tile)));
+  const duplicateConveyorKeys = new Set<string>();
+  const seenConveyorKeys = new Set<string>();
+  for (const segment of state.conveyors) {
+    const key = transitTileKey(segment.tile);
+    if (seenConveyorKeys.has(key)) duplicateConveyorKeys.add(key);
+    seenConveyorKeys.add(key);
+  }
+  const endpointKeys = new Set([
+    transitTileKey(NURSERY_TILE),
+    ...Object.values(HABITAT_TILES).map(transitTileKey),
+    ...state.slides.map((slide) => transitTileKey(slide.tile)),
+    ...state.automations.map((automation) => transitTileKey(automation.siteTile)),
+  ]);
+  const connected = (tile: TileCoord): boolean => endpointKeys.has(transitTileKey(tile)) || hasOrthogonalConveyorNeighbour(tile, conveyorKeys);
+
+  for (const slide of state.slides) {
+    if (!slide.enabled) {
+      states[slide.id] = 'disabled';
+    } else if (!Object.prototype.hasOwnProperty.call(HABITAT_TILES, slide.destination)) {
+      states[slide.id] = 'invalid';
+    } else {
+      states[slide.id] = connected(slide.tile) ? 'idle' : 'waiting';
+    }
+  }
+
+  for (const segment of state.conveyors) {
+    const key = transitTileKey(segment.tile);
+    states[segment.id] = duplicateConveyorKeys.has(key) ? 'invalid' : connected(segment.tile) ? 'idle' : 'waiting';
+  }
+
+  for (const automation of state.automations) states[automation.id] = 'idle';
+  return states;
+}
+
+/** A missing artifact is invalid rather than silently treated as idle. */
+export function deriveTransitRouteState(state: SimState, artifactId: string): RouteState {
+  return deriveTransitRouteStates(state)[artifactId] ?? 'invalid';
 }
 
 /** Whether this instance has no room left right now (capacity is always derived live from its kind). */

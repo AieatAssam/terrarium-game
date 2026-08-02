@@ -12,6 +12,9 @@ export type MoodId = 'sunny' | 'sleepy';
 
 export type AutomationId = 'gardenSlide' | 'colourGate' | 'moodBell';
 
+/** All artifact kinds that can occupy the Garden Transit network. */
+export type TransitArtifactKind = 'gardenSlide' | 'sproutConveyor' | 'colourGate' | 'moodBell';
+
 export type UpgradeId =
   | 'podRhythm'
   | 'habitatCapacity'
