@@ -76,6 +76,7 @@ const ui = mountUI(document.body, bus, {
   onEnterBuildMode: (automationId) => inputHandle?.enterBuildMode(automationId),
   onEnterHabitatBuildMode: (habitatId) => inputHandle?.enterHabitatBuildMode(habitatId),
   onEnterTransitBuildMode: (kind) => inputHandle?.enterTransitBuildMode(kind),
+  onTransitConfigChanged: (config) => inputHandle?.setTransitConfig(config),
   onExitBuildMode: () => inputHandle?.exitBuildMode(),
   debug: {
     spawnSprout: (sproutType) => {
@@ -107,12 +108,10 @@ void bootstrap(root).then((result) => {
       onPlaceHabitat: (habitatId, tile) => {
         void simRuntimePromise.then((sim) => sim.placeHabitat(habitatId, tile));
       },
-      onPlaceTransit: (kind, tile) => {
+      onPlaceTransit: (kind, tile, config) => {
         void simRuntimePromise.then((sim) => {
           if (kind === 'gardenSlide') {
-            // Destination configuration is the next transit phase; 7.6 keeps
-            // the paid placement flow focused on the shared path surface.
-            sim.placeSlide({ tile, destination: 'sunflowerMeadow' });
+            sim.placeSlide({ tile, destination: config?.destination ?? 'sunflowerMeadow', acceptedKind: config?.acceptedKind });
           } else sim.placeConveyor(tile);
         });
       },
@@ -127,6 +126,9 @@ void bootstrap(root).then((result) => {
           if (kind === 'gardenSlide') sim.removeSlide(id);
           else sim.removeConveyor(id);
         });
+      },
+      onToggleTransit: (kind, id) => {
+        if (kind === 'gardenSlide') void simRuntimePromise.then((sim) => sim.toggleSlide(id));
       },
     });
     inputHandle = input;

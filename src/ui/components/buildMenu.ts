@@ -14,8 +14,9 @@
 // Both are reported back for the integrator to wire into a real command
 // path once one exists.
 
-import type { AutomationId, HabitatId } from '../../core/ids';
+import type { AutomationId, HabitatId, SproutTypeId } from '../../core/ids';
 import { habitatBuildCost, HABITATS } from '../../data/habitats';
+import { SPROUT_TYPES } from '../../data/sproutTypes';
 import {
   conveyorUnlockMessage,
   nextGardenSlidePrice,
@@ -39,6 +40,12 @@ export interface BuildModeEventDetail {
    * the menu is in habitat build mode for this kind instead. */
   habitatId?: HabitatId | null;
   transitKind?: PricedTransitKind | null;
+  transitConfig?: TransitBuildConfig;
+}
+
+export interface TransitBuildConfig {
+  acceptedKind: SproutTypeId | 'any';
+  destination: HabitatId;
 }
 
 export interface PlacementPreviewEventDetail {
@@ -52,6 +59,7 @@ export interface BuildMenuHooks {
   onEnterBuildMode?: (automationId: AutomationId) => void;
   onEnterHabitatBuildMode?: (habitatId: HabitatId) => void;
   onEnterTransitBuildMode?: (kind: PricedTransitKind) => void;
+  onTransitConfigChanged?: (config: TransitBuildConfig) => void;
   onExitBuildMode?: () => void;
 }
 
@@ -107,6 +115,7 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
   const element = el('div', { className: 'tt-buildmenu', role: 'toolbar', 'aria-label': 'Build menu' });
 
   let selected: Selection = null;
+  let transitConfig: TransitBuildConfig = { acceptedKind: 'any', destination: 'sunflowerMeadow' };
   // Cached buttons, keyed by automation/habitat id. render() updates these in
   // place (attributes/labels) and only creates/removes them when membership
   // actually changes — the store re-notifies on every dewdrop tick, and
@@ -138,7 +147,7 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
             : next?.kind === 'habitat'
               ? { automationId: null, habitatId: next.id }
               : next?.kind === 'transit'
-                ? { automationId: null, transitKind: next.id }
+                ? { automationId: null, transitKind: next.id, transitConfig: next.id === 'gardenSlide' ? transitConfig : undefined }
                 : { automationId: null },
       }),
     );
@@ -149,9 +158,25 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
     }
     if (next?.kind === 'automation') hooks.onEnterBuildMode?.(next.id);
     else if (next?.kind === 'habitat') hooks.onEnterHabitatBuildMode?.(next.id);
-    else if (next?.kind === 'transit') hooks.onEnterTransitBuildMode?.(next.id);
+    else if (next?.kind === 'transit') {
+      hooks.onEnterTransitBuildMode?.(next.id);
+      if (next.id === 'gardenSlide') hooks.onTransitConfigChanged?.(transitConfig);
+    }
     else hooks.onExitBuildMode?.();
     render();
+  }
+
+  function setTransitConfig(next: Partial<TransitBuildConfig>): void {
+    transitConfig = { ...transitConfig, ...next };
+    if (selected?.kind === 'transit' && selected.id === 'gardenSlide') {
+      hooks.onTransitConfigChanged?.(transitConfig);
+      dispatchEvent(
+        new CustomEvent<BuildModeEventDetail>(BUILD_MODE_EVENT, {
+          detail: { automationId: null, transitKind: 'gardenSlide', transitConfig },
+        }),
+      );
+      render();
+    }
   }
 
   function toggleAutomation(automationId: AutomationId): void {
@@ -306,7 +331,28 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
       }
     }
 
-    element.replaceChildren(...desiredAutomations, ...desiredTransit, ...desiredHabitats, placementStatus);
+    const configPanel = el('fieldset', { className: 'tt-transit-config' });
+    if (selected?.kind === 'transit' && selected.id === 'gardenSlide') {
+      configPanel.append(el('legend', {}, ['Garden Slide rule']));
+      const kindSelect = el('select', { 'aria-label': 'Accepted Sprout kind' }) as HTMLSelectElement;
+      kindSelect.append(el('option', { value: 'any' }, ['Any Sprout']));
+      for (const definition of Object.values(SPROUT_TYPES)) {
+        kindSelect.append(el('option', { value: definition.id }, [definition.displayName]));
+      }
+      kindSelect.value = transitConfig.acceptedKind;
+      kindSelect.addEventListener('change', () => setTransitConfig({ acceptedKind: kindSelect.value as TransitBuildConfig['acceptedKind'] }));
+      const destinationSelect = el('select', { 'aria-label': 'Slide destination' }) as HTMLSelectElement;
+      for (const habitatId of Object.keys(HABITATS) as HabitatId[]) {
+        destinationSelect.append(el('option', { value: habitatId }, [HABITATS[habitatId].displayName]));
+      }
+      destinationSelect.value = transitConfig.destination;
+      destinationSelect.addEventListener('change', () => setTransitConfig({ destination: destinationSelect.value as HabitatId }));
+      configPanel.append(
+        el('label', {}, ['Carries ', kindSelect]),
+        el('label', {}, ['To ', destinationSelect]),
+      );
+    }
+    element.replaceChildren(...desiredAutomations, ...desiredTransit, ...desiredHabitats, configPanel, placementStatus);
   }
 
   preloadManifestIcons(Object.values(AUTOMATION_MANIFEST_KEY));

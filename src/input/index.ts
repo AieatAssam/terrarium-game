@@ -21,7 +21,7 @@ import { Plane } from '@babylonjs/core/Maths/math.plane';
 // for createDynamicTexture).
 import '@babylonjs/core/Culling/ray';
 
-import type { AutomationId, HabitatId } from '../core/ids';
+import type { AutomationId, HabitatId, SproutTypeId } from '../core/ids';
 import type { PricedTransitKind } from '../data/transit';
 import { HABITATS } from '../data/habitats';
 import type { EventBus } from '../events/bus';
@@ -79,9 +79,15 @@ export interface InputHooks {
    * The sim's `placeHabitat` re-checks the full-now gate + cost + site on
    * commit, so this path can't overdraw even if the preview drifted. */
   onPlaceHabitat?: (habitatId: HabitatId, tile: TileCoord) => void;
-  onPlaceTransit?: (kind: PricedTransitKind, tile: TileCoord) => void;
+  onPlaceTransit?: (kind: PricedTransitKind, tile: TileCoord, config?: TransitBuildConfig) => void;
   onMoveTransit?: (kind: PricedTransitKind, id: string, tile: TileCoord) => void;
   onRemoveTransit?: (kind: PricedTransitKind, id: string) => void;
+  onToggleTransit?: (kind: PricedTransitKind, id: string) => void;
+}
+
+export interface TransitBuildConfig {
+  acceptedKind: SproutTypeId | 'any';
+  destination: HabitatId;
 }
 
 export interface InputHandle {
@@ -101,6 +107,7 @@ export interface InputHandle {
    * previews via `habitats.previewAt` and commits via `onPlaceHabitat`. */
   enterHabitatBuildMode: (habitatId: HabitatId) => void;
   enterTransitBuildMode: (kind: PricedTransitKind) => void;
+  setTransitConfig: (config: TransitBuildConfig) => void;
   /** Exits build mode (if active) and clears the ghost preview. Safe to call when not in build mode. */
   exitBuildMode: () => void;
   dispose: () => void;
@@ -126,7 +133,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   type BuildMode =
     | { kind: 'automation'; id: AutomationId }
     | { kind: 'habitat'; id: HabitatId }
-    | { kind: 'transit'; id: PricedTransitKind; movingId?: string }
+    | { kind: 'transit'; id: PricedTransitKind; movingId?: string; config?: TransitBuildConfig }
     | null;
   let buildMode: BuildMode = null;
   // Every PLACED automation's own site tile, tracked locally so build-mode
@@ -134,11 +141,12 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   // doesn't require reaching into SimState — this module only ever talks to
   // sim over the bus/hooks, never by reading it directly.
   const occupiedSiteTiles = new Map<AutomationId, TileCoord>();
-  const transitTiles = new Map<string, { kind: PricedTransitKind; tile: TileCoord }>();
+  const transitTiles = new Map<string, { kind: PricedTransitKind; tile: TileCoord; enabled?: boolean }>();
   let selectedTransit: { id: string; kind: PricedTransitKind } | null = null;
   let buildCursorTile: TileCoord | null = null;
   bus.subscribe('automation:built', (e) => occupiedSiteTiles.set(e.automationId, e.siteTile));
-  bus.subscribe('transit:slideBuilt', (e) => transitTiles.set(e.slide.id, { kind: 'gardenSlide', tile: e.slide.tile }));
+  bus.subscribe('transit:slideBuilt', (e) => transitTiles.set(e.slide.id, { kind: 'gardenSlide', tile: e.slide.tile, enabled: e.slide.enabled }));
+  bus.subscribe('transit:slideConfigured', (e) => transitTiles.set(e.slide.id, { kind: 'gardenSlide', tile: e.slide.tile, enabled: e.slide.enabled }));
   bus.subscribe('transit:conveyorBuilt', (e) => transitTiles.set(e.conveyor.id, { kind: 'sproutConveyor', tile: e.conveyor.tile }));
   bus.subscribe('transit:artifactMoved', (e) => transitTiles.set(e.artifactId, { kind: e.artifactKind, tile: e.tile }));
   bus.subscribe('transit:artifactRemoved', (e) => {
@@ -150,7 +158,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
       occupiedSiteTiles.set(id, tile);
     }
     transitTiles.clear();
-    for (const slide of e.snapshot.slides ?? []) transitTiles.set(slide.id, { kind: 'gardenSlide', tile: slide.tile });
+    for (const slide of e.snapshot.slides ?? []) transitTiles.set(slide.id, { kind: 'gardenSlide', tile: slide.tile, enabled: slide.enabled });
     for (const conveyor of e.snapshot.conveyors ?? []) transitTiles.set(conveyor.id, { kind: 'sproutConveyor', tile: conveyor.tile });
   });
 
@@ -237,6 +245,9 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     if (kind === 'gardenSlide' && !isValidAutomationSite('gardenSlide', tile, occupied)) {
       return { state: 'invalid', message: 'Garden Slides need a path tile with room to join.' };
     }
+    if (kind === 'gardenSlide' && !candidatePorts(kind, tile).some((candidate) => portsForTransit(movingId).some((port) => portsJoined(candidate, port)))) {
+      return { state: 'invalid', message: 'Join the Slide to a compatible garden port.' };
+    }
     return { state: 'valid', message: 'Ready to place on this tile.' };
   };
 
@@ -265,7 +276,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
       announceTransitPreview(buildMode.id, snapped.tile, feedback, snapped.snapped);
       if (feedback.state !== 'valid') return;
       if (buildMode.movingId) hooks.onMoveTransit?.(buildMode.id, buildMode.movingId, snapped.tile);
-      else hooks.onPlaceTransit?.(buildMode.id, snapped.tile);
+      else hooks.onPlaceTransit?.(buildMode.id, snapped.tile, buildMode.config);
       exitBuildMode();
       return;
     }
@@ -433,7 +444,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
           new CustomEvent(PLACEMENT_PREVIEW_EVENT, {
             detail: {
               state: 'valid',
-              message: `${transit.kind === 'gardenSlide' ? 'Garden Slide' : 'Sprout Conveyor'} selected. Press M to move or Delete to remove.`,
+              message: `${transit.kind === 'gardenSlide' ? 'Garden Slide' : 'Sprout Conveyor'} selected. Press M to move, D to ${transitTiles.get(transit.id)?.enabled === false ? 'enable' : 'disable'}, or Delete to remove.`,
               kind: transit.kind,
               tile: transitTiles.get(transit.id)?.tile ?? null,
             },
@@ -618,6 +629,11 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
       );
       return;
     }
+    if (event.key.toLowerCase() === 'd' && selectedTransit?.kind === 'gardenSlide') {
+      event.preventDefault();
+      hooks.onToggleTransit?.(selectedTransit.kind, selectedTransit.id);
+      return;
+    }
     if (event.key.toLowerCase() === 'm' && selectedTransit) {
       event.preventDefault();
       const moving = selectedTransit;
@@ -701,6 +717,11 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     previewTransit(kind, buildCursorTile);
   };
 
+  const setTransitConfig = (config: TransitBuildConfig): void => {
+    if (buildMode?.kind !== 'transit' || buildMode.id !== 'gardenSlide') return;
+    buildMode = { ...buildMode, config };
+  };
+
   const exitBuildMode = (): void => {
     buildMode = null;
     buildCursorTile = null;
@@ -724,6 +745,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     enterBuildMode,
     enterHabitatBuildMode,
     enterTransitBuildMode,
+    setTransitConfig,
     exitBuildMode,
     dispose,
   };

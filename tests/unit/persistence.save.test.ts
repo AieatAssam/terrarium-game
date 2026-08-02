@@ -5,7 +5,7 @@ import { idbSet } from '../../src/persistence/db';
 import { createInitialSimState, type SimState } from '../../src/sim/state';
 import { GARDEN_PATH_TILES, GARDEN_SLIDE_TILE, HABITAT_TILES, NURSERY_TILE, defaultColourGateLanes } from '../../src/sim/layout';
 
-/** The current (v7, instance-model) habitat array: all three originals, Ember Nook holding one Sprout. */
+/** The current (v8, configured-transit) habitat array: all three originals, Ember Nook holding one Sprout. */
 function instanceHabitats(): SimState['habitats'] {
   return (Object.keys(HABITAT_TILES) as (keyof typeof HABITAT_TILES)[]).map((habitatId) => ({
     id: `${habitatId}-1`,
@@ -118,7 +118,7 @@ describe('migration into v7 (Garden Transit)', () => {
     const loaded = await loadGame();
 
     expect(loaded?.version).toBe(CURRENT_SAVE_VERSION);
-    expect(loaded?.sim.shapeVersion).toBe(7);
+    expect(loaded?.sim.shapeVersion).toBe(8);
     expect(loaded?.sim.slides).toEqual([
       {
         id: 'slide-1',
@@ -127,6 +127,10 @@ describe('migration into v7 (Garden Transit)', () => {
         destination: 'sunflowerMeadow',
         enabled: true,
         builtAtTick: 42,
+        carryingSproutId: null,
+        fromTile: GARDEN_SLIDE_TILE,
+        toTile: HABITAT_TILES.sunflowerMeadow,
+        completesAtTick: null,
       },
     ]);
     expect(loaded?.sim.automations).toHaveLength(1);
@@ -186,14 +190,14 @@ describe('migration into v3 (Colour Gate rule + Nursery rhythm)', () => {
   }
 
   it('gives a returning v2 garden the safe recommended lane rule', async () => {
-    // A v2 save now migrates all the way to the CURRENT version (7, via the
+    // A v2 save now migrates all the way to the CURRENT version (8, via the
     // v3 Mood Bell step, v4 manual-placement step and v5 habitat-instance
     // step, all added after this v2->v3 migration was written) — v3 is no
     // longer terminal.
     await idbSet('default', v2Envelope());
     const loaded = await loadGame();
-    expect(loaded?.version).toBe(7);
-    expect(loaded?.sim.shapeVersion).toBe(7);
+    expect(loaded?.version).toBe(8);
+    expect(loaded?.sim.shapeVersion).toBe(8);
     expect(loaded?.sim.colourGateLanes).toEqual(defaultColourGateLanes());
   });
 
@@ -275,13 +279,13 @@ describe('migration into v4 (Mood Bell: per-sprout mood + moodBellRule)', () => 
   }
 
   it('backfills mood on every pre-existing sprout, defaulting to sunny', async () => {
-    // A v3 save now migrates all the way to the CURRENT version (7, via the
+    // A v3 save now migrates all the way to the CURRENT version (8, via the
     // v4 manual-placement step and v5 habitat-instance step, both added after
     // this v3->v4 migration was written) — v4 is no longer terminal.
     await idbSet('default', v3Envelope());
     const loaded = await loadGame();
-    expect(loaded?.version).toBe(7);
-    expect(loaded?.sim.shapeVersion).toBe(7);
+    expect(loaded?.version).toBe(8);
+    expect(loaded?.sim.shapeVersion).toBe(8);
     expect(loaded?.sim.sprouts).toHaveLength(1);
     for (const sprout of loaded?.sim.sprouts ?? []) {
       expect(sprout.mood).toBe('sunny');
@@ -361,8 +365,8 @@ describe('migration into v5 (manual placement: per-automation siteTile)', () => 
   it('backfills siteTile from the old fixed default tile for every pre-existing automation', async () => {
     await idbSet('default', v4Envelope());
     const loaded = await loadGame();
-    expect(loaded?.version).toBe(7);
-    expect(loaded?.sim.shapeVersion).toBe(7);
+    expect(loaded?.version).toBe(8);
+    expect(loaded?.sim.shapeVersion).toBe(8);
     const gate = loaded?.sim.automations.find((a) => a.automationId === 'colourGate');
     // These are the true historical values — AUTOMATION_SITE_TILES is where
     // every v4 build always placed them, there is no other tile they could
@@ -416,8 +420,8 @@ describe('migration into v6 (buildable habitats: the instance model)', () => {
   it('rebuilds the instance array from the old kind-keyed record, preserving counts and tiles', async () => {
     await idbSet('default', v5Envelope());
     const loaded = await loadGame();
-    expect(loaded?.version).toBe(7);
-    expect(loaded?.sim.shapeVersion).toBe(7);
+    expect(loaded?.version).toBe(8);
+    expect(loaded?.sim.shapeVersion).toBe(8);
     // Every kind gets an instance (even kinds a v5 save never settled — the
     // old record could legitimately lack them), at the fixed original tile,
     // with the old count preserved.

@@ -249,6 +249,36 @@ export const UI_CSS = /* css */ `
   height: 24px;
 }
 
+.tt-transit-config {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+  padding: 8px 10px;
+  border: 2px solid var(--tt-border);
+  border-radius: var(--tt-radius-md);
+  background: var(--tt-panel);
+  box-shadow: 0 4px 14px var(--tt-shadow);
+  color: var(--tt-text);
+  font-size: 0.78rem;
+}
+
+.tt-transit-config label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tt-transit-config select {
+  min-height: 32px;
+  max-width: 150px;
+  border: 1px solid var(--tt-border);
+  border-radius: var(--tt-radius-sm);
+  background: var(--tt-panel-raised);
+  color: var(--tt-text);
+  font: inherit;
+}
+
 .tt-buildmenu-status {
   max-width: 280px;
   padding: 8px 12px;

@@ -13,7 +13,7 @@ import {
 import { createInitialSimState, type SimState } from '../sim/state';
 import { idbDelete, idbGet, idbSet } from './db';
 
-export const CURRENT_SAVE_VERSION = 7;
+export const CURRENT_SAVE_VERSION = 8;
 
 const SAVE_KEY = 'default';
 
@@ -263,7 +263,28 @@ function migrateEnvelope(envelope: SaveEnvelope): SaveEnvelope {
         },
       });
     }
-    case 7:
+    case 7: {
+      // v7 introduced configured Slides but did not persist their ride slot.
+      // v8 adds the idle/active ride fields so a reload never strands a
+      // passenger; missing fields are an idle Slide, not a changed rule.
+      const sim = envelope.sim as SimState;
+      return migrateEnvelope({
+        ...envelope,
+        version: 8,
+        sim: {
+          ...sim,
+          shapeVersion: 8,
+          slides: sim.slides.map((slide) => ({
+            ...slide,
+            carryingSproutId: slide.carryingSproutId ?? null,
+            fromTile: slide.fromTile ?? slide.tile,
+            toTile: slide.toTile ?? HABITAT_TILES[slide.destination],
+            completesAtTick: slide.completesAtTick ?? null,
+          })),
+        },
+      });
+    }
+    case 8:
       return envelope;
     default:
       // Unknown version (older pre-migration save, or a newer one this build

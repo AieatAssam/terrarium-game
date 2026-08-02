@@ -1112,6 +1112,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     bus.subscribe('automation:built', (e) => markBuilt(e.automationId, e.siteTile, e.targetHabitatId ?? null)),
 
     bus.subscribe('transit:slideBuilt', (e) => addTransitMarker(e.slide.id, 'gardenSlide', e.slide.tile)),
+    bus.subscribe('transit:slideConfigured', (e) => addTransitMarker(e.slide.id, 'gardenSlide', e.slide.tile)),
     bus.subscribe('transit:conveyorBuilt', (e) => addTransitMarker(e.conveyor.id, 'sproutConveyor', e.conveyor.tile)),
     bus.subscribe('transit:artifactMoved', (e) => addTransitMarker(e.artifactId, e.artifactKind, e.tile)),
     bus.subscribe('transit:artifactRemoved', (e) => removeTransitMarker(e.artifactId)),

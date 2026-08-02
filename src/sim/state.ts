@@ -92,12 +92,14 @@ export interface AutomationInstance {
  * Garden Transit (GameRules §9.3, plan.yaml Phase 7 — 2026-08-02) domain
  * types. N-instance by design; the Colour Gate and Mood Bell stay ordinary
  * single `AutomationInstance`s (plan.yaml 7.2 non_goals). This is the shape
- * the v6→v7 save migration produces; 7.3+ wires it into the sim.
+ * the v7→v8 save migration produces; 7.8 wires configured Slides into the sim
+ * while ports and route state remain derived.
  *
  * Ports (entry/exit, §9.13) and route state are deliberately NOT stored:
  * ports are derived from artifact position + kind on load (plan.yaml 7.5),
- * and route state is a pure function of state (7.8). Mid-ride persistence is
- * 7.13's concern and has no fields here yet.
+ * and route state is a pure function of state (7.8). Ride fields are persisted
+ * now so a later save during transit can restore a safe state; full edit and
+ * removal safety is 7.13's concern.
  */
 
 /** The §9.14 accepted-kind filter: one Sprout kind, or `'any'` (the safe default). */
@@ -121,6 +123,12 @@ export interface SlideInstance {
   enabled: boolean;
   /** Tick this Slide was built — a migrated legacy Slide keeps its historical value. */
   builtAtTick: number;
+  /** The current ride, if any. Optional for v7 saves; v8 migration backfills idle values. */
+  carryingSproutId?: string | null;
+  /** Ride endpoints and completion tick, shared with the legacy helper model. */
+  fromTile?: TileCoord;
+  toTile?: TileCoord;
+  completesAtTick?: number | null;
 }
 
 /**
@@ -205,7 +213,7 @@ export interface SimState {
   nurseryWaitingCount: number;
 }
 
-export const SIM_SHAPE_VERSION = 7;
+export const SIM_SHAPE_VERSION = 8;
 
 export function createInitialSimState(seed: number): SimState {
   return {

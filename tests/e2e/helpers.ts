@@ -371,13 +371,24 @@ const TRANSIT_MENU_LABEL: Record<PricedTransitKind, string> = {
 };
 
 /** Places one paid transit artifact through the build menu and verifies the sim confirmed it. */
-export async function placeTransitViaBuildMenu(page: Page, kind: PricedTransitKind, tile: { x: number; z: number }): Promise<void> {
+export async function placeTransitViaBuildMenu(
+  page: Page,
+  kind: PricedTransitKind,
+  tile: { x: number; z: number },
+  config?: { acceptedKind?: string; destination?: string },
+): Promise<void> {
   const toolbar = page.getByRole('toolbar', { name: 'Build menu' });
   const button = toolbar.getByRole('button', { name: new RegExp(`^${TRANSIT_MENU_LABEL[kind]}`) });
   await expect(button, `build menu should offer "${TRANSIT_MENU_LABEL[kind]}"`).toBeVisible();
   const before = (await getUiState(page)).transitCounts[kind];
   await button.click();
   await expect(button).toHaveAttribute('aria-pressed', 'true');
+  if (kind === 'gardenSlide' && config?.acceptedKind) {
+    await toolbar.getByLabel('Accepted Sprout kind').selectOption(config.acceptedKind);
+  }
+  if (kind === 'gardenSlide' && config?.destination) {
+    await toolbar.getByLabel('Slide destination').selectOption(config.destination);
+  }
   const screen = await projectToScreen(page, { x: tile.x, y: 0, z: tile.z });
   await page.mouse.move(screen.x, screen.y);
   await page.mouse.click(screen.x, screen.y);

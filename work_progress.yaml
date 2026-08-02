@@ -16,10 +16,10 @@
 
 meta:
   updated: 2026-08-02
-  head: latest Phase 7.7 Garden Slide silhouette commit (main; 52a0c98 = Phase 2 buildable habitats; 67bea9b = dependent-doc reconciliation, fecefe8 = Garden Transit rules+plan revision)
+  head: latest Phase 7.8 multiple configured Slides commit (main; 52a0c98 = Phase 2 buildable habitats; 67bea9b = dependent-doc reconciliation, fecefe8 = Garden Transit rules+plan revision)
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
-  tests_passing: "364 unit tests / 35 files (re-verified 2026-08-02 via `npm test` — all green)"
+  tests_passing: "365 unit tests / 35 files (re-verified 2026-08-02 via the exact required gate — all green)"
   check_command: npm run typecheck && npm run lint && npm test && npm run build
   note: >
     This meta block had gone stale twice (read a98b552/258 tests through
@@ -605,6 +605,29 @@ in_flight:
       errors. The full required gate passed after the final implementation,
       evidence, and documentation changes: 364 unit tests / 35 files and a
       successful production build (existing Babylon chunk warnings only).
+      7.8 INTENT (2026-08-02): generalise the paid Slide lifecycle from
+      placement-only to multiple configured, deterministic routes. Add the
+      accepted-kind/destination configuration path, per-Slide enabled state,
+      save hydration for those fields, and sim dispatch/completion so two
+      Slides can run independently. Keep legacy Colour Gate/Mood Bell rides
+      intact, preserve explicit port validation, and verify the two-filter
+      flow plus reload/disable in a fresh browser scenario before marking
+      7.8 done.
+      7.8 DONE (2026-08-02): generalised Garden Slides into a configured
+      N-instance lifecycle. Added per-Slide accepted-kind, destination and
+      enabled state; explicit port-join validation; deterministic one-ride-per-
+      Slide dispatch/completion; safe idle recovery on removal; runtime
+      configuration/toggle persistence; v7→v8 save migration; and text
+      configuration selects in the build menu. The authored 7.7 silhouette is
+      reused for every instance and restores from save. Added a deterministic
+      unit flow for two filtered Slides plus a fresh-browser e2e covering both
+      Slides running together, save/load, reload selection, disable persistence,
+      and no post-disable dispatch from Slide 2. Evidence:
+      docs/visual-qa/transit/two-slides-{running,after-reload}.png. The exact
+      required gate passed: typecheck, lint, 365 unit tests / 35 files, and
+      production build (existing Babylon chunk warnings only). The e2e unlock
+      fixture was made race-safe by selecting debug spawns by pod id rather
+      than allowing a natural Nursery spawn to be dropped accidentally.
   - owner: claude session 2026-08-02 (Phase 2 — buildable habitats, instance model)
     files: >
       PLAN: src/core/ids.ts (docs only), src/sim/state.ts, src/sim/systems.ts,

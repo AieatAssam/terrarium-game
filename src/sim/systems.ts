@@ -55,7 +55,15 @@ import {
   type ColourGateLanes,
 } from './layout';
 import { type AutomationInstance, type ConveyorSegment, type HabitatInstance, type RouteState, type SimState, type SlideInstance, type SproutInstance, type TransitAcceptedKind } from './state';
-import { getConveyorPorts, getSlidePorts } from './ports';
+import {
+  getColourGatePorts,
+  getConveyorPorts,
+  getHabitatPorts,
+  getNurseryPorts,
+  getSlidePorts,
+  portsJoined,
+  type Port,
+} from './ports';
 import type { TickResult } from './tick';
 
 // ---------------------------------------------------------------------------
@@ -407,6 +415,12 @@ export interface SlidePlacement {
   acceptedKind?: TransitAcceptedKind;
 }
 
+export interface SlideConfiguration {
+  acceptedKind: TransitAcceptedKind;
+  destination: HabitatId;
+  enabled: boolean;
+}
+
 function occupiedTransitTiles(state: SimState): TileCoord[] {
   return [
     ...state.habitats.map((habitat) => habitat.tile),
@@ -414,6 +428,27 @@ function occupiedTransitTiles(state: SimState): TileCoord[] {
     ...state.slides.map((slide) => slide.tile),
     ...state.conveyors.map((conveyor) => conveyor.tile),
   ];
+}
+
+/** A new Slide must actually join the existing transit graph, not merely sit on painted path. */
+function slideHasCompatiblePort(state: SimState, tile: TileCoord): boolean {
+  const candidate = getSlidePorts({ id: 'slide-preview', tile });
+  const ports: Port[] = [getNurseryPorts().outboundDock];
+  for (const habitat of state.habitats) ports.push(getHabitatPorts(habitat.id, habitat.habitatId, habitat.tile).approachDock);
+  for (const slide of state.slides) {
+    const derived = getSlidePorts(slide);
+    ports.push(derived.entryPort, derived.exitPort);
+  }
+  for (const conveyor of state.conveyors) {
+    const derived = getConveyorPorts(conveyor);
+    ports.push(derived.entryPort, derived.exitPort);
+  }
+  const gate = state.automations.find((automation) => automation.automationId === 'colourGate');
+  if (gate) {
+    const derived = getColourGatePorts(gate.siteTile);
+    ports.push(derived.inboundPort, derived.lanePorts.west, derived.lanePorts.east);
+  }
+  return [candidate.entryPort, candidate.exitPort].some((next) => ports.some((port) => portsJoined(next, port)));
 }
 
 function isValidTileCoord(tile: TileCoord): boolean {
@@ -463,6 +498,8 @@ export function placeSlide(state: SimState, placement: SlidePlacement): TickResu
 
   const occupied = occupiedTransitTiles(state);
   if (!isValidAutomationSite('gardenSlide', placement.tile, occupied)) return { state, events: [] };
+  if (!slideHasCompatiblePort(state, placement.tile)) return { state, events: [] };
+  if (!findPathRoute(placement.tile, HABITAT_TILES[placement.destination])) return { state, events: [] };
 
   const cost = nextGardenSlidePrice(state.slides.length);
   const slide: SlideInstance = {
@@ -472,6 +509,10 @@ export function placeSlide(state: SimState, placement: SlidePlacement): TickResu
     destination: placement.destination,
     enabled: true,
     builtAtTick: state.tickCount,
+    carryingSproutId: null,
+    fromTile: NURSERY_TILE,
+    toTile: HABITAT_TILES[placement.destination],
+    completesAtTick: null,
   };
   const ports = getSlidePorts(slide);
   const dewdrops = state.dewdrops - cost;
@@ -509,11 +550,17 @@ export function placeConveyor(state: SimState, tile: TileCoord): TickResult {
 
 /** Removes a Slide and refunds the price of the last-owned Slide before removal. */
 export function removeSlide(state: SimState, slideId: string): TickResult {
-  if (!state.slides.some((slide) => slide.id === slideId)) return { state, events: [] };
+  const slide = state.slides.find((item) => item.id === slideId);
+  if (!slide) return { state, events: [] };
   const refund = gardenSlideRefund(state.slides.length);
   const dewdrops = state.dewdrops + refund;
+  const sprouts = slide.carryingSproutId
+    ? state.sprouts.map((sprout) =>
+        sprout.id === slide.carryingSproutId ? { ...sprout, state: 'idle' as const, tile: slide.tile } : sprout,
+      )
+    : state.sprouts;
   return {
-    state: { ...state, slides: state.slides.filter((slide) => slide.id !== slideId), dewdrops },
+    state: { ...state, slides: state.slides.filter((item) => item.id !== slideId), sprouts, dewdrops },
     events: [
       { type: 'transit:artifactRemoved', artifactId: slideId, artifactKind: 'gardenSlide', refund },
       { type: 'currency:dewdropsChanged', total: dewdrops, delta: refund },
@@ -537,13 +584,54 @@ export function removeConveyor(state: SimState, conveyorId: string): TickResult 
 /** Moves a placed Slide without charging or refunding; ownership stays intact. */
 export function moveSlide(state: SimState, slideId: string, tile: TileCoord): TickResult {
   const slide = state.slides.find((item) => item.id === slideId);
-  if (!slide || sameTile(slide.tile, tile)) return { state, events: [] };
+  if (!slide || slide.carryingSproutId || sameTile(slide.tile, tile)) return { state, events: [] };
   const occupied = occupiedTransitTiles(state).filter((occupiedTile) => !sameTile(occupiedTile, slide.tile));
   if (!isValidTileCoord(tile) || !isValidAutomationSite('gardenSlide', tile, occupied)) return { state, events: [] };
+  if (!slideHasCompatiblePort({ ...state, slides: state.slides.filter((item) => item.id !== slideId) }, tile)) return { state, events: [] };
   return {
-    state: { ...state, slides: state.slides.map((item) => (item.id === slideId ? { ...item, tile } : item)) },
+    state: {
+      ...state,
+      slides: state.slides.map((item) =>
+        item.id === slideId ? { ...item, tile, fromTile: tile, toTile: HABITAT_TILES[item.destination] } : item,
+      ),
+    },
     events: [{ type: 'transit:artifactMoved', artifactId: slideId, artifactKind: 'gardenSlide', tile }],
   };
+}
+
+/** Changes a Slide's pictorial rule without changing ownership or price. */
+export function configureSlide(state: SimState, slideId: string, configuration: SlideConfiguration): TickResult {
+  const slide = state.slides.find((item) => item.id === slideId);
+  if (!slide || (slide.carryingSproutId && !configuration.enabled)) return { state, events: [] };
+  if (
+    (configuration.acceptedKind !== 'any' && !Object.prototype.hasOwnProperty.call(SPROUT_TYPES, configuration.acceptedKind)) ||
+    !Object.prototype.hasOwnProperty.call(HABITATS, configuration.destination) ||
+    !findPathRoute(slide.tile, HABITAT_TILES[configuration.destination])
+  ) {
+    return { state, events: [] };
+  }
+  const next = { ...slide, ...configuration, toTile: HABITAT_TILES[configuration.destination] };
+  if (
+    next.acceptedKind === slide.acceptedKind &&
+    next.destination === slide.destination &&
+    next.enabled === slide.enabled
+  ) return { state, events: [] };
+  const ports = getSlidePorts(next);
+  return {
+    state: { ...state, slides: state.slides.map((item) => (item.id === slideId ? next : item)) },
+    events: [{ type: 'transit:slideConfigured', slide: next, ...ports }],
+  };
+}
+
+/** Toggles an idle Slide. An in-flight ride must finish before disabling. */
+export function toggleSlide(state: SimState, slideId: string): TickResult {
+  const slide = state.slides.find((item) => item.id === slideId);
+  if (!slide) return { state, events: [] };
+  return configureSlide(state, slideId, {
+    acceptedKind: slide.acceptedKind,
+    destination: slide.destination,
+    enabled: !slide.enabled,
+  });
 }
 
 /** Moves a placed Conveyor without charging or refunding; ownership stays intact. */
@@ -863,11 +951,15 @@ function beginRide(
   return { sprouts: nextSprouts, instance: nextInstance, event };
 }
 
-export function transportMsPerTile(instance: AutomationInstance, upgradeLevels: SimState['upgradeLevels']): number {
-  if (instance.automationId !== 'gardenSlide') return BASE_TRANSPORT_MS_PER_TILE;
+function transportMsPerKind(automationId: AutomationId, upgradeLevels: SimState['upgradeLevels']): number {
+  if (automationId !== 'gardenSlide') return BASE_TRANSPORT_MS_PER_TILE;
   const level = upgradeLevels.gardenSlideSpeed ?? 0;
   const factor = (1 - UPGRADES.gardenSlideSpeed.effect.magnitudePerLevel) ** level;
   return BASE_TRANSPORT_MS_PER_TILE * factor;
+}
+
+export function transportMsPerTile(instance: AutomationInstance, upgradeLevels: SimState['upgradeLevels']): number {
+  return transportMsPerKind(instance.automationId, upgradeLevels);
 }
 
 /**
@@ -884,7 +976,15 @@ export function transportDuration(
   upgradeLevels: SimState['upgradeLevels'],
   distanceTiles: number,
 ): { durationTicks: number; durationMs: number } {
-  const msPerTile = transportMsPerTile(instance, upgradeLevels);
+  return transportDurationForKind(instance.automationId, upgradeLevels, distanceTiles);
+}
+
+function transportDurationForKind(
+  automationId: AutomationId,
+  upgradeLevels: SimState['upgradeLevels'],
+  distanceTiles: number,
+): { durationTicks: number; durationMs: number } {
+  const msPerTile = transportMsPerKind(automationId, upgradeLevels);
   const durationTicks = Math.max(1, Math.round((msPerTile * distanceTiles) / TICK_MS));
   return { durationTicks, durationMs: durationTicks * TICK_MS };
 }
@@ -1017,6 +1117,94 @@ export function automationSystem(state: SimState): TickResult {
   }
 
   return { state: { ...working, automations: nextAutomations, sprouts }, events };
+}
+
+/** Runs each owned Slide in stable array order; the first eligible Slide wins a tie. */
+export function slideAutomationSystem(state: SimState): TickResult {
+  const events: GameEvent[] = [];
+  let working = state;
+  const completed = new Set<string>();
+
+  for (const slide of working.slides) {
+    if (!slide.carryingSproutId || slide.completesAtTick === null || slide.completesAtTick === undefined || working.tickCount < slide.completesAtTick) {
+      continue;
+    }
+    const sprout = working.sprouts.find((item) => item.id === slide.carryingSproutId);
+    if (sprout) {
+      events.push({ type: 'sprout:transportCompleted', sproutId: sprout.id, automationId: 'gardenSlide', instanceId: slide.id });
+      const arrived = slide.toTile ? habitatInstanceAtTile(working.habitats, slide.toTile) : null;
+      if (arrived && !instanceIsFull(working, arrived)) {
+        const result = settleSprout(working, sprout.id, arrived.id);
+        working = result.state;
+        events.push(...result.events);
+      } else {
+        // A destination can fill while a ride is underway. Return the Sprout
+        // to the Slide's entry tile; it remains idle and hand-pickable.
+        working = {
+          ...working,
+          sprouts: working.sprouts.map((item) =>
+            item.id === sprout.id ? { ...item, state: 'idle' as const, tile: slide.fromTile ?? slide.tile } : item,
+          ),
+        };
+      }
+    }
+    completed.add(slide.id);
+  }
+
+  if (completed.size > 0) {
+    working = {
+      ...working,
+      slides: working.slides.map((slide) =>
+        completed.has(slide.id) ? { ...slide, carryingSproutId: null, completesAtTick: null } : slide,
+      ),
+    };
+  }
+
+  let sprouts = working.sprouts;
+  const nextSlides: SlideInstance[] = [];
+  for (const slide of working.slides) {
+    if (!slide.enabled || slide.carryingSproutId) {
+      nextSlides.push(slide);
+      continue;
+    }
+    const destination = nearestReachableHabitatInstance(working, slide.tile, slide.destination);
+    if (!destination) {
+      nextSlides.push(slide);
+      continue;
+    }
+    const acceptedKind = slide.acceptedKind ?? 'any';
+    const sprout = findIdleAt(
+      sprouts,
+      NURSERY_TILE,
+      (item) => acceptedKind === 'any' || item.sproutType === acceptedKind,
+    );
+    if (!sprout) {
+      nextSlides.push(slide);
+      continue;
+    }
+    const fromTile = slide.tile;
+    const toTile = destination.tile;
+    const duration = transportDurationForKind('gardenSlide', working.upgradeLevels, tileDistance(fromTile, toTile));
+    sprouts = sprouts.map((item) => (item.id === sprout.id ? { ...item, state: 'transporting' as const, tile: toTile } : item));
+    nextSlides.push({
+      ...slide,
+      fromTile,
+      toTile,
+      carryingSproutId: sprout.id,
+      completesAtTick: working.tickCount + duration.durationTicks,
+    });
+    events.push({
+      type: 'sprout:transportStarted',
+      sproutId: sprout.id,
+      automationId: 'gardenSlide',
+      instanceId: slide.id,
+      fromTile,
+      toTile,
+      durationMs: duration.durationMs,
+    });
+  }
+
+  return { state: { ...working, slides: nextSlides, sprouts }, events };
 }
 
 /**
@@ -1278,7 +1466,7 @@ export function checkAchievements(state: SimState, events: readonly GameEvent[])
   return { state: { ...state, unlockedAchievements }, events: newEvents };
 }
 
-export const TICK_SYSTEMS = [spawnSystem, dewdropSystem, unlockSystem, automationSystem];
+export const TICK_SYSTEMS = [spawnSystem, dewdropSystem, unlockSystem, automationSystem, slideAutomationSystem];
 
 // Re-exported for runtime.ts / tests without reaching into ids.ts directly.
 export type { AutomationId };

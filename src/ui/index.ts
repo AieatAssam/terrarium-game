@@ -90,6 +90,7 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
     onEnterBuildMode: options.onEnterBuildMode,
     onEnterHabitatBuildMode: options.onEnterHabitatBuildMode,
     onEnterTransitBuildMode: options.onEnterTransitBuildMode,
+    onTransitConfigChanged: options.onTransitConfigChanged,
     onExitBuildMode: options.onExitBuildMode,
   });
   const toastRegion = createAchievementToastRegion(bus);

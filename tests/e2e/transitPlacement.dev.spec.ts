@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import {
   collectConsoleErrors,
+  debugSpawnAndGetId,
   getRecordedEvents,
   getUiState,
   installBusRecorder,
@@ -19,15 +20,22 @@ async function unlockTransit(page: Page): Promise<void> {
     }
     await Promise.resolve();
     const drops = [
-      ...Array.from({ length: 8 }, () => ['ember', 'emberNook'] as const),
-      ...Array.from({ length: 6 }, () => ['dew', 'dewPond'] as const),
-      ...Array.from({ length: 6 }, () => ['sun', 'sunflowerMeadow'] as const),
+      ...Array.from({ length: 6 }, () => ['ember', 'emberNook'] as const),
+      ...Array.from({ length: 7 }, () => ['dew', 'dewPond'] as const),
+      ...Array.from({ length: 7 }, () => ['sun', 'sunflowerMeadow'] as const),
     ];
     for (const [sproutType, habitat] of drops) {
       (document.querySelector(`[data-testid="debug-spawn-${sproutType}"]`) as HTMLButtonElement).click();
       await Promise.resolve();
       const spawned = window.__ttSpawnedIds ?? [];
-      const id = spawned[spawned.length - 1]?.id;
+      let debugIndex = -1;
+      for (let i = spawned.length - 1; i >= 0; i -= 1) {
+        if (spawned[i].podId === 'debug') {
+          debugIndex = i;
+          break;
+        }
+      }
+      const id = debugIndex >= 0 ? spawned.splice(debugIndex, 1)[0]?.id : undefined;
       if (!id) throw new Error('debug spawn did not record');
       window.__terrariumUIF!.bus.emit({
         type: 'sprout:dropped',
@@ -74,8 +82,9 @@ test.describe('Garden Transit placement', () => {
 
     await placeTransitViaBuildMenu(page, 'gardenSlide', GARDEN_SLIDE_TILE);
     await placeTransitViaBuildMenu(page, 'gardenSlide', { x: 8, z: 6 });
-    await placeTransitViaBuildMenu(page, 'gardenSlide', { x: 9, z: 6 });
-    await placeTransitViaBuildMenu(page, 'gardenSlide', { x: 7, z: 6 });
+    await placeTransitViaBuildMenu(page, 'sproutConveyor', { x: 8, z: 11 });
+    await placeTransitViaBuildMenu(page, 'gardenSlide', { x: 8, z: 10 });
+    await placeTransitViaBuildMenu(page, 'gardenSlide', { x: 8, z: 9 });
     for (const tile of [{ x: 7, z: 10 }, { x: 6, z: 10 }, { x: 7, z: 11 }]) {
       await placeTransitViaBuildMenu(page, 'sproutConveyor', tile);
     }
@@ -183,6 +192,57 @@ test.describe('Garden Transit placement', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(250);
     await page.screenshot({ path: 'docs/visual-qa/transit/slide-390.png' });
+    console_.assertNone();
+  });
+
+  test('runs two filtered Slides independently and persists their rules', async ({ page }) => {
+    test.setTimeout(150_000);
+    const console_ = collectConsoleErrors(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/');
+    await waitForDevHooks(page);
+    await installBusRecorder(page, ['sprout:transportStarted', 'sprout:transportCompleted', 'transit:slideConfigured', 'save:written']);
+    await unlockTransit(page);
+
+    await placeTransitViaBuildMenu(page, 'gardenSlide', { x: 8, z: 7 }, { acceptedKind: 'ember', destination: 'emberNook' });
+    await placeTransitViaBuildMenu(page, 'gardenSlide', { x: 8, z: 6 }, { acceptedKind: 'dew', destination: 'dewPond' });
+    await debugSpawnAndGetId(page, 'ember');
+    await debugSpawnAndGetId(page, 'dew');
+    await expect.poll(async () => (await getRecordedEvents(page)).filter((event) => event.type === 'sprout:transportStarted').length, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
+    const started = (await getRecordedEvents(page)).filter((event) => event.type === 'sprout:transportStarted');
+    expect(new Set(started.map((event) => event.instanceId))).toEqual(new Set(['slide-1', 'slide-2']));
+    await page.getByRole('toolbar', { name: 'Build menu' }).getByRole('button', { name: /^Garden Slide/ }).click();
+    await page.screenshot({ path: 'docs/visual-qa/transit/two-slides-running.png' });
+    await page.keyboard.press('Escape');
+    await expect.poll(async () => (await getRecordedEvents(page)).filter((event) => event.type === 'sprout:transportCompleted').length, { timeout: 20_000 }).toBeGreaterThanOrEqual(2);
+    await waitForSaveWritten(page);
+    let saved = await readSaveEnvelope(page);
+    expect(saved.sim.slides.map((slide) => ({ acceptedKind: slide.acceptedKind, destination: slide.destination, enabled: slide.enabled }))).toEqual([
+      { acceptedKind: 'ember', destination: 'emberNook', enabled: true },
+      { acceptedKind: 'dew', destination: 'dewPond', enabled: true },
+    ]);
+
+    await page.reload();
+    await waitForDevHooks(page);
+    await installBusRecorder(page, ['sprout:transportStarted', 'transit:slideConfigured', 'save:written']);
+    await expect.poll(async () => (await getUiState(page)).transitCounts.gardenSlide).toBe(2);
+    await frameGardenSlide(page, 8.5, { x: 8, y: 0, z: 6 });
+    const slideTwo = await projectToScreen(page, { x: 8, y: 0, z: 6 });
+    await page.mouse.click(slideTwo.x, slideTwo.y);
+    await expect(page.getByRole('toolbar', { name: 'Build menu' }).getByRole('status')).toContainText('Garden Slide selected');
+    await page.keyboard.press('d');
+    await expect.poll(async () => (await readSaveEnvelope(page)).sim.slides.find((slide) => slide.id === 'slide-2')?.enabled).toBe(false);
+
+    await debugSpawnAndGetId(page, 'ember');
+    await debugSpawnAndGetId(page, 'dew');
+    await page.waitForTimeout(3_000);
+    expect((await getRecordedEvents(page)).some((event) => event.type === 'sprout:transportStarted' && event.instanceId === 'slide-2')).toBe(false);
+    await page.mouse.click(slideTwo.x, slideTwo.y);
+    await expect(page.getByRole('toolbar', { name: 'Build menu' }).getByRole('status')).toContainText('Press M to move, D to enable');
+    await page.locator('.tt-debug-panel').evaluate((element) => element.remove());
+    await page.screenshot({ path: 'docs/visual-qa/transit/two-slides-after-reload.png' });
+    saved = await readSaveEnvelope(page);
+    expect(saved.sim.slides.find((slide) => slide.id === 'slide-2')?.enabled).toBe(false);
     console_.assertNone();
   });
 });

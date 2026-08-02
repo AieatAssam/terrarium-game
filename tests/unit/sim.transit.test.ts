@@ -10,8 +10,11 @@ import {
   placeSlide,
   removeConveyor,
   removeSlide,
+  configureSlide,
+  slideAutomationSystem,
   transitArtifacts,
   transitPlacementLockReason,
+  toggleSlide,
   unlockSystem,
 } from '../../src/sim/systems';
 import { GARDEN_PATH_TILES, GARDEN_SLIDE_TILE, HABITAT_TILES } from '../../src/sim/layout';
@@ -45,6 +48,38 @@ describe('Garden Transit domain model', () => {
     expect(restored.slides.map((slide) => slide.acceptedKind)).toEqual(['ember', 'dew', 'sun']);
     expect(restored.conveyors).toHaveLength(10);
     expect(transitArtifacts(restored)).toHaveLength(13);
+  });
+
+  it('runs multiple Slides in stable order, respects filters, completes delivery, and toggles safely', () => {
+    let state: SimState = {
+      ...createInitialSimState(17),
+      correctPlacementCount: UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements,
+      dewdrops: 1000,
+      sprouts: [
+        { id: 'ember-1', sproutType: 'ember' as const, mood: 'sunny' as const, tile: { x: 8, z: 8 }, state: 'idle' as const },
+        { id: 'dew-1', sproutType: 'dew' as const, mood: 'sleepy' as const, tile: { x: 8, z: 8 }, state: 'idle' as const },
+      ],
+    };
+    state = unlockSystem(state).state;
+    state = placeSlide(state, { tile: { x: 8, z: 7 }, destination: 'emberNook', acceptedKind: 'ember' }).state;
+    state = placeSlide(state, { tile: { x: 8, z: 6 }, destination: 'dewPond', acceptedKind: 'dew' }).state;
+
+    const started = slideAutomationSystem(state);
+    expect(started.events.filter((event) => event.type === 'sprout:transportStarted').map((event) => event.instanceId)).toEqual([
+      'slide-1',
+      'slide-2',
+    ]);
+    expect(started.state.sprouts.every((sprout) => sprout.state === 'transporting')).toBe(true);
+    const finishTick = Math.max(...started.state.slides.map((slide) => slide.completesAtTick ?? 0));
+    const finished = slideAutomationSystem({ ...started.state, tickCount: finishTick });
+    expect(finished.state.habitats.find((habitat) => habitat.habitatId === 'emberNook')?.count).toBe(1);
+    expect(finished.state.habitats.find((habitat) => habitat.habitatId === 'dewPond')?.count).toBe(1);
+
+    const disabled = toggleSlide(state, 'slide-2');
+    expect(disabled.state.slides.find((slide) => slide.id === 'slide-2')?.enabled).toBe(false);
+    expect(slideAutomationSystem(disabled.state).events.filter((event) => event.type === 'sprout:transportStarted').map((event) => event.instanceId)).toEqual(['slide-1']);
+    const configured = configureSlide(disabled.state, 'slide-2', { acceptedKind: 'dew', destination: 'dewPond', enabled: true });
+    expect(configured.state.slides.find((slide) => slide.id === 'slide-2')?.enabled).toBe(true);
   });
 
   it('derives route states from state for every artifact, including a 30-segment route', () => {
@@ -147,13 +182,13 @@ describe('Garden Transit domain model', () => {
     };
     state = unlockSystem(state).state;
     state = placeSlide(state, { tile: { x: 8, z: 7 }, destination: 'sunflowerMeadow' }).state;
-    state = placeSlide(state, { tile: { x: 7, z: 6 }, destination: 'dewPond' }).state;
+    state = placeSlide(state, { tile: { x: 8, z: 6 }, destination: 'dewPond' }).state;
     expect(state.dewdrops).toBe(580);
 
     const sold = removeSlide(state, 'slide-2');
     expect(sold.state.dewdrops).toBe(850);
     expect(sold.events).toEqual(expect.arrayContaining([{ type: 'currency:dewdropsChanged', total: 850, delta: 270 }]));
-    const rebought = placeSlide(sold.state, { tile: { x: 7, z: 6 }, destination: 'dewPond' });
+    const rebought = placeSlide(sold.state, { tile: { x: 8, z: 6 }, destination: 'dewPond' });
     expect(rebought.state.dewdrops).toBe(580);
 
     const conveyor = placeConveyor({ ...rebought.state, dewdrops: 15 }, { x: 7, z: 8 });
@@ -164,19 +199,22 @@ describe('Garden Transit domain model', () => {
     let state = {
       ...createInitialSimState(17),
       correctPlacementCount: UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements,
-      dewdrops: 500,
+      dewdrops: 1000,
     };
     state = unlockSystem(state).state;
     state = placeSlide(state, { tile: GARDEN_SLIDE_TILE, destination: 'sunflowerMeadow' }).state;
-    const moved = moveSlide(state, 'slide-1', { x: 7, z: 6 });
-    expect(moved.state.slides[0].tile).toEqual({ x: 7, z: 6 });
+    state = placeSlide(state, { tile: { x: 8, z: 6 }, destination: 'dewPond' }).state;
+    const route = placeConveyor({ ...state, dewdrops: 15 }, { x: 8, z: 10 });
+    state = route.state;
+    const moved = moveSlide(state, 'slide-1', { x: 8, z: 9 });
+    expect(moved.state.slides.find((slide) => slide.id === 'slide-1')?.tile).toEqual({ x: 8, z: 9 });
     expect(moved.state.dewdrops).toBe(state.dewdrops);
-    expect(moved.events).toEqual([{ type: 'transit:artifactMoved', artifactId: 'slide-1', artifactKind: 'gardenSlide', tile: { x: 7, z: 6 } }]);
+    expect(moved.events).toEqual([{ type: 'transit:artifactMoved', artifactId: 'slide-1', artifactKind: 'gardenSlide', tile: { x: 8, z: 9 } }]);
     expect(moveSlide(moved.state, 'slide-1', HABITAT_TILES.emberNook).state).toBe(moved.state);
 
     const conveyor = placeConveyor({ ...moved.state, dewdrops: 15 }, { x: 7, z: 8 });
     const conveyorMove = moveConveyor(conveyor.state, 'conveyor-7-8', { x: 7, z: 9 });
-    expect(conveyorMove.state.conveyors[0].tile).toEqual({ x: 7, z: 9 });
+    expect(conveyorMove.state.conveyors.find((segment) => segment.id === 'conveyor-7-8')?.tile).toEqual({ x: 7, z: 9 });
     expect(conveyorMove.state.dewdrops).toBe(0);
   });
 });

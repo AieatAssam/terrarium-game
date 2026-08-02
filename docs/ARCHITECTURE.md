@@ -44,7 +44,7 @@ Inbound player intent (a drop, a purchase) also flows over this same bus/direct-
 
 The Colour Gate's fork physically cannot reach Sunflower Meadow (its two lanes leave from the northern fork; the Meadow sits on the separate southern run) — this made the 2026-07-31 Garden Slide "always target Sunflower Meadow" rule the only way to reach it via automation. **Superseded 2026-08-01 (manual placement, GameRules §9.8, plan.yaml Phase 1):** every automation is now player-PLACED rather than auto-built the instant it unlocks, via the new `placeAutomation` (`src/sim/systems.ts`), constrained to a legal site by `isValidAutomationSite` (`src/sim/layout.ts`: on the path network, not the Nursery/a habitat/another automation's site, and — for the Colour Gate only — a genuine junction, `isJunctionTile`). A placed automation's destination is no longer hardcoded: `nearestReachableHabitat` computes it from the site tile itself — the nearest habitat reachable over the real path network without routing through another automation's site — so wherever the player puts the Garden Slide is what it actually serves. This is also what fixes the structure-vs-route visual incoherence a player reported (the Slide's structure standing north of the Nursery while its forced-Meadow ride went south, never touching it): the player now chooses where it stands, and its destination always matches. `GARDEN_PATH_TILES` and the path-search BFS moved from `src/render/layout.ts` to `src/sim/layout.ts` (as `findPathRoute`) so sim can run this computation without importing render — `src/render/sprouts.ts`'s `gardenRouteBetween` now calls the shared function instead of keeping its own copy. Sunflower Meadow remains reachable by hand-drag exactly as before, independent of where any automation is placed.
 
-**Superseded in design 2026-08-02 (Garden Transit, GameRules §9.3/§9.12–§9.17, `plan.yaml` Phase 7) — NOT YET IMPLEMENTED.** Everything in this paragraph describes the code as it currently runs and stays accurate until Phase 7 lands. What changes: `AutomationInstance` stops being one-per-`AutomationId` (Slides and the new Sprout Conveyor segments become N-instance collections, while the Colour Gate and Mood Bell stay single); a Slide gains an accepted-Sprout-kind filter with an `Any` default, a player-chosen destination, and an enabled flag, so `nearestReachableHabitat` stops being the only way a destination is decided; connection stops being positional and becomes explicit **ports** with a compatibility matrix; and `GARDEN_PATH_TILES` stops being a constant, replaced by player-placed Conveyor segments in `SimState` with a migration that backfills the current fixed network so existing gardens keep their paths. This file is updated to as-built by `plan.yaml` task 7.16, after the work ships — not before.
+**Partially superseded in design 2026-08-02 (Garden Transit, GameRules §9.3/§9.12–§9.17, `plan.yaml` Phase 7).** Phases 7.2–7.8 now provide N-instance configured Slides, explicit derived ports, per-Slide filters/destinations/enabled state, and v7→v8 save hydration. The remaining replacement is staged: Conveyors will replace the fixed path substrate in 7.10, while ride animation, safety, in-world configuration labels, and final material integration remain in 7.9 and 7.11–7.16. The audit below still records the pre-phase assumptions for traceability until 7.16 performs the final document reconciliation.
 
 ## Rendering notes
 
@@ -88,9 +88,21 @@ segments, a contrasting inset, edge rails, an entry frame, grounded supports,
 and an exit lip. Its dimensions and local path live in
 `src/render/propDims.ts` (`GARDEN_SLIDE_BASE_BODY`/`GARDEN_SLIDE`) and reuse
 the existing wood/stone material families. The rig is parented to each placed
-Slide marker and its preview; the existing single-site renderer and temporary
-transit markers remain separate responsibilities until 7.8's multi-instance
-runtime/render generalisation.
+Slide marker and its preview; 7.8 now feeds the same rig from the N-instance
+Slide collection and restored save snapshot.
+
+### Incremental as-built note — Phase 7.8 (2026-08-02)
+
+Garden Slides are now a paid, configured N-instance lifecycle rather than the
+legacy one-per-automation path. `placeSlide` validates explicit port joins and
+the selected destination, `slideAutomationSystem` dispatches one deterministic
+ride per enabled Slide, and the runtime exposes configuration/toggle actions.
+Accepted kind, destination, enabled state, and idle/in-flight ride fields are
+persisted through save version 8, with v7 migration backfilling safe idle
+values. The build menu exposes text selects for filter and destination; the
+renderer keeps the authored 7.7 silhouette while listening to configured Slide
+events. Conveyors, in-world filter labels, route-state safety, and ride
+animation remain the later 7.9–7.14 work.
 
 ## The two core shapes Phase 7 changes
 

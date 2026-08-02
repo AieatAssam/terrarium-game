@@ -26,6 +26,7 @@ import {
   checkAchievements,
   colourGateBehavioralState,
   colourGateLaneNote,
+  configureSlide as configureSlideSystem,
   countWaitingSprouts,
   habitatInstanceAtTile,
   moodBellBehavioralState,
@@ -41,6 +42,8 @@ import {
   setColourGateLane as setColourGateLaneSystem,
   setMoodBellRule as setMoodBellRuleSystem,
   transitPlacementLockReason,
+  toggleSlide as toggleSlideSystem,
+  type SlideConfiguration,
   type SlidePlacement,
   TICK_SYSTEMS,
 } from './systems';
@@ -80,6 +83,10 @@ export interface SimRuntime {
   placeHabitat: (habitatId: HabitatId, tile: TileCoord) => void;
   /** Player commits a paid Garden Slide placement (GameRules §9.12). */
   placeSlide: (placement: SlidePlacement) => void;
+  /** Changes one Slide's accepted kind, destination, or enabled state. */
+  configureSlide: (slideId: string, configuration: SlideConfiguration) => void;
+  /** Toggles an idle Slide without changing its rule. */
+  toggleSlide: (slideId: string) => void;
   /** Player commits a paid Sprout Conveyor segment placement (GameRules §9.12). */
   placeConveyor: (tile: TileCoord) => void;
   /** Removes a placed Slide and applies the documented full refund. */
@@ -214,7 +221,13 @@ export async function startSimRuntime(
         fullHabitatInstances: fullHabitatsOf(state),
         automationTargets: automationTargetsOf(state),
         automationSites: automationSitesOf(state),
-        slides: state.slides.map((slide) => ({ id: slide.id, tile: slide.tile })),
+        slides: state.slides.map((slide) => ({
+          id: slide.id,
+          tile: slide.tile,
+          acceptedKind: slide.acceptedKind,
+          destination: slide.destination,
+          enabled: slide.enabled,
+        })),
         conveyors: state.conveyors.map((conveyor) => ({ id: conveyor.id, tile: conveyor.tile })),
         habitatInstances: state.habitats.map((h) => ({ id: h.id, habitatId: h.habitatId, tile: h.tile, count: h.count })),
         sprouts: state.sprouts.map((s) => {
@@ -344,6 +357,16 @@ export async function startSimRuntime(
     },
     placeSlide: (placement) => {
       const result = placeSlideSystem(state, placement);
+      state = commit(emit, result.state, result.events);
+      if (result.events.length > 0) persistImmediate();
+    },
+    configureSlide: (slideId, configuration) => {
+      const result = configureSlideSystem(state, slideId, configuration);
+      state = commit(emit, result.state, result.events);
+      if (result.events.length > 0) persistImmediate();
+    },
+    toggleSlide: (slideId) => {
+      const result = toggleSlideSystem(state, slideId);
       state = commit(emit, result.state, result.events);
       if (result.events.length > 0) persistImmediate();
     },

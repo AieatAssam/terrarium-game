@@ -126,6 +126,7 @@ export type GameEvent =
       targetHabitatId?: HabitatId;
     }
   | { type: 'transit:slideBuilt'; slide: SlideInstance; entryPort: Port; exitPort: Port }
+  | { type: 'transit:slideConfigured'; slide: SlideInstance; entryPort: Port; exitPort: Port }
   | { type: 'transit:conveyorBuilt'; conveyor: ConveyorSegment; entryPort: Port; exitPort: Port }
   | { type: 'transit:artifactMoved'; artifactId: string; artifactKind: 'gardenSlide' | 'sproutConveyor'; tile: TileCoord }
   | { type: 'transit:artifactRemoved'; artifactId: string; artifactKind: 'gardenSlide' | 'sproutConveyor'; refund: number }
@@ -237,7 +238,13 @@ export type GameEvent =
          */
         automationSites?: Partial<Record<AutomationId, TileCoord>>;
         /** Placed Garden Transit artifacts, restored without replaying build events. */
-        slides?: Array<{ id: string; tile: TileCoord }>;
+        slides?: Array<{
+          id: string;
+          tile: TileCoord;
+          acceptedKind?: SlideInstance['acceptedKind'];
+          destination?: HabitatId;
+          enabled?: boolean;
+        }>;
         conveyors?: Array<{ id: string; tile: TileCoord }>;
         /**
          * Every habitat INSTANCE standing in the restored save (the three

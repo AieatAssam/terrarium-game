@@ -1988,7 +1988,7 @@ steps:
 
   - phase: "7.8"
     title: Deliver multiple configured Slides running one filtered route each
-    status: planned
+    status: completed
     why: >
       This is the phase's proving milestone and GameRules §16's revised item
       5: a second Slide, filtered to a different Sprout kind, running
@@ -2031,7 +2031,7 @@ steps:
     save_compat: Filters, destinations and enabled state must all persist per instance.
     risk: Medium. Rollback per file. Do not regress the single-Slide path during rollout.
     commit: "feat(sim): run multiple filtered Garden Slides simultaneously"
-    verification: Two-Slide filtered-delivery e2e; determinism check; save/load round trip.
+    verification: Two-Slide filtered-delivery e2e; stable array-order dispatch test; save/load and reload/disable round trip.
     depends_on: ["7.7"]
 
   - phase: "7.9"

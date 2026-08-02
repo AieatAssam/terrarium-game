@@ -378,3 +378,20 @@ Scores: silhouette/readability 4/5; tactile geometry/material response 4/5;
 grounding/clearance 4/5; desaturated accessibility 4/5. Remaining visual
 identity work is the dedicated Sprout Conveyor pass in 7.11 and active ride
 animation in 7.9.
+
+## 2026-08-02 — Phase 7.8 multiple configured Slides
+
+Two paid Garden Slides now run as independent configured instances: each has a
+text-readable accepted-kind filter, destination, enabled state, deterministic
+dispatch order, and save/load hydration. Fresh-browser validation covered two
+Slides running together, reload selection, disabling Slide 2, and no later
+dispatch from the disabled instance. The existing Slide silhouette remains
+the shared authored visual; in-world filter labels and ride animation remain
+the dedicated 7.9/7.12 work.
+
+Evidence: `transit/two-slides-running.png` shows both Slide instances and the
+configuration controls; `transit/two-slides-after-reload.png` shows the
+reloaded pair with Slide 2 selected and the text action to enable it again.
+
+Scores: multi-instance legibility 4/5; configuration clarity 4/5; persistence
+confidence 4/5; accessibility/readability 3/5 pending the in-world labels.
