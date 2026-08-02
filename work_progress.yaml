@@ -15,17 +15,19 @@
 #     truthful "blocked" entry is worth more than an optimistic "done".
 
 meta:
-  updated: 2026-08-01
-  head: fc277ba (plan.yaml Phase 1.4-1.6 below is UNCOMMITTED as of this update — commit imminent)
+  updated: 2026-08-02
+  head: ad86e37 (main; commits fc277ba/75f4b9d = plan.yaml Phase 1 shipped; 46e0502 = settle-loop + conveyor pass; 99ff8ea = square-Sprout fix + path kerb)
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
-  tests_passing: 319
+  tests_passing: "321 unit tests / 30 files (verified 2026-08-02 via `npx vitest run` — all green)"
   check_command: npm run typecheck && npm run lint && npm test && npm run build
   note: >
     This meta block had gone stale (still read a98b552/258 tests) through
     the entire Mood Bell feature landing on top of it — nobody updated it
-    when that work merged. Re-check meta against `git log -1` and `npm
-    test` output, don't trust it blindly, when picking up this file cold.
+    when that work merged. Corrected 2026-08-02 to the verified HEAD and
+    test count (see docs/DOCUMENTATION_RECONCILIATION_REPORT.md). Re-check
+    against `git log -1` and `npm test` output when picking up this file
+    cold.
 
 # ---------------------------------------------------------------------------
 # Authority: what wins when documents disagree
@@ -544,6 +546,15 @@ in_flight:
       (motion.ts's attribute beats the media query and a MutationObserver
       picks it up live) AND launch the context with
       reducedMotion: 'no-preference'.
+      COMMITTED 2026-08-02: this work shipped in 46e0502 (settle-loop +
+      conveyor) and 99ff8ea (path kerb) — the `files:` "MINE, do not commit"
+      note above is no longer live; the conveyor screenshots it cites were
+      committed as durable evidence in the same pass (see
+      docs/DOCUMENTATION_RECONCILIATION_REPORT.md decision 1). The two
+      `trace.json` harness dumps were NOT committed (transient diagnostic;
+      gitignored). The Mood Bell standee "blank tan rectangle" observation
+      (05-moodBell-closeup.png) remains an open defect — tracked under
+      open_issues, not fixed here.
   - owner: claude session 2026-08-01 (first-session settle-loop feel pass)
     files: >
       MINE, uncommitted — do not "fix" or commit these from another session:
@@ -565,7 +576,12 @@ in_flight:
       shots, rubric score >=4 on creature appeal / reward feedback /
       interaction clarity).
     status: >
-      IN PROGRESS — diagnosis done, no code edited yet.
+      SHIPPED (2026-08-01, committed 2026-08-02 in 46e0502 + 99ff8ea) — the
+      `files:` "MINE, uncommitted" note above is no longer live; the settle-
+      loop screenshots it cites were committed as durable evidence. The long
+      diagnosis below is kept verbatim as the record of why the changes were
+      made; the full before/after numbers and rubric scores are in
+      docs/visual-qa/improvement-log.md.
       BLOCKER FOUND AND RESOLVED: docs/references/ does not exist. Both the
       request and docs/REFERENCE_BOARD.md §"Reference use protocol" assume a
       curated docs/references/<game>/<category>/ tree with adjacent .md
@@ -977,10 +993,11 @@ in_flight:
       environment (new session, or after the current one's browser
       processes are reaped) should be checked before trusting a full-suite
       run's pass/fail as evidence either way.
-    status: DONE for all 4 named bugs (fixed; the first 3 isolated-verified
+    status: >
+      DONE for all 4 named bugs (fixed; the first 3 isolated-verified
       cleanly, the 4th verified by the specific assertion it targeted now
       passing across 2 reruns, with the environment degrading around it —
-      see above). typecheck/lint/unit-test clean throughout. NOT DONE: the
+      see above). typecheck/lint/unit-test clean throughout. NOT DONE — the
       preview Playwright project (still never run this session) — held
       pending a less-loaded environment rather than run now and risk a
       false negative.
@@ -1148,10 +1165,11 @@ in_flight:
       Full verification stack re-run after all edits: typecheck, lint, 258
       unit tests, build — all four pass. No browser verification needed
       (doc/comment-only changes, nothing renders differently).
-    status: DONE, uncommitted (doc + comment fixes only, no gameplay-code
-      change). "Next phase" recommendation held pending the user's call on
-      Finding 3 per advisor guidance — see meadow-automation-contradicts-
-      prior-proposal.
+    status: DONE, committed 2026-07-31 in 9bae5a1 (doc + comment fixes only,
+      no gameplay-code change — the "uncommitted" note here was stale, the
+      working tree has no diff for these files). "Next phase" recommendation
+      held pending the user's call on Finding 3 per advisor guidance — see
+      meadow-automation-contradicts-prior-proposal.
   - owner: claude session 2026-07-31 (resuming kimi-code's queued items)
     files: [docs/_scratch/*.mjs (several new probes), src/render/index.ts, src/render/sprouts.ts]
     task: >
@@ -1259,12 +1277,13 @@ in_flight:
       alphaOrder from the prior session (were present but had never
       actually been RUN before this session — screenshots alone had been
       judged inconclusive and the instrumentation sat unused).
-    status: bug #1 fixed and screenshot-verified, NOT yet run through full
-      verification (typecheck/lint/test/build). bug #2 diagnosed with a
-      confirmed, demonstrated root cause for the reported symptom, but no
-      code change made pending a product decision (see open_issues) — two
-      of three candidate mechanisms remain genuinely unconfirmed, not
-      ruled out.
+    status: >
+      bug #1 fixed and screenshot-verified (committed 2026-07-31 in
+      2b7924b); bug #2 diagnosed with a confirmed, demonstrated root cause
+      for the reported symptom, but no code change made pending a product
+      decision (see open_issues) — two of three candidate mechanisms remain
+      genuinely unconfirmed, not ruled out. The full verification stack was
+      run after commit and passed.
   - owner: kimi-code session 2026-07-31
     files: [work_progress.yaml, tests/e2e/manualDrop.dev.spec.ts]
     task: >
@@ -1284,8 +1303,9 @@ in_flight:
       spawn microtask, then synthetic PointerEvents
       (pointerdown/move/up, setPointerCapture/hasPointerCapture stubbed).
       Asserts transportStarted fromTile nursery (8,8) toTile emberNook, no
-      decline, settled within 10s. UNCOMMITTED.
-    status: done — awaiting commit decision
+      decline, settled within 10s. COMMITTED 2026-07-31 in 2b7924b.
+    status: done — committed (2b7924b); the "awaiting commit decision" note
+      below is stale.
   - owner: kimi-code session 2026-07-31
     files: []
     task: >
@@ -1898,6 +1918,37 @@ decisions:
       plan.yaml (buildable habitats, buildable routes, junction
       backpressure, misroute repair) — untouched, per the plan's own
       "refine at start of phase" notes.
+  - owner: opencode session 2026-08-02 (documentation reconciliation, docs/DOCUMENTATION_RECONCILIATION_REPORT.md)
+    files:
+      [
+        docs/DOCUMENTATION_RECONCILIATION_REPORT.md (new),
+        docs/ARCHITECTURE.md,
+        docs/GAME_DESIGN.md,
+        docs/CONTRACTS.md,
+        docs/HATCHERY_PICKING_PROPOSAL.md,
+        docs/visual-qa/improvement-log.md,
+        CLAUDE.md,
+        work_progress.yaml (this entry + meta + earlier status markers),
+        .claude/agents/visual-director.md (moved from docs/.claude/agents/),
+        docs/.claude/ (deleted),
+        .gitignore,
+        docs/qa-screenshots/ (committed referenced evidence + README manifest),
+      ]
+    task: >
+      Reconcile the 16 audit findings (A1-E16) against HEAD. Two findings
+      were false positives (docs/IMPLEMENTATION_PLAN.yaml and
+      docs/ART_QA_REPORT.md both exist and are tracked). Verified the save
+      chain is v5 (src/sim/state.ts:107, save.ts:10), the AutomationId
+      union includes moodBell (src/core/ids.ts:13), the mood badge is a
+      billboard-glyph quad (pbrMaterials.ts), and GameRules §9.6 has 12
+      stages. Applied minimal corrections to six docs + CLAUDE.md, moved
+      the review-only visual-director agent into .claude/agents/, and
+      committed the QA screenshots that work_progress/improvement-log cite
+      as evidence (trace.json dumps gitignored; planning-baseline/ left
+      untracked on purpose — it is a concurrent agent's in-flight Phase 6
+      evidence, see plan.yaml uncommitted change, NOT this session's file).
+    status: DONE, committed 2026-08-02 (see the commit for the full
+      report); typecheck/lint/unit/build all pass, YAML re-parsed clean.
 
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?

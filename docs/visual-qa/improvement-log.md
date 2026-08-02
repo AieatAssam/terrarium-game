@@ -191,7 +191,7 @@ copied from any reference.
 
 ### Diagnosis
 
-`GameRules.md` §5.3 names six channels a correct settle must fire. Audited
+`docs/_scratch/GameRules.md` §5.3 names six channels a correct settle must fire. Audited
 against the code, before any change:
 
 | §5.3 channel | State before |
@@ -242,6 +242,13 @@ variants were created lazily on first pick-up — mid-gesture, under the cursor.
 They now adopt an already-resolved sibling texture synchronously, and every
 material a species will need is pre-warmed during the reveal.
 
+> **SUPERSEDED 2026-08-01 (same day) — see the "square block" entry at the top
+> of this log.** Pre-warming turned out to be the wrong shape of fix: it only
+> moved *when* the async window opened, and in practice converted a brief flash
+> into a persistent square. The real fix deletes the drag-tint materials
+> entirely and expresses validity through scale/opacity on the Sprout's normal
+> material. Treat the above paragraph as history, not current behaviour.
+
 ### Evidence
 
 Captured with `tests/e2e/settleFeel.dev.spec.ts` (`SETTLE_PHASE=before|after`),
@@ -291,6 +298,12 @@ rather than as a pass.
   the reason this spec drives its drop through the bus. **Not fixed here, and
   it needs fixing** — it blocks pointer-level regression coverage for the
   game's single most important interaction.
+  > **UPDATED 2026-08-01 (same day) — the "Correction to an earlier finding"
+  > section above shows this is a helper problem, not a gameplay one.**
+  > `tests/e2e/dragTint.dev.spec.ts` demonstrated the same drag succeeding via
+  > dispatched synthetic `PointerEvent`s with `setPointerCapture` stubbed, and
+  > `tests/e2e/helpers.ts`'s `dragBetween` (not the app) is what needs porting
+  > to that approach.
 - **BLOCKER for creature appeal ≥ 4:** the Sprout texture wastes most of its
   plane on transparency (`contentBBox` ≈ 0.28–0.72 U, 0.16–0.77 V), so the
   visible creature is ~48 px where the references put creatures at 15–30% of
@@ -315,6 +328,10 @@ rather than as a pass.
 - The "sleepy" mood badge is still an untextured grey-blue box floating beside
   the creature; at close camera it reads as a missing-texture artifact rather
   than a mood cue.
+  > **SUPERSEDED 2026-08-01 (same day) — see the "square block" entry at the
+  > top of this log.** The badge is now a billboard quad with a procedural
+  > crescent glyph (sunny: four-point sparkle), verified side by side in the
+  > settle-loop captures.
 - Journal discovery still has no acknowledgement moment (§5.3 marks it
   optional, so this was left alone).
 

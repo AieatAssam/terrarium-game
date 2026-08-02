@@ -17,6 +17,10 @@ node_modules/.tmp
 # Vitest / coverage
 coverage
 
+# Playwright trace dumps under QA evidence — transient diagnostic output,
+# not durable evidence (screenshots themselves ARE tracked)
+docs/qa-screenshots/**/trace.json
+
 # Copyrighted third-party reference screenshots — internal-only, never commit
 docs/reference-candidates/
 docs/references/**/*.jpg

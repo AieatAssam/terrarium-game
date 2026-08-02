@@ -7,14 +7,18 @@ serve. Art direction (palette, silhouette rules, animation timing) lives in
 `docs/ART_DIRECTION.md`, owned by Subagent C — referenced here, not
 duplicated.
 
-> **Status note:** everything in this document describing minute-by-minute
-> pacing or Dewdrop totals is a *design projection* computed from the tuned
-> constants in `src/data/`, not an observed result from playing the finished
-> game (the game isn't fully playable yet — rendering, input, and UI are
-> being built in parallel by other agents). Treat the numbers as "checkable
-> math," not "playtested." Per `IMPLEMENTATION_PLAN.yaml`'s QA phases, actual
-> observed timings belong in `docs/ART_QA_REPORT.md` / `docs/QA_REPORT.md`
-> after the game runs end to end.
+> **Status note (updated 2026-08-02):** Phase 1 of this document is
+> **implemented and verified** — all three common Sprouts, the Garden Slide,
+> the Colour Gate, the Mood Bell (added 2026-08-01, see below), upgrades,
+> achievements, Journal, save/offline progress, and accessibility modes are
+> in the running game (see the "Phase 1 scope" note under the non-goals
+> below, and work_progress.yaml's completed/in_flight records). Anything here
+> describing minute-by-minute pacing or Dewdrop totals is still a *design
+> projection* computed from the tuned constants in `src/data/`, not an
+> observed result from playing the finished game — treat the numbers as
+> "checkable math," not "playtested." Actual observed timings and visual-QA
+> results live in `docs/QA_REPORT.md` / `docs/ART_QA_REPORT.md` /
+> `docs/visual-qa/improvement-log.md`.
 
 ## Player experience and fantasy
 
@@ -413,12 +417,17 @@ does (no single correct habitat — automating it away would rob the rare-
 reveal moment, §6.5/§7.2). A newly built Bell opens with the safe default
 rule (`sunny`), same §9.1 reasoning as the Gate's own default lanes.
 
-Visually, mood is a small additive badge (a sphere for Sunny, a box for
-Sleepy — shape carries the distinction, not colour alone, §7.1) parented to
-each Sprout's sprite, deliberately NOT folded into the existing (sproutType
-× visual-state) shared-material cache (`src/render/sprouts.ts`) — a second
-multiplicative dimension there would multiply the texture/material count for
-no reason, since a badge's appearance depends on mood alone.
+Visually, mood is a small additive badge — a billboard quad with a
+procedurally drawn alpha-cut glyph (sunny is a four-point sparkle, sleepy a
+crescent, each with a soft tinted halo — shape carries the distinction, not
+colour alone, §7.1) parented to each Sprout's sprite, deliberately NOT folded
+into the existing (sproutType × visual-state) shared-material cache
+(`src/render/sprouts.ts`) — a second multiplicative dimension there would
+multiply the texture/material count for no reason, since a badge's appearance
+depends on mood alone. The 2026-08-01 square-block fix replaced the original
+sphere/box primitives with these glyphs and deleted the drag-tint materials;
+see `docs/visual-qa/improvement-log.md` and `src/render/pbrMaterials.ts`
+(`createMoodBadgeMaterial`).
 
 ### Nursery rhythm: why Sprouts stop accumulating
 
@@ -672,20 +681,23 @@ Explicitly not built, not planned, and not implied by anything above:
   save/offline progress, and accessibility modes are implemented and
   verified. GameRules itself never forbade a Phase 2: §9.5 names concrete
   future automation families (Routing/Care/Growth/Organisation helpers),
-  §9.6's complexity curve has 9 stages and Phase 1 only reaches stage 3, §7.3
+  §9.6's complexity curve has 12 stages and Phase 1 only reaches stage 3, §7.3
   anticipates later Sprout traits, and §16's own required closing feeling
   ends "...but I cannot wait to see what I can unlock and improve next" —
   this was always a Phase-1-scoped implementation-tracking non-goal in THIS
   document, not a GameRules constraint, so lifting it is not a GameRules §17
-  revision (nothing in GameRules.md itself needs to change). What DOES need
+  revision (nothing in `docs/_scratch/GameRules.md` itself needs to change).
+  What DOES need
   updating deliberately, not as a quiet code change, once a specific Phase 2
   feature is chosen: `docs/CONTRACTS.md`'s `AutomationId`/`SproutTypeId`
-  unions (still exactly `'gardenSlide' | 'colourGate'` and
-  `'ember' | 'dew' | 'sun' | 'star'` as of this lift — untouched until a
-  concrete addition is chosen), this document's own scope sections, and
-  whatever tests currently assert "no additional automations" as a
-  boundary. The 8 locked Journal slots were always visibly Phase 2+ content,
-  present but not yet implemented or mechanically hinted at.
+  unions, this document's own scope sections, and whatever tests currently
+  assert "no additional automations" as a boundary. As of this lift the
+  unions were exactly `'gardenSlide' | 'colourGate'` and
+  `'ember' | 'dew' | 'sun' | 'star'` — the first concrete Phase 2 addition
+  (the Mood Bell) has since extended `AutomationId` with `'moodBell'`; the
+  live unions are defined in `src/core/ids.ts` and `docs/CONTRACTS.md`, not
+  restated here. The 8 locked Journal slots were always visibly Phase 2+
+  content, present but not yet implemented or mechanically hinted at.
 
   **The Mood Bell (2026-08-01) is the first concrete feature realizing this
   lift** — see "The Mood Bell's rule" above. `docs/CONTRACTS.md`'s

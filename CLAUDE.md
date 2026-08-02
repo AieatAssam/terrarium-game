@@ -83,7 +83,7 @@ generic dashboard, empty 3D scene, static clicker, or cold factory simulator.
 Before changing any player-facing gameplay, art, UI, animation, Babylon scene,
 materials, lighting, or audio:
 
-1. Read `GameRules.md`.
+1. Read `docs/_scratch/GameRules.md`.
 2. Read the relevant documents in `docs/`:
    - `docs/ART_DIRECTION.md`
    - `docs/MATERIAL_LIBRARY.md`

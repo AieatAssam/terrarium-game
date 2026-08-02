@@ -12,9 +12,12 @@ still live and unaffected by this — only the Meadow-stays-manual conclusion
 is no longer current.
 **Scope note:** This document proposes gameplay, not code. It touches no
 source file. If the "If/when this is built" sketch below is ever adopted,
-it needs `docs/CONTRACTS.md`'s `AutomationId` union extended and
-`docs/GAME_DESIGN.md`'s "no additional automations" non-goal (see Option E)
-lifted deliberately, per GameRules §17 — not as a quiet code change.
+it needs `docs/CONTRACTS.md`'s `AutomationId` union extended (the union now
+contains `'moodBell'` — a new helper here would be a further addition) and
+a deliberate recorded change per GameRules §17 — not a quiet code change.
+(The "no additional automations" non-goal this note originally pointed at
+was LIFTED 2026-08-01 — see work_progress.yaml's decisions — so it is no
+longer the gate it once was; the §17 process still applies.)
 
 ## The question
 
@@ -367,7 +370,9 @@ player has already lived through, not a countdown.
   `petalledKind: SproutTypeId | null` (single global petal, matching "one
   Colour Gate rule" simplicity) or `petals: Partial<Record<SproutTypeId,
   boolean>>` if multiple simultaneous petals are wanted later. Bump
-  `SIM_SHAPE_VERSION` (currently 3 → 4) and add a v3→v4 save migration
+  `SIM_SHAPE_VERSION` (3 → 4 as written, when this proposal was drafted; the
+  live version is higher — see `src/sim/state.ts` / `docs/CONTRACTS.md`'s
+  save-format section for the current chain) and add a v→v+1 save migration
   defaulting `petalledKind` to `null`, following the exact pattern
   `docs/CONTRACTS.md`'s "Save format" section already documents for the
   v2→v3 `colourGateLanes`/`nurseryRhythm` backfill.

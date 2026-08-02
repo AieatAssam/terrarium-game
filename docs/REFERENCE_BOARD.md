@@ -14,7 +14,7 @@ animation, feedback, composition, UI hierarchy, and decorative progression.
 
 Before a player-facing visual or gameplay change:
 
-1. Read this document and the relevant `GameRules.md` section.
+1. Read this document and the relevant `docs/_scratch/GameRules.md` section.
 2. Open only the relevant approved image(s) in `docs/references/`.
 3. Read the adjacent `.md` rationale for every image used.
 4. Convert its transferable lesson into an original, concrete acceptance criterion.

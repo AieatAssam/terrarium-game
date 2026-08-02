@@ -15,7 +15,7 @@ Authoritative shared interfaces. Any agent needing a change here must report it 
 /src/ui/          -> F: onboarding, HUD, build menu, journal, upgrades, achievements, settings, credits, dialogs
 /src/audio/       -> F: music/SFX synthesis + playback + volume/mute
 /src/persistence/ -> A: IndexedDB save/load, offline calc hook (data-driven values come from B)
-/assets/          -> C: original SVG/vector sources + generated textures, organized by category
+/public/assets/   -> C: original SVG/vector sources + generated textures, organized by category (Vite publicDir, served at `/assets/...`; see "Asset manifest" below — NOT a top-level `assets/`, which Vite never copies into `dist/`)
 /tests/unit/      -> owned by whoever writes the system (A for sim, B for progression, F for persistence helpers)
 /tests/e2e/       -> G: Playwright specs
 /docs/            -> each doc owned by the agent named in the brief; QA docs by D and G
@@ -253,8 +253,8 @@ between automations checking in build order).
 
 Player asked for a much deeper building layer; the request conflicted with
 GameRules as it stood, was surfaced per this doc's own authority chain, and
-the user chose to revise the design (see GameRules.md's own Revision Log,
-§9.8-§9.11, §10.0). Phase 1 of that revision (plan.yaml) is: every
+the user chose to revise the design (see `docs/_scratch/GameRules.md`'s own
+Revision Log, §9.8-§9.11, §10.0). Phase 1 of that revision (plan.yaml) is: every
 automation is now player-PLACED, not auto-built the moment it unlocks.
 
 - **`automation:built.siteTile`** — where the player actually placed the
