@@ -7,6 +7,17 @@ serve. Art direction (palette, silhouette rules, animation timing) lives in
 `docs/ART_DIRECTION.md`, owned by Subagent C — referenced here, not
 duplicated.
 
+> **DESIGN SUPERSEDED IN PART, 2026-08-02 — Garden Transit.** GameRules'
+> 2026-08-02 revision replaces the single Garden Slide with **Garden Transit**:
+> multiple purchaseable Slides with per-Slide Sprout-kind filters, plus
+> buildable Sprout Conveyor segments (GameRules §9.3, §9.12–§9.17). The old
+> single-Slide model is explicitly rejected, not merely superseded — see
+> GameRules §9.17. **None of it is implemented yet**; `plan.yaml` Phase 7
+> carries the staged work. Everywhere below that assumes exactly one Slide, a
+> free Slide, or a Slide with no kind filter describes the SHIPPED game and
+> remains accurate as a record of it — it is no longer the design target.
+> Inline `2026-08-02` notes mark the specific beats that move.
+
 > **Status note (updated 2026-08-02):** Phase 1 of this document is
 > **implemented and verified** — all three common Sprouts, the Garden Slide,
 > the Colour Gate, the Mood Bell (added 2026-08-01, see below), upgrades,
@@ -84,12 +95,31 @@ toward.
   re-walked against manual placement — treat the timing as approximately
   right and the "always Meadow" specifics as stale.**
 
+  **Superseded again 2026-08-02 (Garden Transit, GameRules §9.3/§9.12 — DESIGN
+  TARGET, NOT YET BUILT):** the 20-placement milestone survives, but it now
+  grants *permission* to build rather than a free Slide. The first Slide
+  **costs 150 Dewdrops**, and Slides are owned in multiples at
+  `round5(150 × 1.8^(N-1))` capped at 2400. At the ~20-settled-Sprout income
+  rate (4.8 Dewdrops/minute per settled Sprout) that first purchase is roughly
+  90 seconds after the milestone, so this beat moves to ~6:00–6:30 rather than
+  disappearing. Nothing below has been re-walked against that change; see
+  `plan.yaml` Phase 7.
+
 ### Arc to 15–25 minutes
 
-- **~5–9 min** — Garden Slide now carries Sun Sprouts automatically to the
-  Meadow. Ember and Dew keep spawning and need manual sorting, so a small
-  "unsorted pile" starts building near the nursery — the first felt sense
-  that one slide isn't enough. This is a firmer setup for the Colour Gate
+- **~5–9 min** — Garden Slide now carries Sprouts automatically to the habitat
+  the player placed it to serve. The other two types keep spawning and need
+  manual sorting, so a small "unsorted pile" starts building near the nursery
+  — the first felt sense that one slide isn't enough.
+
+  **2026-08-02 (Garden Transit — DESIGN TARGET, NOT YET BUILT):** "one slide
+  isn't enough" now has two answers rather than one, and the design intends
+  the player to meet both. A **second Slide** (270 Dewdrops, filtered to a
+  different Sprout kind) is the direct answer; the **Colour Gate** remains the
+  answer when one *route* must serve two kinds. Both are legitimate, and the
+  Gate is no longer the only escape from a single-Slide bottleneck. This is
+  the central progression change of the revision: automation scales by
+  *owning more artifacts*, not only by adding cleverness to the one you have. This is a firmer setup for the Colour Gate
   than the old "whichever two types weren't picked" framing: the pile is now
   ALWAYS "Ember and Dew", which is exactly what the Gate's two lanes exist to
   solve. Once the slide has fed the Meadow continuously for
@@ -179,6 +209,8 @@ would just bias which corner of the garden players rush to first.
 5062.5ms at levels 1–3).
 
 ### Garden Slide unlock timing (target: 4–6 minutes)
+
+*(2026-08-02: the 20-placement threshold is retained by the Garden Transit revision as the PERMISSION gate — GameRules §9.12 keeps it explicitly because `tests/unit/data.spawning.test.ts` pins session pacing to it. What changes is that permission is now followed by a 150-Dewdrop purchase rather than a free build. Do not move this threshold while implementing Phase 7.)*
 
 `UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements = 20`.
 

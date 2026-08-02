@@ -2,6 +2,22 @@
 
 Authoritative shared interfaces. Any agent needing a change here must report it back for integration, not silently redefine it elsewhere.
 
+> **PENDING CONTRACT CHANGE — Garden Transit (GameRules 2026-08-02 revision).**
+> Every interface below describes the **shipped** code and is accurate as such.
+> GameRules §9.3 and §9.12–§9.17 now specify a replacement automation model —
+> multiple Garden Slides with per-Slide Sprout-kind filters, buildable Sprout
+> Conveyor segments, and explicit connection **ports** — which will change
+> `AutomationId`, `AutomationInstance`, the `automation:*` events, the save
+> shape, and the fixed trunk topology described under "Grid and layout".
+>
+> Those changes are **deliberately not written here yet**: this file documents
+> interfaces that exist, and inventing the new ones before they are built would
+> make it a work of fiction rather than a contract. `plan.yaml` task **7.3**
+> defines the new domain model and task **7.16** updates this file to match
+> what actually ships. Until then, treat the automation sections below as
+> "current truth, scheduled for replacement" and read GameRules §9.3 for the
+> design intent.
+
 ## Project layout (file ownership)
 
 ```
@@ -40,6 +56,8 @@ Meadow (8,13) that the Garden Slide always rides (2026-07-31; a player can
 still walk it by hand too), and a short spur east of the Nursery to the Mood
 Bell (9,8) — decorative only, no ride ever travels through it (its own rides
 reuse the same Nursery→habitat network the Slide and Gate already use).
+*(2026-08-02: this fixed trunk-and-fork topology is scheduled for replacement by player-placed Sprout Conveyor segments — GameRules §9.9's naming resolution makes Conveyors the single buildable route substrate. `plan.yaml` 7.10 replaces the constant; 7.2 backfills existing saves from it so no garden loses its paths.)*
+
 `COLOUR_GATE_LANE_HABITATS` maps each lane to the home it leads to; that mapping
 is a fact about the garden's shape and is never player-editable (the player
 chooses which *kind* each lane invites, not where a lane goes).
@@ -57,6 +75,10 @@ type HabitatId = 'emberNook' | 'dewPond' | 'sunflowerMeadow';
 /** A second, orthogonal Sprout attribute (GameRules §7.3) — never affects which habitat is correct for a Sprout. */
 type MoodId = 'sunny' | 'sleepy';
 type AutomationId = 'gardenSlide' | 'colourGate' | 'moodBell';
+// 2026-08-02: Garden Transit (GameRules §9.3) will split this into a KIND
+// ('gardenSlide' | 'sproutConveyor' | 'colourGate' | 'moodBell') plus
+// N-instance collections for Slides and Conveyors. Not yet implemented —
+// plan.yaml 7.3. Do not add ids here ahead of that task.
 type UpgradeId =
   | 'podRhythm'
   | 'habitatCapacity'

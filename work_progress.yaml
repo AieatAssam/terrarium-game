@@ -449,6 +449,62 @@ completed:
 # In flight — uncommitted work in the tree RIGHT NOW
 # ---------------------------------------------------------------------------
 in_flight:
+  - owner: claude session 2026-08-02 (Garden Transit — rules + plan revision)
+    files: >
+      COMMITTED as fecefe8 (docs/_scratch/GameRules.md, plan.yaml). A
+      follow-up commit updates the dependent docs: docs/GAME_DESIGN.md,
+      docs/CONTRACTS.md, docs/ARCHITECTURE.md and this file. NO source code,
+      tests, assets or config touched by any of it.
+    task: >
+      The user rejected the shipped Garden Slide AS A DESIGN (unique, unfilterable,
+      badly attached, clipping, reads as a snake/tube on a box) and asked for a
+      scalable purchaseable transit system. GameRules gained a 2026-08-02
+      revision defining GARDEN TRANSIT: multiple Garden Slides with per-Slide
+      Sprout-kind filters plus buildable Sprout Conveyor segments, connected by
+      explicit ports. plan.yaml gained Phase 7 (7.1-7.16).
+    status: >
+      RULES AND PLAN DONE AND COMMITTED. NO IMPLEMENTATION EXISTS — the running
+      game still has the old single Slide, and every dependent doc says so.
+      THE THREE THINGS A FUTURE AGENT MOST NEEDS TO KNOW:
+        1. §9.9 AND "SPROUT CONVEYOR" ARE THE SAME MECHANIC. GameRules' 2026-08-01
+           revision already defined player-placed per-tile route segments in §9.9;
+           the 2026-08-02 revision names, prices, ports and specifies them as
+           Sprout Conveyors. There is exactly ONE buildable route substrate. If
+           you find yourself implementing "route segments" and "conveyors" as two
+           entities, stop — that is the contradiction this revision existed to
+           remove. plan.yaml Phase 3 (3.1-3.4) is marked `status: superseded`
+           with a replacement map in its banner; do not implement it.
+        2. THE OLD SLIDE IS REJECTED, NOT DEPRECATED. GameRules §9.17 enumerates
+           seven rejected properties. Do not patch the existing Slide object and
+           do not treat any of its limitations as a constraint.
+        3. START AT 7.1, NOT AT THE ART. The visual complaint is the loudest part
+           of the report, but 7.2's save migration is the risky part — players
+           have gardens with a placed Slide that must survive as a real owned
+           configured Transit Slide. Test-first, per Phase 3.2's own warning that
+           this is the riskiest migration in the plan.
+      ECONOMY (Phase 1 balance target, NOT playtested): Slide N =
+      round5(150 * 1.8^(N-1)) capped at 2400; Conveyor 15 flat; full refunds
+      where a Slide refunds the price of slide N at the CURRENT owned count
+      (so no per-instance price in the save, and no buy/sell arbitrage); caps
+      of 4 Slides and 30 segments. Checked against the real income rate of
+      4.8 Dewdrops/min per settled Sprout, which docs/GAME_DESIGN.md documents
+      and src/sim/systems.ts dewdropSystem confirms (0.008 * count per 100ms
+      tick, per SETTLED SPROUT not per habitat — verified, not assumed).
+      §17 DEBT, RECORDED SO IT IS NOT LOST: a GameRules revision must carry
+      updates to dependent docs and tests. The rules-and-plan task was scoped
+      to two files, so this was deferred; the dependent DOCS are now updated
+      (as supersession notes, deliberately NOT as descriptions of code that
+      does not exist yet — CONTRACTS.md and ARCHITECTURE.md document shipped
+      interfaces and would become fiction otherwise). The TEST half is still
+      outstanding: tests/unit/sim.layout.test.ts pins a Nursery->Gate->habitat
+      distance identity that player-placed Conveyors make dynamic. plan.yaml
+      7.2 owns that; do not "fix" the test before then, it is correct today.
+      NAMING TENSION worth knowing before writing player-facing strings:
+      GameRules §2.1 bans "conveyor belt", and the new family is called
+      "Sprout Conveyor" at the user's explicit direction. The rule was refined
+      rather than dropped — "belt", "splitter", "throughput" and "factory"
+      stay banned, and §14 gained an amendment making an industrial-READING
+      implementation wrong regardless of the name it is given.
   - owner: claude session 2026-08-01 (conveyor jerk + flatness pass) [subagent]
     files: >
       MINE, do not commit or "fix" without asking: src/render/automation.ts,
