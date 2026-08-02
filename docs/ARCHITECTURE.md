@@ -80,6 +80,18 @@ Design authority for the phase (read before planning 7.2/7.3):
 = the single buildable route substrate). `plan.yaml` Phase 7 steps 7.2–7.16
 own the implementation; this audit only maps the terrain.
 
+### Incremental as-built note — Phase 7.7 (2026-08-02)
+
+The first Garden Slide visual slice is now shipped in `src/render/automation.ts`:
+`buildGardenSlideRig` builds the south-entry/north-exit channel from bevelled
+segments, a contrasting inset, edge rails, an entry frame, grounded supports,
+and an exit lip. Its dimensions and local path live in
+`src/render/propDims.ts` (`GARDEN_SLIDE_BASE_BODY`/`GARDEN_SLIDE`) and reuse
+the existing wood/stone material families. The rig is parented to each placed
+Slide marker and its preview; the existing single-site renderer and temporary
+transit markers remain separate responsibilities until 7.8's multi-instance
+runtime/render generalisation.
+
 ## The two core shapes Phase 7 changes
 
 1. **`AutomationInstance` (src/sim/state.ts:50-70) is currently one-per-

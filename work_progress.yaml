@@ -16,7 +16,7 @@
 
 meta:
   updated: 2026-08-02
-  head: latest Phase 7.6 transit-placement commit (main; 52a0c98 = Phase 2 buildable habitats; 67bea9b = dependent-doc reconciliation, fecefe8 = Garden Transit rules+plan revision)
+  head: latest Phase 7.7 Garden Slide silhouette commit (main; 52a0c98 = Phase 2 buildable habitats; 67bea9b = dependent-doc reconciliation, fecefe8 = Garden Transit rules+plan revision)
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
   tests_passing: "364 unit tests / 35 files (re-verified 2026-08-02 via `npm test` — all green)"
@@ -583,6 +583,28 @@ in_flight:
       docs/visual-qa/improvement-log.md. Existing real mouse Sprout-drag e2e
       failures remain the pre-existing harness limitation documented below;
       the transit suite uses real build-menu/canvas clicks and keyboard input.
+      7.7 INTENT (2026-08-02): replace the shared temporary transit marker for
+      Garden Slides with an original, port-aligned miniature slide silhouette.
+      Build the entry mouth, raised curved trough, side rails/lip, grounded
+      supports, and readable exit from named sub-parts using shared propDims
+      and existing tactile material families. Preserve the existing activity,
+      preview, marker lifecycle, and Colour Gate/Mood Bell presentation paths;
+      validate with the required gate plus fresh-browser desktop/mobile,
+      desaturated, adjacent-placement, and camera-angle evidence before marking
+      7.7 complete.
+      7.7 DONE (2026-08-02): replaced the shared Garden Slide standee marker
+      with a port-aligned `buildGardenSlideRig`: bevelled curved channel
+      segments, contrasting inset, two edge rails, framed south entry,
+      grounded support posts/feet, brace, and north exit lip. Added a compact
+      render footing in propDims so supports remain visible while the shared
+      sim/port body contract stays unchanged. The same silhouette is used by
+      placed markers and the preview; Conveyor art remains deferred to 7.11.
+      Added the focused browser scenario and evidence at both 1440x900 and
+      390x844, including a desaturated capture and close adjacent-Pod view.
+      Typecheck/lint plus the focused scenario passed with zero console/page
+      errors. The full required gate passed after the final implementation,
+      evidence, and documentation changes: 364 unit tests / 35 files and a
+      successful production build (existing Babylon chunk warnings only).
   - owner: claude session 2026-08-02 (Phase 2 — buildable habitats, instance model)
     files: >
       PLAN: src/core/ids.ts (docs only), src/sim/state.ts, src/sim/systems.ts,

@@ -1929,7 +1929,7 @@ steps:
 
   - phase: "7.7"
     title: Rebuild the Garden Slide silhouette — entry, channel, rails, supports, exit
-    status: planned
+    status: completed
     why: >
       GameRules §9.17 rejects the current object outright: it reads as a snake
       or tube on a box, with ambiguous entry, direction and exit. This task
@@ -1975,7 +1975,7 @@ steps:
     browser_scenarios: >
       Place a Slide adjacent to the Nursery, to a habitat, and beside a second
       Slide; orbit through the full supported camera range at both viewports.
-    evidence: docs/visual-qa/transit/slide-{before,after,desaturated,adjacent-pod,390}.png
+    evidence: docs/visual-qa/transit/slide-{after,angle,desaturated,adjacent-pod,390}.png
     accessibility: Silhouette must read in high contrast and without colour.
     performance: Measure with four Slides placed; stay within the Phase 6 6.1 budget +15%.
     save_compat: Visual only; no state change.

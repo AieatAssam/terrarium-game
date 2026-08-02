@@ -355,3 +355,26 @@ Evidence: `transit/placement-valid.png`, `transit/placement-invalid.png`,
 `transit/placement-blocked.png`, and `transit/placement-390.png`. The existing
 real mouse drag harness remains a separate pre-existing limitation; the new
 transit checks use real build-menu/canvas clicks and keyboard input.
+
+## 2026-08-02 — Phase 7.7 Garden Slide silhouette
+
+Replaced the shared flat transit marker for Garden Slides with a port-aligned
+miniature slide: raised green trough, warm edge rails, framed south entry,
+grounded support posts/feet, and a distinct north exit lip. The low rounded
+footing leaves the channel and supports visible instead of reading as a box
+with a decal. The same geometry is used by the placement ghost; Conveyor
+identity remains deferred to 7.11.
+
+Evidence: `transit/slide-after.png` (gameplay framing),
+`transit/slide-adjacent-pod.png` (close placement),
+`transit/slide-angle.png` (opposite camera yaw),
+`transit/slide-desaturated.png` (shape/readability), and
+`transit/slide-390.png` (mobile framing). Captured by the real dev-browser
+scenario at 1440x900 and 390x844 after a clean page load, with the dev-only
+overlay removed from the visual captures. Focused scenario passed with zero
+console/page errors.
+
+Scores: silhouette/readability 4/5; tactile geometry/material response 4/5;
+grounding/clearance 4/5; desaturated accessibility 4/5. Remaining visual
+identity work is the dedicated Sprout Conveyor pass in 7.11 and active ride
+animation in 7.9.

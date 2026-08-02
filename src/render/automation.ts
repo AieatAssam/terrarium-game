@@ -38,6 +38,7 @@
 // with no animation at all.
 
 import { Color3 } from '@babylonjs/core/Maths/math.color';
+import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
@@ -59,7 +60,7 @@ import {
   isReservedTile,
 } from './layout';
 import { prefersReducedMotion, watchReducedMotion } from './motion';
-import { createPaintedMetalMaterial, createWoodBodyMaterial } from './pbrMaterials';
+import { createPaintedMetalMaterial, createStoneBodyMaterial, createWoodBodyMaterial } from './pbrMaterials';
 import {
   bodyRings,
   footprintRadius,
@@ -67,6 +68,8 @@ import {
   AUTOMATION_BELT,
   AUTOMATION_BODIES,
   AUTOMATION_PREVIEW_BODY,
+  GARDEN_SLIDE,
+  type GardenSlidePathPoint,
   type PropBody,
 } from './propDims';
 import { HABITATS } from '../data/habitats';
@@ -85,6 +88,11 @@ const SITE_FALLBACK_COLOR: Record<AutomationId, Color3> = {
   colourGate: new Color3(0.4, 0.6, 0.55),
   moodBell: new Color3(0.75, 0.55, 0.35),
 };
+const GARDEN_SLIDE_BODY_COLOR = new Color3(0.42, 0.28, 0.3);
+const GARDEN_SLIDE_CHANNEL_COLOR = new Color3(0.55, 0.36, 0.18);
+const GARDEN_SLIDE_INSET_COLOR = new Color3(0.2, 0.4, 0.29);
+const GARDEN_SLIDE_FRAME_COLOR = new Color3(0.82, 0.65, 0.36);
+const GARDEN_SLIDE_SUPPORT_COLOR = new Color3(0.42, 0.33, 0.25);
 
 /** Standee card bounding footprint for a site marker and its placement ghost. */
 const SITE_CAP_WIDTH = 1.0;
@@ -324,6 +332,171 @@ function buildBeltRig(scene: Scene, parent: Mesh, name: string, deckMaterial: PB
   return { root, rollers };
 }
 
+interface GardenSlideMaterials {
+  channel: PBRMetallicRoughnessMaterial;
+  inset: PBRMetallicRoughnessMaterial;
+  frame: PBRMetallicRoughnessMaterial;
+  support: PBRMetallicRoughnessMaterial;
+}
+
+interface GardenSlideRig {
+  root: TransformNode;
+  path: readonly GardenSlidePathPoint[];
+}
+
+/** Interpolates the authored south-entry -> north-exit slide path in-place. */
+function setSlidePathPosition(mesh: Mesh, path: readonly GardenSlidePathPoint[], t: number): void {
+  const progress = Math.min(1, Math.max(0, t)) * (path.length - 1);
+  const index = Math.min(path.length - 2, Math.floor(progress));
+  const local = progress - index;
+  const from = path[index];
+  const to = path[index + 1];
+  mesh.position.set(0, from.y + (to.y - from.y) * local, from.z + (to.z - from.z) * local);
+}
+
+function slidePathYAt(path: readonly GardenSlidePathPoint[], t: number): number {
+  const progress = Math.min(1, Math.max(0, t)) * (path.length - 1);
+  const index = Math.min(path.length - 2, Math.floor(progress));
+  const local = progress - index;
+  return path[index].y + (path[index + 1].y - path[index].y) * local;
+}
+
+/**
+ * The Garden Slide is deliberately not a billboard: the entry and exit are
+ * physical north/south sockets. A shallow sequence of bevelled channel slabs
+ * gives the trough a readable curve without turning the whole artifact into a
+ * pipe; two thin rails, a framed mouth, feet, and a low exit lip complete the
+ * silhouette. All children stay under the placed body so the existing shadow
+ * and move/remove lifecycle continues to own the whole object.
+ */
+function buildGardenSlideRig(
+  scene: Scene,
+  parent: Mesh,
+  name: string,
+  materials: GardenSlideMaterials,
+): GardenSlideRig {
+  const root = new TransformNode(`${name}.slide`, scene);
+  root.parent = parent;
+  const path = GARDEN_SLIDE.path;
+
+  const addSlabSegment = (
+    suffix: string,
+    width: number,
+    thickness: number,
+    material: PBRMetallicRoughnessMaterial,
+    lift: number,
+  ): void => {
+    for (let index = 0; index < path.length - 1; index += 1) {
+      const from = path[index];
+      const to = path[index + 1];
+      const length = Math.abs(from.z - to.z);
+      const slab = bevelledSlab(
+        scene,
+        `${name}.${suffix}.${index}`,
+        width,
+        thickness / 2,
+        length / 2 + 0.012,
+        Math.min(0.024, thickness * 0.36),
+      );
+      slab.parent = root;
+      slab.position.set(0, (from.y + to.y) / 2 + lift, (from.z + to.z) / 2);
+      // Local +Z is the south end of each segment. This pitch makes the
+      // channel meet both authored path heights instead of stepping between
+      // them, while the bevels keep each join soft at gameplay distance.
+      slab.rotation.x = Math.asin(Math.max(-0.8, Math.min(0.8, -(from.y - to.y) / length)));
+      slab.material = material;
+      slab.isPickable = false;
+    }
+  };
+
+  addSlabSegment('channel', GARDEN_SLIDE.channelHalfWidth, GARDEN_SLIDE.channelThickness, materials.channel, 0);
+  addSlabSegment('channel.inset', GARDEN_SLIDE.channelInset, 0.018, materials.inset, GARDEN_SLIDE.channelThickness / 2 + 0.012);
+
+  for (const side of [-1, 1]) {
+    const railPath = path.map((point) => new Vector3(
+      side * (GARDEN_SLIDE.channelHalfWidth - GARDEN_SLIDE.railRadius * 0.55),
+      point.y + GARDEN_SLIDE.railLift,
+      point.z,
+    ));
+    const rail = MeshBuilder.CreateTube(
+      `${name}.rail.${side > 0 ? 'east' : 'west'}`,
+      { path: railPath, radius: GARDEN_SLIDE.railRadius, tessellation: 8, cap: Mesh.CAP_END },
+      scene,
+    );
+    rail.parent = root;
+    rail.material = materials.frame;
+    rail.isPickable = false;
+  }
+
+  const groundY = GARDEN_SLIDE.path[GARDEN_SLIDE.path.length - 1].y - 0.1;
+  const addPost = (suffix: string, x: number, z: number, topY: number): void => {
+    const height = Math.max(0.08, topY - groundY);
+    const post = bevelledSlab(
+      scene,
+      `${name}.${suffix}`,
+      GARDEN_SLIDE.supportWidth / 2,
+      height / 2,
+      GARDEN_SLIDE.supportDepth / 2,
+      0.018,
+    );
+    post.parent = root;
+    post.position.set(x, groundY + height / 2, z);
+    post.material = materials.support;
+    post.isPickable = false;
+
+    const foot = bevelledSlab(scene, `${name}.${suffix}.foot`, 0.08, 0.025, 0.08, 0.018);
+    foot.parent = root;
+    foot.position.set(x, groundY + 0.025, z);
+    foot.material = materials.support;
+    foot.isPickable = false;
+  };
+
+  const supportTs = [0.34, 0.58];
+  for (const t of supportTs) {
+    const z = GARDEN_SLIDE.entryZ + (GARDEN_SLIDE.exitZ - GARDEN_SLIDE.entryZ) * t;
+    const topY = slidePathYAt(path, t) - GARDEN_SLIDE.channelThickness / 2;
+    addPost(`support.${t}.west`, -GARDEN_SLIDE.supportX, z, topY);
+    addPost(`support.${t}.east`, GARDEN_SLIDE.supportX, z, topY);
+  }
+
+  const brace = bevelledSlab(scene, `${name}.support.brace`, GARDEN_SLIDE.supportX + 0.055, 0.025, 0.04, 0.018);
+  brace.parent = root;
+  brace.position.set(0, groundY + 0.2, -0.02);
+  brace.material = materials.frame;
+  brace.isPickable = false;
+
+  const entryTop = path[0].y + 0.035;
+  const entryPostHeight = entryTop - groundY;
+  for (const side of [-1, 1]) addPost(`entry.mouth.${side > 0 ? 'east' : 'west'}`, side * GARDEN_SLIDE.entryFrameHalfWidth, GARDEN_SLIDE.entryZ, entryTop);
+  const entryHeader = bevelledSlab(
+    scene,
+    `${name}.entry.header`,
+    GARDEN_SLIDE.entryFrameHalfWidth + 0.035,
+    0.035,
+    0.045,
+    0.022,
+  );
+  entryHeader.parent = root;
+  entryHeader.position.set(0, groundY + entryPostHeight, GARDEN_SLIDE.entryZ);
+  entryHeader.material = materials.frame;
+  entryHeader.isPickable = false;
+
+  const exitLip = bevelledSlab(
+    scene,
+    `${name}.exit.lip`,
+    GARDEN_SLIDE.channelHalfWidth + 0.035,
+    GARDEN_SLIDE.exitLipHeight / 2,
+    0.035,
+    0.022,
+  );
+  exitLip.parent = root;
+  exitLip.position.set(0, path[path.length - 1].y + GARDEN_SLIDE.exitLipHeight / 2, GARDEN_SLIDE.exitZ);
+  exitLip.material = materials.frame;
+  exitLip.isPickable = false;
+
+  return { root, path };
+}
+
 /**
  * A soft, radially-fading darkening disc laid just above the ground under a
  * built site. The cast shadow alone leaves the plinth looking set down next to
@@ -392,11 +565,8 @@ type SiteActivity = 'idle' | 'carrying' | 'blocked';
 interface SiteMarker {
   id: AutomationId;
   mesh: Mesh;
-  /** Flat cap plane's material — carries C's structure illustration (see
-   * flatArt.ts: a CreateBox's default UV wraps a single flat illustration
-   * around all 6 faces instead of showing it top-down, which is what made
-   * these markers look like plain dark cubes). */
-  material: PBRMetallicRoughnessMaterial;
+  /** Optional flat cap material for the legacy Gate/Bell standees. */
+  capMaterial: PBRMetallicRoughnessMaterial | null;
   bodyMaterial: PBRMetallicRoughnessMaterial;
   built: boolean;
   /**
@@ -458,6 +628,8 @@ interface SiteMarker {
   waitVisible: boolean;
   /** Local Y both bead kinds ride at, cached so it isn't recomputed per frame. */
   beadLocalY: number;
+  /** Garden Slide's physical south-entry -> north-exit path; null for Gate/Bell. */
+  travelPath: readonly GardenSlidePathPoint[] | null;
 }
 
 interface TransitMarker {
@@ -465,7 +637,7 @@ interface TransitMarker {
   kind: PricedTransitKind;
   mesh: Mesh;
   bodyMaterial: PBRMetallicRoughnessMaterial;
-  capMaterial: PBRMetallicRoughnessMaterial;
+  capMaterial: PBRMetallicRoughnessMaterial | null;
   tile: TileCoord;
 }
 
@@ -573,6 +745,13 @@ function activityOf(site: SiteMarker): SiteActivity {
 export function createAutomationManager(scene: Scene, bus: EventBus, shadowGenerator: ShadowGenerator): AutomationManager {
   const sites = {} as Record<AutomationId, SiteMarker>;
   const transitMarkers = new Map<string, TransitMarker>();
+  const slideMaterials: GardenSlideMaterials = {
+    channel: createWoodBodyMaterial(scene, 'terrarium.automation.slide.channel.mat', GARDEN_SLIDE_CHANNEL_COLOR.clone()),
+    inset: createWoodBodyMaterial(scene, 'terrarium.automation.slide.inset.mat', GARDEN_SLIDE_INSET_COLOR.clone()),
+    frame: createWoodBodyMaterial(scene, 'terrarium.automation.slide.frame.mat', GARDEN_SLIDE_FRAME_COLOR.clone()),
+    support: createStoneBodyMaterial(scene, 'terrarium.automation.slide.support.mat', GARDEN_SLIDE_SUPPORT_COLOR.clone()),
+  };
+  slideMaterials.frame.emissiveColor = new Color3(0.08, 0.055, 0.02);
 
   const addTransitMarker = (id: string, kind: PricedTransitKind, tile: TileCoord): void => {
     const existing = transitMarkers.get(id);
@@ -585,30 +764,34 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     }
     const body = AUTOMATION_BODIES.gardenSlide;
     const mesh = buildAutomationMesh(scene, `terrarium.transit.${kind}.${id}`, body);
-    const bodyMaterial = createPaintedMetalMaterial(
-      scene,
-      `terrarium.transit.${kind}.${id}.body.mat`,
-      SITE_FALLBACK_COLOR.gardenSlide.clone(),
-    );
+    const bodyMaterial = kind === 'gardenSlide'
+      ? createWoodBodyMaterial(scene, `terrarium.transit.${kind}.${id}.body.mat`, GARDEN_SLIDE_BODY_COLOR.clone())
+      : createPaintedMetalMaterial(scene, `terrarium.transit.${kind}.${id}.body.mat`, SITE_FALLBACK_COLOR.gardenSlide.clone());
     bodyMaterial.alpha = 1;
     mesh.material = bodyMaterial;
-    const cap = attachStandee(
-      scene,
-      mesh,
-      `terrarium.transit.${kind}.${id}.cap`,
-      'structure.gardenSlide.base',
-      SITE_FALLBACK_COLOR.gardenSlide,
-      SITE_CAP_WIDTH,
-      SITE_CAP_HEIGHT,
-      halfHeight(body),
-    );
-    cap.material.alpha = 1;
+    let capMaterial: PBRMetallicRoughnessMaterial | null = null;
+    if (kind === 'gardenSlide') {
+      buildGardenSlideRig(scene, mesh, `terrarium.transit.${kind}.${id}`, slideMaterials);
+    } else {
+      const cap = attachStandee(
+        scene,
+        mesh,
+        `terrarium.transit.${kind}.${id}.cap`,
+        'structure.gardenSlide.base',
+        SITE_FALLBACK_COLOR.gardenSlide,
+        SITE_CAP_WIDTH,
+        SITE_CAP_HEIGHT,
+        halfHeight(body),
+      );
+      cap.material.alpha = 1;
+      capMaterial = cap.material;
+    }
     mesh.isPickable = false;
     const world = tileToWorld(tile);
     mesh.position.set(world.x, body.centreY, world.z);
     mesh.metadata = { kind: 'transit', transitKind: kind, artifactId: id, tile };
     shadowGenerator.addShadowCaster(mesh);
-    transitMarkers.set(id, { id, kind, mesh, bodyMaterial, capMaterial: cap.material, tile });
+    transitMarkers.set(id, { id, kind, mesh, bodyMaterial, capMaterial, tile });
   };
 
   const removeTransitMarker = (id: string): void => {
@@ -616,7 +799,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     if (!marker) return;
     marker.mesh.dispose();
     marker.bodyMaterial.dispose();
-    marker.capMaterial.dispose();
+    marker.capMaterial?.dispose();
     transitMarkers.delete(id);
   };
 
@@ -679,31 +862,32 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     mesh.position.set(0, body.centreY, 0);
     mesh.isPickable = false;
     mesh.setEnabled(false);
-    const bodyMaterial = createPaintedMetalMaterial(scene, `terrarium.automation.${id}.body.mat`, SITE_FALLBACK_COLOR[id]);
+    const bodyMaterial = id === 'gardenSlide'
+      ? createWoodBodyMaterial(scene, `terrarium.automation.${id}.body.mat`, GARDEN_SLIDE_BODY_COLOR.clone())
+      : createPaintedMetalMaterial(scene, `terrarium.automation.${id}.body.mat`, SITE_FALLBACK_COLOR[id]);
     bodyMaterial.alpha = 1; // opaque once built — no more translucent "not yet built" marker at a fixed default
     mesh.material = bodyMaterial;
 
-    // Structure illustration standing upright as a billboarded card (see
-    // src/render/flatArt.ts's attachStandee), not lying flat on the box top.
-    // width:height ~1.54:1 roughly matches the source art's real 400x260
-    // aspect (the texture itself is also letterboxed within its canvas, so
-    // this doesn't need to be exact). attachStandee is handed the plinth's TOP
-    // FACE (its own half-height) and does the anchoring itself, so the card's
-    // bottom edge stays just clear of that face even after the content crop
-    // resizes it.
-    const cap = attachStandee(
-      scene,
-      mesh,
-      `terrarium.automation.${id}.cap`,
-      `structure.${id}.base`,
-      SITE_FALLBACK_COLOR[id],
-      SITE_CAP_WIDTH,
-      SITE_CAP_HEIGHT,
-      halfHeight(body),
-    );
-    cap.material.alpha = 1;
+    let capMaterial: PBRMetallicRoughnessMaterial | null = null;
+    if (id === 'gardenSlide') {
+      buildGardenSlideRig(scene, mesh, `terrarium.automation.${id}`, slideMaterials);
+    } else {
+      const cap = attachStandee(
+        scene,
+        mesh,
+        `terrarium.automation.${id}.cap`,
+        `structure.${id}.base`,
+        SITE_FALLBACK_COLOR[id],
+        SITE_CAP_WIDTH,
+        SITE_CAP_HEIGHT,
+        halfHeight(body),
+      );
+      cap.material.alpha = 1;
+      capMaterial = cap.material;
+    }
 
     const belt = buildBeltRig(scene, mesh, `terrarium.automation.${id}`, deckMaterial, frameMaterial);
+    if (id === 'gardenSlide') belt.root.setEnabled(false);
     const contactPad = buildContactPad(
       scene,
       `terrarium.automation.${id}.contact`,
@@ -741,11 +925,14 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     const waitBead = MeshBuilder.CreateSphere(`terrarium.automation.${id}.wait`, { diameter: BEAD_DIAMETER, segments: 8 }, scene);
     waitBead.parent = mesh;
     waitBead.isPickable = false;
-    waitBead.position.set(
-      LATERAL_X * (BEAD_TRAVEL * 0.5) + VIEWER_X * BEAD_FORWARD,
-      beadLocalY,
-      LATERAL_Z * (BEAD_TRAVEL * 0.5) + VIEWER_Z * BEAD_FORWARD,
-    );
+    if (id === 'gardenSlide') setSlidePathPosition(waitBead, GARDEN_SLIDE.path, 0.88);
+    else {
+      waitBead.position.set(
+        LATERAL_X * (BEAD_TRAVEL * 0.5) + VIEWER_X * BEAD_FORWARD,
+        beadLocalY,
+        LATERAL_Z * (BEAD_TRAVEL * 0.5) + VIEWER_Z * BEAD_FORWARD,
+      );
+    }
     waitBead.setEnabled(false);
     const waitMaterial = createPaintedMetalMaterial(scene, `terrarium.automation.${id}.wait.mat`, BLOCKED_GLOW.clone());
     waitMaterial.emissiveColor = BLOCKED_GLOW.scale(0.6);
@@ -754,7 +941,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     sites[id] = {
       id,
       mesh,
-      material: cap.material,
+      capMaterial,
       bodyMaterial,
       built: false,
       siteTile: null,
@@ -779,6 +966,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       waitMaterial,
       waitVisible: false,
       beadLocalY,
+      travelPath: id === 'gardenSlide' ? GARDEN_SLIDE.path : null,
     };
   }
 
@@ -1115,11 +1303,14 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
           // CARRIED rather than as a bead pulsing in place.
           const edge = Math.min(held, 1 - held) / BEAD_FADE_WINDOW;
           const swell = smoothstep(edge) * site.carryBlend;
-          site.beads[k].position.set(
-            LATERAL_X * lateral + VIEWER_X * BEAD_FORWARD,
-            site.beadLocalY,
-            LATERAL_Z * lateral + VIEWER_Z * BEAD_FORWARD,
-          );
+          if (site.travelPath) setSlidePathPosition(site.beads[k], site.travelPath, held);
+          else {
+            site.beads[k].position.set(
+              LATERAL_X * lateral + VIEWER_X * BEAD_FORWARD,
+              site.beadLocalY,
+              LATERAL_Z * lateral + VIEWER_Z * BEAD_FORWARD,
+            );
+          }
           site.beads[k].scaling.set(swell, swell, swell);
         }
       }
@@ -1165,54 +1356,68 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
   let previewMesh: Mesh | undefined;
   let previewBodyMaterial: PBRMetallicRoughnessMaterial | undefined;
   let previewCap: FlatCap | undefined;
+  let previewSlideMaterials: PBRMetallicRoughnessMaterial[] = [];
   let previewKey: string | undefined;
 
   const clearPreview = (): void => {
     previewMesh?.dispose(); // recursively disposes the cap child mesh too
     previewBodyMaterial?.dispose();
     previewCap?.material.dispose();
+    for (const material of previewSlideMaterials) material.dispose();
     previewMesh = undefined;
     previewBodyMaterial = undefined;
     previewCap = undefined;
+    previewSlideMaterials = [];
     previewKey = undefined;
   };
 
   const ensurePreview = (key: string, artId: AutomationId): void => {
-    if (previewMesh && previewBodyMaterial && previewCap && previewKey === key) return;
+    if (previewMesh && previewBodyMaterial && previewKey === key) return;
     clearPreview();
     const mesh = buildAutomationMesh(scene, 'terrarium.automation.preview', AUTOMATION_PREVIEW_BODY);
     mesh.isPickable = false;
-    const bodyMaterial = createPaintedMetalMaterial(
-      scene,
-      'terrarium.automation.preview.body.mat',
-      SITE_FALLBACK_COLOR[artId].clone(),
-    );
+    const bodyMaterial = artId === 'gardenSlide'
+      ? createWoodBodyMaterial(scene, 'terrarium.automation.preview.body.mat', GARDEN_SLIDE_BODY_COLOR.clone())
+      : createPaintedMetalMaterial(scene, 'terrarium.automation.preview.body.mat', SITE_FALLBACK_COLOR[artId].clone());
     bodyMaterial.alpha = 0.55;
     mesh.material = bodyMaterial;
-    const cap = attachStandee(
-      scene,
-      mesh,
-      'terrarium.automation.preview.cap',
-      `structure.${artId}.base`,
-      SITE_FALLBACK_COLOR[artId],
-      PREVIEW_CAP_WIDTH,
-      PREVIEW_CAP_HEIGHT,
-      halfHeight(AUTOMATION_PREVIEW_BODY),
-    );
-    cap.material.alpha = 0.55;
+    if (artId === 'gardenSlide') {
+      const materials: GardenSlideMaterials = {
+        channel: createWoodBodyMaterial(scene, 'terrarium.automation.preview.slide.channel.mat', GARDEN_SLIDE_CHANNEL_COLOR.clone()),
+        inset: createWoodBodyMaterial(scene, 'terrarium.automation.preview.slide.inset.mat', GARDEN_SLIDE_INSET_COLOR.clone()),
+        frame: createWoodBodyMaterial(scene, 'terrarium.automation.preview.slide.frame.mat', GARDEN_SLIDE_FRAME_COLOR.clone()),
+        support: createStoneBodyMaterial(scene, 'terrarium.automation.preview.slide.support.mat', GARDEN_SLIDE_SUPPORT_COLOR.clone()),
+      };
+      previewSlideMaterials = Object.values(materials);
+      for (const material of previewSlideMaterials) material.alpha = 0.55;
+      buildGardenSlideRig(scene, mesh, 'terrarium.automation.preview', materials);
+    } else {
+      const cap = attachStandee(
+        scene,
+        mesh,
+        'terrarium.automation.preview.cap',
+        `structure.${artId}.base`,
+        SITE_FALLBACK_COLOR[artId],
+        PREVIEW_CAP_WIDTH,
+        PREVIEW_CAP_HEIGHT,
+        halfHeight(AUTOMATION_PREVIEW_BODY),
+      );
+      cap.material.alpha = 0.55;
+      previewCap = cap;
+    }
     previewMesh = mesh;
     previewBodyMaterial = bodyMaterial;
-    previewCap = cap;
     previewKey = key;
   };
 
   const updatePreview = (tile: TileCoord, status: 'valid' | 'invalid' | 'blocked'): void => {
-    if (!previewMesh || !previewBodyMaterial || !previewCap) return;
+    if (!previewMesh || !previewBodyMaterial) return;
     const world = tileToWorld(tile);
     previewMesh.position.set(world.x, AUTOMATION_PREVIEW_BODY.centreY, world.z);
     const tint = status === 'valid' ? PREVIEW_VALID : status === 'blocked' ? PREVIEW_BLOCKED : PREVIEW_INVALID;
     previewBodyMaterial.emissiveColor.copyFrom(tint);
-    previewCap.material.emissiveColor.copyFrom(tint);
+    previewCap?.material.emissiveColor.copyFrom(tint);
+    for (const material of previewSlideMaterials) material.emissiveColor.copyFrom(tint);
     previewMesh.scaling.setAll(status === 'blocked' ? 1.08 : status === 'invalid' ? 0.96 : 1);
   };
 
@@ -1222,8 +1427,8 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
   };
 
   const previewTransitAt = (kind: PricedTransitKind, tile: TileCoord, status: 'valid' | 'invalid' | 'blocked'): void => {
-    // Temporary shared Garden Slide art keeps 7.6 about placement feedback;
-    // dedicated conveyor identity belongs to the visual pass in 7.7.
+    // Slides use the same physical silhouette as a built artifact; Conveyors
+    // keep the shared marker until their dedicated identity pass in 7.11.
     ensurePreview(`transit:${kind}`, 'gardenSlide');
     updatePreview(tile, status);
   };
@@ -1286,7 +1491,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     for (const site of Object.values(sites)) {
       site.contactPad.dispose(); // deliberately unparented (see markBuilt), so not covered below
       site.mesh.dispose(); // recursively disposes the cap + every bead + the belt rig + lane lamp child mesh too
-      site.material.dispose();
+      site.capMaterial?.dispose();
       site.bodyMaterial.dispose();
       site.beadMaterial.dispose();
       site.waitMaterial.dispose();
@@ -1294,9 +1499,13 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     for (const marker of transitMarkers.values()) {
       marker.mesh.dispose();
       marker.bodyMaterial.dispose();
-      marker.capMaterial.dispose();
+      marker.capMaterial?.dispose();
     }
     transitMarkers.clear();
+    slideMaterials.channel.dispose();
+    slideMaterials.inset.dispose();
+    slideMaterials.frame.dispose();
+    slideMaterials.support.dispose();
   };
 
   return { previewAt, previewTransitAt, clearPreview, nearestBuiltWithin, nearestTransitWithin, matchesSprout, dispose };

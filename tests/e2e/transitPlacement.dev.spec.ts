@@ -45,6 +45,16 @@ async function movePointerToTile(page: Page, tile: { x: number; z: number }): Pr
   await page.mouse.move(point.x, point.y);
 }
 
+async function frameGardenSlide(page: Page, radius: number, target: { x: number; y: number; z: number }, alpha = -Math.PI * 0.75): Promise<void> {
+  await page.evaluate(({ alpha: nextAlpha, radius: nextRadius, target: nextTarget }) => {
+    const debug = window.__debug as unknown as {
+      qaCamera: (alpha: number, beta: number, radius: number, targetX: number, targetY: number, targetZ: number) => void;
+    };
+    debug.qaCamera(nextAlpha, Math.PI / 2.9, nextRadius, nextTarget.x, nextTarget.y, nextTarget.z);
+  }, { alpha, radius, target });
+  await page.waitForTimeout(250);
+}
+
 test.describe('Garden Transit placement', () => {
   test('places four Slides and multiple Conveyors, explains refusals, moves, removes, and saves', async ({ page }) => {
     test.setTimeout(180_000);
@@ -146,5 +156,33 @@ test.describe('Garden Transit placement', () => {
     await page.keyboard.press('ArrowLeft');
     await expect(page.getByRole('toolbar', { name: 'Build menu' }).getByRole('status')).toContainText('path tile');
     await page.screenshot({ path: 'docs/visual-qa/transit/placement-invalid.png' });
+  });
+
+  test('shows the Garden Slide silhouette at gameplay and close camera distances', async ({ page }) => {
+    test.setTimeout(120_000);
+    const console_ = collectConsoleErrors(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/');
+    await waitForDevHooks(page);
+    await installBusRecorder(page);
+    await unlockTransit(page);
+    await placeTransitViaBuildMenu(page, 'gardenSlide', GARDEN_SLIDE_TILE);
+    await page.locator('.tt-debug-panel').evaluate((element) => element.remove());
+
+    await frameGardenSlide(page, 8.5, { x: GARDEN_SLIDE_TILE.x, y: 0, z: GARDEN_SLIDE_TILE.z });
+    await page.screenshot({ path: 'docs/visual-qa/transit/slide-after.png' });
+    await frameGardenSlide(page, 6.5, { x: GARDEN_SLIDE_TILE.x, y: 0, z: GARDEN_SLIDE_TILE.z });
+    await page.screenshot({ path: 'docs/visual-qa/transit/slide-adjacent-pod.png' });
+    await frameGardenSlide(page, 7.5, { x: GARDEN_SLIDE_TILE.x, y: 0, z: GARDEN_SLIDE_TILE.z }, -Math.PI / 4);
+    await page.screenshot({ path: 'docs/visual-qa/transit/slide-angle.png' });
+
+    await page.evaluate(() => { document.documentElement.style.filter = 'grayscale(1)'; });
+    await page.screenshot({ path: 'docs/visual-qa/transit/slide-desaturated.png' });
+    await page.evaluate(() => { document.documentElement.style.filter = ''; });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: 'docs/visual-qa/transit/slide-390.png' });
+    console_.assertNone();
   });
 });

@@ -201,6 +201,24 @@ export const AUTOMATION_BODY: PropBody = {
   },
 };
 
+/** Low, compact slide footing. The transit clearance/port body remains
+ * `AUTOMATION_BODY`; this render body leaves the raised channel and supports
+ * visible instead of hiding them inside a generic half-height box. */
+export const GARDEN_SLIDE_BASE_BODY: PropBody = {
+  centreY: 0.11,
+  halfWidth: 0.3,
+  halfDepth: 0.3,
+  cornerRadius: 0.17,
+  radialSegments: 32,
+  profile: {
+    height: 0.22,
+    topBevel: 0.05,
+    bottomBevel: 0.035,
+    taperInset: 0.02,
+    foot: { height: 0.06, outset: 0.045, bevel: 0.025 },
+  },
+};
+
 /** Slightly larger twin of AUTOMATION_BODY used for the drag-placement ghost,
  * mirroring the original preview box's 0.85/0.55 vs 0.8/0.5 relationship. */
 export const AUTOMATION_PREVIEW_BODY: PropBody = {
@@ -278,8 +296,43 @@ export const AUTOMATION_BELT = {
   loadClearance: 0.012,
 } as const;
 
+/** Local-space Garden Slide silhouette, anchored to the south entry and north
+ * exit ports derived in `src/sim/ports.ts`. Y values are relative to the
+ * automation body centre, so changing the shared body moves the whole slide
+ * without leaving floating supports behind. */
+export interface GardenSlidePathPoint {
+  z: number;
+  y: number;
+}
+
+const AUTOMATION_GROUND_LOCAL_Y = -GARDEN_SLIDE_BASE_BODY.centreY;
+
+export const GARDEN_SLIDE = {
+  channelHalfWidth: 0.16,
+  channelThickness: 0.075,
+  channelInset: 0.095,
+  railRadius: 0.026,
+  railLift: 0.11,
+  supportX: 0.22,
+  supportZ: 0.12,
+  supportWidth: 0.055,
+  supportDepth: 0.055,
+  entryZ: 0.44,
+  exitZ: -0.44,
+  entryFrameHalfWidth: 0.2,
+  exitLipHeight: 0.07,
+  path: [
+    { z: 0.44, y: AUTOMATION_GROUND_LOCAL_Y + 0.4 },
+    { z: 0.29, y: AUTOMATION_GROUND_LOCAL_Y + 0.47 },
+    { z: 0.1, y: AUTOMATION_GROUND_LOCAL_Y + 0.5 },
+    { z: -0.1, y: AUTOMATION_GROUND_LOCAL_Y + 0.42 },
+    { z: -0.28, y: AUTOMATION_GROUND_LOCAL_Y + 0.25 },
+    { z: -0.44, y: AUTOMATION_GROUND_LOCAL_Y + 0.1 },
+  ] as readonly GardenSlidePathPoint[],
+} as const;
+
 export const AUTOMATION_BODIES: Record<AutomationId, PropBody> = {
-  gardenSlide: AUTOMATION_BODY,
+  gardenSlide: GARDEN_SLIDE_BASE_BODY,
   colourGate: AUTOMATION_BODY,
   moodBell: AUTOMATION_BODY,
 };
