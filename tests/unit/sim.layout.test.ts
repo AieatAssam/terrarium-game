@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { TICK_MS } from '../../src/sim/loop';
+import { transportDuration } from '../../src/sim/systems';
 import {
   COLOUR_GATE_TILE,
   findPathRoute,
@@ -10,6 +12,7 @@ import {
   MOOD_BELL_TILE,
   nearestReachableHabitat,
   NURSERY_TILE,
+  tileDistance,
 } from '../../src/sim/layout';
 
 describe('findPathRoute', () => {
@@ -88,6 +91,31 @@ describe('nearestReachableHabitat', () => {
     // spur tile is present but never returned as a "habitat" (it isn't one).
     expect(GARDEN_PATH_TILES.length).toBeGreaterThan(0);
     expect(GARDEN_PATH_TILES).toContainEqual(MOOD_BELL_TILE);
+  });
+});
+
+describe('default transit network', () => {
+  it('uses placed route length for transport duration', () => {
+    const route = findPathRoute(NURSERY_TILE, HABITAT_TILES.emberNook);
+    expect(route).not.toBeNull();
+    const placedRouteLength = route!.length - 1;
+    expect(placedRouteLength).toBe(tileDistance(NURSERY_TILE, HABITAT_TILES.emberNook));
+
+    const { durationTicks, durationMs } = transportDuration(
+      {
+        id: 'slide-1',
+        automationId: 'gardenSlide',
+        siteTile: GARDEN_SLIDE_TILE,
+        fromTile: NURSERY_TILE,
+        toTile: HABITAT_TILES.emberNook,
+        builtAtTick: 0,
+        carryingSproutId: null,
+        completesAtTick: null,
+      },
+      {},
+      placedRouteLength,
+    );
+    expect(durationMs).toBe(durationTicks * TICK_MS);
   });
 });
 

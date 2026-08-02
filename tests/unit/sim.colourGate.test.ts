@@ -32,6 +32,7 @@ import {
   HABITAT_TILES,
   NURSERY_TILE,
   defaultColourGateLanes,
+  findPathRoute,
   habitatAtTile,
   sameTile,
   tileDistance,
@@ -111,15 +112,17 @@ describe('garden topology (the fork the Gate governs)', () => {
   });
 
   it('costs a Sprout nothing to travel via the Gate rather than straight to its home', () => {
-    // The load-bearing arithmetic: routing THROUGH the Gate must be exactly as
-    // long as the old direct ride, or every Colour Gate delivery would silently
-    // become slower than a Garden Slide one and the renderer's path walk would
-    // stop agreeing with the sim's Manhattan distance.
+    // Property of DEFAULT seeded network, not universal law for future placed
+    // Conveyor networks: Gate path must match direct route length.
     for (const lane of COLOUR_GATE_LANE_LIST) {
       const home = HABITAT_TILES[COLOUR_GATE_LANE_HABITATS[lane]];
-      expect(tileDistance(NURSERY_TILE, COLOUR_GATE_TILE) + tileDistance(COLOUR_GATE_TILE, home)).toBe(
-        tileDistance(NURSERY_TILE, home),
-      );
+      const direct = findPathRoute(NURSERY_TILE, home);
+      const firstLeg = findPathRoute(NURSERY_TILE, COLOUR_GATE_TILE);
+      const secondLeg = findPathRoute(COLOUR_GATE_TILE, home);
+      expect(direct).not.toBeNull();
+      expect(firstLeg).not.toBeNull();
+      expect(secondLeg).not.toBeNull();
+      expect(firstLeg!.length - 1 + (secondLeg!.length - 1)).toBe(direct!.length - 1);
     }
   });
 });

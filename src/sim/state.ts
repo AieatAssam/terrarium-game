@@ -69,6 +69,59 @@ export interface AutomationInstance {
   completesAtTick: number | null;
 }
 
+/**
+ * Garden Transit (GameRules §9.3, plan.yaml Phase 7 — 2026-08-02) domain
+ * types. N-instance by design; the Colour Gate and Mood Bell stay ordinary
+ * single `AutomationInstance`s (plan.yaml 7.2 non_goals). This is the shape
+ * the v6→v7 save migration produces; 7.3+ wires it into the sim.
+ *
+ * Ports (entry/exit, §9.13) and route state are deliberately NOT stored:
+ * ports are derived from artifact position + kind on load (plan.yaml 7.5),
+ * and route state is a pure function of state (7.8). Mid-ride persistence is
+ * 7.13's concern and has no fields here yet.
+ */
+
+/** The §9.14 accepted-kind filter: one Sprout kind, or `'any'` (the safe default). */
+export type TransitAcceptedKind = SproutTypeId | 'any';
+
+/**
+ * One owned, placed Garden Slide. Copied from the HabitatInstance pattern
+ * (kind on the instance, tile on the instance, no per-instance price —
+ * GameRules §9.12). A migrated legacy Slide is always `slide-1`.
+ */
+export interface SlideInstance {
+  /** `slide-1`, `slide-2`, … per owned Slide in build order. */
+  id: string;
+  /** Where the structure stands (was `AutomationInstance.siteTile`). */
+  tile: TileCoord;
+  /** Which Sprout kinds this Slide carries; `'any'` accepts everything (§9.14). */
+  acceptedKind: TransitAcceptedKind;
+  /** The home this Slide delivers to (§9.14) — preserved from the legacy computed target. */
+  destination: HabitatId;
+  /** §9.14: a disabled Slide is visibly dormant and holds nothing. */
+  enabled: boolean;
+  /** Tick this Slide was built — a migrated legacy Slide keeps its historical value. */
+  builtAtTick: number;
+}
+
+/**
+ * One placed Sprout Conveyor segment — the single buildable route substrate
+ * (GameRules §9.9, §9.3.2). Connectivity is derived from which tiles are
+ * occupied by segments (adjacency in the tile graph), never stored, so a
+ * segment needs no port fields here (plan.yaml 7.5).
+ */
+export interface ConveyorSegment {
+  /** `conveyor-<x>-<z>` — unique per tile; a segment cannot share its tile. */
+  id: string;
+  /** The tile this segment occupies. */
+  tile: TileCoord;
+  /** Tick this segment was built — the migrated fixed network is pre-existing garden infrastructure (0). */
+  builtAtTick: number;
+}
+
+/** A transit artifact's legible state, matching GameRules §9.15 exactly. Derived, never stored. */
+export type RouteState = 'idle' | 'active' | 'waiting' | 'blocked' | 'disabled' | 'invalid';
+
 export interface SimState {
   /** Bumped whenever this shape changes; mirrors the save envelope version. */
   shapeVersion: number;
@@ -79,6 +132,11 @@ export interface SimState {
   sprouts: SproutInstance[];
   /** Every habitat standing in the garden — the three originals plus any the player built (Phase 2). */
   habitats: HabitatInstance[];
+  /** Owned, placed Garden Slides (Garden Transit, §9.3.1) — N-instance; empty for a fresh garden. */
+  slides: SlideInstance[];
+  /** Placed Sprout Conveyor segments (§9.3.2/§9.9) — the buildable route substrate; empty for a fresh garden. */
+  conveyors: ConveyorSegment[];
+  /** The Colour Gate, Mood Bell and any future single-instance helpers. A migrated legacy Slide is REMOVED from here (it becomes a `slides` entry). */
   automations: AutomationInstance[];
   unlockedAutomations: AutomationId[];
   /** Level per purchased upgrade; absent key = not yet purchased. */
@@ -125,7 +183,7 @@ export interface SimState {
   nurseryWaitingCount: number;
 }
 
-export const SIM_SHAPE_VERSION = 6;
+export const SIM_SHAPE_VERSION = 7;
 
 export function createInitialSimState(seed: number): SimState {
   return {
@@ -147,6 +205,8 @@ export function createInitialSimState(seed: number): SimState {
       builtAtTick: 0,
     })),
     automations: [],
+    slides: [],
+    conveyors: [],
     unlockedAutomations: [],
     upgradeLevels: {},
     unlockedAchievements: [],

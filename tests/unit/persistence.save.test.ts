@@ -3,9 +3,9 @@ import 'fake-indexeddb/auto';
 import { CURRENT_SAVE_VERSION, clearSave, loadGame, saveGame } from '../../src/persistence/save';
 import { idbSet } from '../../src/persistence/db';
 import { createInitialSimState, type SimState } from '../../src/sim/state';
-import { HABITAT_TILES, defaultColourGateLanes } from '../../src/sim/layout';
+import { GARDEN_PATH_TILES, GARDEN_SLIDE_TILE, HABITAT_TILES, NURSERY_TILE, defaultColourGateLanes } from '../../src/sim/layout';
 
-/** The current (v6, instance-model) habitat array: all three originals, Ember Nook holding one Sprout. */
+/** The current (v7, instance-model) habitat array: all three originals, Ember Nook holding one Sprout. */
 function instanceHabitats(): SimState['habitats'] {
   return (Object.keys(HABITAT_TILES) as (keyof typeof HABITAT_TILES)[]).map((habitatId) => ({
     id: `${habitatId}-1`,
@@ -72,6 +72,90 @@ describe('save round-trip through IndexedDB', () => {
   });
 });
 
+describe('migration into v7 (Garden Transit)', () => {
+  beforeEach(async () => {
+    await clearSave();
+  });
+
+  function v6Envelope(targetHabitatId: unknown = 'sunflowerMeadow'): unknown {
+    const sample = buildSampleState();
+    const { slides: _slides, conveyors: _conveyors, ...v6Base } = sample;
+    return {
+      version: 6,
+      sim: {
+        ...v6Base,
+        shapeVersion: 6,
+        automations: [
+          {
+            id: 'gardenSlide-1',
+            automationId: 'gardenSlide' as const,
+            siteTile: GARDEN_SLIDE_TILE,
+            fromTile: NURSERY_TILE,
+            toTile: HABITAT_TILES.sunflowerMeadow,
+            builtAtTick: 42,
+            targetHabitatId,
+            carryingSproutId: null,
+            completesAtTick: null,
+          },
+          {
+            id: 'colourGate-1',
+            automationId: 'colourGate' as const,
+            siteTile: { x: 8, z: 6 },
+            fromTile: NURSERY_TILE,
+            toTile: { x: 8, z: 6 },
+            builtAtTick: 20,
+            carryingSproutId: null,
+            completesAtTick: null,
+          },
+        ],
+      },
+      meta: { lastSavedAt: 1_700_000_000_000 },
+    };
+  }
+
+  it('converts legacy Slide, backfills old path network, preserves garden', async () => {
+    await idbSet('default', v6Envelope());
+    const loaded = await loadGame();
+
+    expect(loaded?.version).toBe(CURRENT_SAVE_VERSION);
+    expect(loaded?.sim.shapeVersion).toBe(7);
+    expect(loaded?.sim.slides).toEqual([
+      {
+        id: 'slide-1',
+        tile: GARDEN_SLIDE_TILE,
+        acceptedKind: 'any',
+        destination: 'sunflowerMeadow',
+        enabled: true,
+        builtAtTick: 42,
+      },
+    ]);
+    expect(loaded?.sim.automations).toHaveLength(1);
+    expect(loaded?.sim.automations[0].automationId).toBe('colourGate');
+    expect(loaded?.sim.conveyors).toEqual(
+      GARDEN_PATH_TILES.map((tile) => ({ id: `conveyor-${tile.x}-${tile.z}`, tile, builtAtTick: 0 })),
+    );
+    expect(loaded?.sim.dewdrops).toBe(13);
+    expect(loaded?.sim.sprouts).toEqual([
+      { id: 'sprout-1', sproutType: 'ember', mood: 'sleepy', tile: { x: 2, z: 3 }, state: 'settled' },
+    ]);
+  });
+
+  it('reconstructs corrupt legacy destination from Slide site', async () => {
+    await idbSet('default', v6Envelope('not-a-habitat'));
+    const loaded = await loadGame();
+    expect(loaded?.sim.slides[0].destination).toBe('sunflowerMeadow');
+  });
+
+  it('loads same legacy envelope deterministically twice', async () => {
+    const envelope = v6Envelope('emberNook');
+    await idbSet('default', envelope);
+    const first = await loadGame();
+    await idbSet('default', envelope);
+    const second = await loadGame();
+    expect(second?.sim).toEqual(first?.sim);
+  });
+});
+
 describe('migration into v3 (Colour Gate rule + Nursery rhythm)', () => {
   beforeEach(async () => {
     await clearSave();
@@ -88,11 +172,13 @@ describe('migration into v3 (Colour Gate rule + Nursery rhythm)', () => {
       ...v2SimWithoutRule
     } = { ...sample, shapeVersion: 2 };
     // A genuine v2 save also predates `mood` (added in v4) and the habitat
-    // INSTANCE model (added in v6) — strip mood from every sprout and convert
+    // INSTANCE model (added in v6) and Garden Transit (added in v7) — strip
+    // mood/transit from every sprout and convert
     // habitats back to the old kind-keyed record so this fixture is faithful
     // to what a real v2 envelope actually looked like.
+    const { slides: _slides, conveyors: _conveyors, ...v2WithoutTransit } = v2SimWithoutRule;
     const v2Sim = {
-      ...v2SimWithoutRule,
+      ...v2WithoutTransit,
       sprouts: sample.sprouts.map(({ mood: _mood, ...rest }) => rest),
       habitats: legacyHabitats(sample.habitats),
     };
@@ -100,14 +186,14 @@ describe('migration into v3 (Colour Gate rule + Nursery rhythm)', () => {
   }
 
   it('gives a returning v2 garden the safe recommended lane rule', async () => {
-    // A v2 save now migrates all the way to the CURRENT version (6, via the
+    // A v2 save now migrates all the way to the CURRENT version (7, via the
     // v3 Mood Bell step, v4 manual-placement step and v5 habitat-instance
     // step, all added after this v2->v3 migration was written) — v3 is no
     // longer terminal.
     await idbSet('default', v2Envelope());
     const loaded = await loadGame();
-    expect(loaded?.version).toBe(6);
-    expect(loaded?.sim.shapeVersion).toBe(6);
+    expect(loaded?.version).toBe(7);
+    expect(loaded?.sim.shapeVersion).toBe(7);
     expect(loaded?.sim.colourGateLanes).toEqual(defaultColourGateLanes());
   });
 
@@ -179,8 +265,9 @@ describe('migration into v4 (Mood Bell: per-sprout mood + moodBellRule)', () => 
   function v3Envelope(): unknown {
     const sample = buildSampleState();
     const { moodBellRule: _rule, ...v3SimWithoutRule } = { ...sample, shapeVersion: 3 };
+    const { slides: _slides, conveyors: _conveyors, ...v3WithoutTransit } = v3SimWithoutRule;
     const v3Sim = {
-      ...v3SimWithoutRule,
+      ...v3WithoutTransit,
       sprouts: sample.sprouts.map(({ mood: _mood, ...rest }) => rest),
       habitats: legacyHabitats(sample.habitats),
     };
@@ -188,13 +275,13 @@ describe('migration into v4 (Mood Bell: per-sprout mood + moodBellRule)', () => 
   }
 
   it('backfills mood on every pre-existing sprout, defaulting to sunny', async () => {
-    // A v3 save now migrates all the way to the CURRENT version (6, via the
+    // A v3 save now migrates all the way to the CURRENT version (7, via the
     // v4 manual-placement step and v5 habitat-instance step, both added after
     // this v3->v4 migration was written) — v4 is no longer terminal.
     await idbSet('default', v3Envelope());
     const loaded = await loadGame();
-    expect(loaded?.version).toBe(6);
-    expect(loaded?.sim.shapeVersion).toBe(6);
+    expect(loaded?.version).toBe(7);
+    expect(loaded?.sim.shapeVersion).toBe(7);
     expect(loaded?.sim.sprouts).toHaveLength(1);
     for (const sprout of loaded?.sim.sprouts ?? []) {
       expect(sprout.mood).toBe('sunny');
@@ -241,8 +328,9 @@ describe('migration into v5 (manual placement: per-automation siteTile)', () => 
   /** A v4 envelope: a built Garden Slide and Colour Gate, neither carrying `siteTile` — v4 predates manual placement, every automation was auto-built at a single fixed default tile per automationId. Typed `unknown` deliberately: a real v4-shaped record on disk never had this field, so this must NOT structurally satisfy the current (v5) AutomationInstance type. */
   function v4Envelope(): unknown {
     const sample = buildSampleState();
+    const { slides: _slides, conveyors: _conveyors, ...v4Base } = sample;
     const v4Sim = {
-      ...sample,
+      ...v4Base,
       shapeVersion: 4,
       habitats: legacyHabitats(sample.habitats),
       automations: [
@@ -273,14 +361,13 @@ describe('migration into v5 (manual placement: per-automation siteTile)', () => 
   it('backfills siteTile from the old fixed default tile for every pre-existing automation', async () => {
     await idbSet('default', v4Envelope());
     const loaded = await loadGame();
-    expect(loaded?.version).toBe(6);
-    expect(loaded?.sim.shapeVersion).toBe(6);
-    const slide = loaded?.sim.automations.find((a) => a.automationId === 'gardenSlide');
+    expect(loaded?.version).toBe(7);
+    expect(loaded?.sim.shapeVersion).toBe(7);
     const gate = loaded?.sim.automations.find((a) => a.automationId === 'colourGate');
     // These are the true historical values — AUTOMATION_SITE_TILES is where
     // every v4 build always placed them, there is no other tile they could
     // have stood at.
-    expect(slide?.siteTile).toEqual({ x: 8, z: 7 });
+    expect(loaded?.sim.slides[0].tile).toEqual({ x: 8, z: 7 });
     expect(gate?.siteTile).toEqual({ x: 8, z: 6 });
   });
 
@@ -316,8 +403,9 @@ describe('migration into v6 (buildable habitats: the instance model)', () => {
    * `habitatDewdropFraction` is kind-keyed too — both v6 converts. */
   function v5Envelope(): unknown {
     const sample = buildSampleState();
+    const { slides: _slides, conveyors: _conveyors, ...v5Base } = sample;
     const v5Sim = {
-      ...sample,
+      ...v5Base,
       shapeVersion: 5,
       habitats: legacyHabitats(sample.habitats),
       habitatDewdropFraction: { emberNook: 0.5 },
@@ -328,8 +416,8 @@ describe('migration into v6 (buildable habitats: the instance model)', () => {
   it('rebuilds the instance array from the old kind-keyed record, preserving counts and tiles', async () => {
     await idbSet('default', v5Envelope());
     const loaded = await loadGame();
-    expect(loaded?.version).toBe(6);
-    expect(loaded?.sim.shapeVersion).toBe(6);
+    expect(loaded?.version).toBe(7);
+    expect(loaded?.sim.shapeVersion).toBe(7);
     // Every kind gets an instance (even kinds a v5 save never settled — the
     // old record could legitimately lack them), at the fixed original tile,
     // with the old count preserved.

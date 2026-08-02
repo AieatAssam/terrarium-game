@@ -3,11 +3,17 @@
 // SimState shape together; any SimState shape change bumps it, and a new
 // case is added to migrateEnvelope. v1 migration is a no-op stub.
 
-import { AUTOMATION_SITE_TILES, defaultColourGateLanes, HABITAT_TILES } from '../sim/layout';
+import {
+  AUTOMATION_SITE_TILES,
+  GARDEN_PATH_TILES,
+  defaultColourGateLanes,
+  HABITAT_TILES,
+  nearestReachableHabitat,
+} from '../sim/layout';
 import { createInitialSimState, type SimState } from '../sim/state';
 import { idbDelete, idbGet, idbSet } from './db';
 
-export const CURRENT_SAVE_VERSION = 6;
+export const CURRENT_SAVE_VERSION = 7;
 
 const SAVE_KEY = 'default';
 
@@ -203,7 +209,61 @@ function migrateEnvelope(envelope: SaveEnvelope): SaveEnvelope {
         sim: { ...sim, shapeVersion: 6, habitats, habitatDewdropFraction } as SimState,
       });
     }
-    case 6:
+    case 6: {
+      // v6 predates Garden Transit. Its one legacy Slide carried the exact
+      // site and computed destination needed to preserve the player's build.
+      // The old fixed path is now owned by explicit Conveyor segments, so
+      // backfill every tile without charging or changing any other progress.
+      const sim = envelope.sim as unknown as SimState & {
+        slides?: SimState['slides'];
+        conveyors?: SimState['conveyors'];
+      };
+      const legacySlide = sim.automations.find((a) => a.automationId === 'gardenSlide');
+      const slideTile = legacySlide?.siteTile ?? AUTOMATION_SITE_TILES.gardenSlide;
+      const fallbackDestination = nearestReachableHabitat(
+        slideTile,
+        sim.automations.map((a) => a.siteTile),
+      ) ?? 'sunflowerMeadow';
+      const slides =
+        sim.slides && sim.slides.length > 0
+          ? sim.slides
+          : legacySlide
+            ? [
+                {
+                  id: 'slide-1',
+                  tile: slideTile,
+                  acceptedKind: 'any' as const,
+                  destination:
+                    typeof legacySlide.targetHabitatId === 'string' &&
+                    Object.prototype.hasOwnProperty.call(HABITAT_TILES, legacySlide.targetHabitatId)
+                      ? legacySlide.targetHabitatId
+                      : fallbackDestination,
+                  enabled: true,
+                  builtAtTick: legacySlide.builtAtTick,
+                },
+              ]
+            : [];
+      const conveyors =
+        sim.conveyors && sim.conveyors.length > 0
+          ? sim.conveyors
+          : GARDEN_PATH_TILES.map((tile) => ({
+              id: `conveyor-${tile.x}-${tile.z}`,
+              tile,
+              builtAtTick: 0,
+            }));
+      return migrateEnvelope({
+        ...envelope,
+        version: 7,
+        sim: {
+          ...sim,
+          shapeVersion: 7,
+          slides,
+          conveyors,
+          automations: sim.automations.filter((a) => a.automationId !== 'gardenSlide'),
+        },
+      });
+    }
+    case 7:
       return envelope;
     default:
       // Unknown version (older pre-migration save, or a newer one this build
