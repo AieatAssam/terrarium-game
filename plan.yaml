@@ -55,6 +55,16 @@
 #   5. `work_progress.yaml` gets updated AS PART OF each phase's work, not
 #      afterwards — this project has repeatedly lost work-in-flight to
 #      interruptions; the habit is load-bearing, not decorative.
+#
+# FILE-FORMAT NOTE (found 2026-08-02 while validating this file): plan.yaml
+# uses one `steps:` key PER PHASE at the top level, so the document contains
+# repeated `steps:` keys. That is fine for a human-read plan and is the
+# file's established convention, but it means a strict YAML parser keeps only
+# the LAST `steps:` block and silently drops the rest. Do not build tooling
+# that parses this file as a single YAML mapping without first splitting on
+# the `# ===` phase banners. Phase ids are quoted strings for the same class
+# of reason: unquoted `6.10` parses as the float 6.1 and collides with 6.1.
+#
 #   6. Existing saves must keep loading. Every SimState shape change in
 #      this plan needs a version bump and an explicit migration case in
 #      `src/persistence/save.ts` — `normaliseEnvelope` only backfills
@@ -63,7 +73,10 @@
 #      field) needs its own migration logic, not just a version bump.
 
 meta:
-  status: planned, not started
+  status: >
+    Phase 1 SHIPPED 2026-08-01 (manual placement, commits fc277ba/75f4b9d —
+    see work_progress.yaml). Phases 2-5 planned, not started. Phase 6
+    (world quality) added 2026-08-02, planned, not started.
   authored: 2026-08-01
   design_authority: docs/_scratch/GameRules.md (§9.8-§9.11, §10.0, revised 2026-08-01)
   supersedes: plan.yaml as of commit 3146a96 (Mood Bell — shipped, in git history)
@@ -481,6 +494,1032 @@ steps: []
 # two resolution paths (fix the junction going forward, hand-carry the
 # stalled one) per §9.11.
 steps: []
+
+# =============================================================================
+# PHASE 6 — World quality: terrarium, habitat identity, tactility
+# =============================================================================
+# Added 2026-08-02 after a full baseline diagnosis of the running game.
+# INDEPENDENT of Phases 2-5 (those change what the player BUILDS; this changes
+# what the world LOOKS AND FEELS LIKE) — they can proceed in either order, but
+# 6.1/6.2 must precede everything else in this phase.
+#
+# HOW THIS PHASE WAS DIAGNOSED (evidence, not opinion):
+# Baseline captured from a clean save in a real browser at 1440x900 and at a
+# 390px viewport; screenshots in docs/visual-qa/planning-baseline/.
+# Performance re-measured in real Chrome on a real GPU after an initial
+# headless run produced misleading numbers (see 6.1 — this matters).
+#
+# THE FIVE FINDINGS THIS PHASE EXISTS TO FIX:
+#   F1. IT IS NOT A TERRARIUM. The ground is a single flat plane that simply
+#       ENDS, with black void above the horizon (01-fresh-garden-desktop.png).
+#       There is no vessel, glass, rim, or boundary of any kind. GameRules §3.1
+#       and the game's own name promise a contained little world; the build
+#       delivers an open board floating in blackness.
+#   F2. HABITATS ARE RECOLOURED DRUMS. Ember Nook, Dew Pond and Sunflower
+#       Meadow are the same rounded cylinder in three colours, each with a
+#       small illustration cap on top (03/04/05-*-closeup.png). Most starkly:
+#       THE DEW POND CONTAINS NO WATER — it is a blue plinth, while actual
+#       water decals sit elsewhere in the world, unrelated to it. This is
+#       docs/REFERENCE_BOARD.md's explicit failure condition "habitats look
+#       like generic props rather than distinct living homes".
+#   F3. NO FOCAL HIERARCHY AND NO TERRAIN LAYERING. Uniform green ground,
+#       evenly-scattered identical rock/agave props, zero elevation change, no
+#       zones, no foreground framing. The Nursery — the thing the player must
+#       look at first — is the same visual weight as everything else.
+#   F4. GROUNDING IS INCONSISTENT AND PARTLY BROKEN. Sprouts carry heavy dark
+#       ellipse shadows that stack into a muddy blob in a settled crowd
+#       (10b-ember-nook-populated.png), while the habitat drums and the Nursery
+#       have NO contact darkening where they meet the terrain. The Nursery's
+#       own shadow is DETACHED — a separate dark ellipse floating to its left
+#       (02-nursery-closeup.png). That last one is a positioning bug, not a
+#       taste question.
+#   F5. THE 390px VIEWPORT IS UNRESOLVED. Bottom nav overlaps Sunflower Meadow
+#       and collides with the Garden Slide build button (11-mobile-390.png).
+#
+# WHAT IS NOT WRONG — DO NOT "FIX" THESE:
+#   * PERFORMANCE IS HEALTHY. Measured in real Chrome, busy garden (292 meshes,
+#     69 enabled Sprouts): 60fps, frame time median 16.7ms / p95 17.9ms, 308
+#     draw calls per frame, 28k triangles, 61 materials, 64 textures. There is
+#     headroom. Phase 6 SPENDS some of it deliberately and 6.18 guards the
+#     budget — but nobody should arrive believing there is a perf crisis.
+#   * Zero console errors and zero failed network requests on a full session.
+#   * The Sprouts themselves are in good shape after the 2026-08-01 pass
+#     (readable, grounded, animated) — see docs/visual-qa/improvement-log.md.
+#     Their remaining gap (sprite-sheet padding) is logged there, not here.
+#
+# REFERENCE DISCIPLINE: every task below cites approved images under
+# docs/references/ and the transferable principle from their adjacent .md.
+# References teach measurable qualities ONLY. Never copy their creatures,
+# props, layouts, UI, textures, names, or visual expression — each task's
+# non_goals restates the protected elements for the specific images it cites.
+steps:
+  - phase: "6.1"
+    title: Establish an honest performance and visual baseline
+    status: planned
+    why: >
+      Every later task in this phase adds geometry, materials or lights, and
+      needs a real budget to be measured against. It also has to correct a
+      live measurement trap: `__debug.perf().drawCalls` reads
+      `engine._drawCalls.current`, which is CUMULATIVE, not per-frame. A
+      headless run of this baseline reported 130,323 "draw calls" and 4fps and
+      looked like a catastrophe; the same build in real Chrome is 60fps at 308
+      draw calls per frame. Anyone optimising against the raw counter would
+      chase a phantom.
+    files:
+      - src/render/index.ts (the `perf` debug hook only)
+      - docs/visual-qa/planning-baseline/ (already captured, extend if needed)
+    references:
+      - docs/references/tiny-glade/lighting-materials/tiny-glade-09.jpg
+    principle: >
+      tiny-glade-09.md: surface response and contact shadows must stay
+      INSPECTABLE at close distance. That is only affordable if the frame
+      budget is known, so measurement precedes art.
+    do: >
+      Change the `perf` debug hook to report draw calls PER FRAME (sample
+      `engine._drawCalls.current` inside `scene.onAfterRenderObservable` and
+      report the delta, or expose both `drawCallsCumulative` and
+      `drawCallsPerFrame` — do not silently redefine the existing key without
+      renaming it, the e2e helpers and any saved QA notes read it). Record the
+      measured baseline into docs/visual-qa/improvement-log.md as the Phase 6
+      budget. Note explicitly in that entry that headless Chromium uses
+      SwiftShader and its fps is not evidence of anything.
+    non_goals: >
+      No rendering changes. No optimisation. Do not "improve" the numbers in
+      this task — only measure them correctly.
+    acceptance: >
+      `__debug.perf()` reports a per-frame draw-call figure that stays within
+      +/-10% of a manually sampled onAfterRender delta over 90 frames.
+      docs/visual-qa/improvement-log.md contains a Phase 6 budget entry with
+      fps, frame-time median and p95, per-frame draw calls, triangles,
+      materials and textures for both an empty and a 20+-settled-Sprout
+      garden, each stated as measured in real Chrome on a real GPU.
+    evidence: docs/visual-qa/planning-baseline/ (already contains the 11 baseline captures)
+    validation: npm run typecheck && npm run lint && npm test && npm run build
+    accessibility: N/A (debug-only surface, never player-facing)
+    performance: Establishes the budget; changes nothing.
+    risk: >
+      Very low. Rollback is reverting one debug hook. Risk of NOT doing it is
+      high: the whole phase gets optimised against a meaningless number.
+    commit: "chore(render): report per-frame draw calls and record the Phase 6 perf budget"
+    verification: Compare the hook's output against a manual 90-frame onAfterRender sample in Chrome; both figures must agree.
+    depends_on: []
+
+  - phase: "6.2"
+    title: Audit the scene, material, lighting and asset architecture
+    status: planned
+    why: >
+      Phase 6 replaces a large amount of world geometry. Doing that without
+      first knowing which meshes are load-bearing for GAMEPLAY (hit-testing,
+      drop targets, occupancy signs, path routing, save-restored positions)
+      risks breaking interaction while chasing looks. This project has a
+      documented history of confident-but-wrong conclusions from reading code
+      alone, so this audit is browser-verified, not desk-only.
+    files:
+      - docs/ARCHITECTURE.md (append an as-built world-rendering section)
+    references:
+      - docs/references/tiny-glade/tactile-geometry/tiny-glade-02.jpg
+    principle: >
+      tiny-glade-02.md: structures read as physical objects because they are
+      built from visibly stacked sub-parts (base, frame, roof, trim). Knowing
+      which existing meshes may be decomposed into sub-parts — and which are
+      load-bearing — is the precondition for doing that safely here.
+    do: >
+      Produce a written map covering: every mesh name prefix currently in the
+      scene and its owner module; which meshes are hit-tested or used as drop
+      targets (src/input/index.ts's pickSproutId, habitats.nearestWithin,
+      automation.nearestBuiltWithin); which are positioned from save-restored
+      state; which are pure decoration and therefore SAFE TO REPLACE
+      WHOLESALE; where prop dimensions come from (src/render/propDims.ts is
+      the single source — confirm nothing else declares heights); and the
+      current material families in src/render/pbrMaterials.ts with which
+      objects use each. Explicitly list the safe-to-replace set — that list is
+      what later tasks are allowed to touch freely.
+    non_goals: >
+      No refactoring. No mesh changes. Do not "tidy" anything found during the
+      audit — record it and move on.
+    acceptance: >
+      docs/ARCHITECTURE.md contains a Phase 6 world-rendering section naming
+      every `terrarium.*` mesh prefix, its owning module, and a
+      gameplay-critical / safe-to-replace classification for each, verified
+      against `__debug.meshNames('terrarium.')` in a running browser rather
+      than from source alone.
+    evidence: docs/visual-qa/planning-baseline/ (reuse; no new captures required)
+    validation: npm run typecheck && npm run lint && npm test && npm run build
+    accessibility: N/A (documentation task)
+    performance: N/A
+    risk: Low. Documentation only. Rollback is reverting the doc.
+    commit: "docs(architecture): map the as-built world rendering and safe-to-replace assets"
+    verification: Cross-check the written list against a live `__debug.meshNames('terrarium.')` dump; any prefix present in the scene and missing from the doc fails this task.
+    depends_on: ["6.1"]
+
+  - phase: "6.3"
+    title: Rebuild the lighting foundation with warm/cool separation and soft contact shadows
+    status: planned
+    why: >
+      Every subsequent art task is judged under this light. The current scene
+      is a single key plus a fill, producing an even mid-value image with no
+      warm/cool separation and no atmospheric depth — which is why bevels and
+      material variation that DO exist in the geometry are invisible at
+      gameplay distance. Fixing light first means later tasks are not
+      compensating for it with emissive.
+    files:
+      - src/render/lighting.ts
+      - src/render/quality.ts (tier interaction)
+    references:
+      - docs/references/tiny-glade/lighting-materials/tiny-glade-09.jpg
+      - docs/references/ooblets/lighting-materials/ooblets-17.jpg
+      - docs/references/slime-rancher-2/lighting-materials/slime-rancher-2-07.jpg
+    principle: >
+      tiny-glade-09.md — "light with sparse warm point lights against cool
+      ambient so surface response and contact shadows stay inspectable up
+      close". ooblets-17.md — "cluster 2-3 small emissive sources at different
+      HEIGHTS to sculpt form with warm pools of light". slime-rancher-2-07.md —
+      always anchor a translucent/soft body with a readable ground contact
+      shadow so it stays grounded.
+    do: >
+      Establish a three-part rig: a warm key with soft shadows, a distinctly
+      COOLER fill/ambient so the two are separable by eye, and an environment
+      contribution for ambient occlusion-like depth. Tune shadow map
+      resolution and blur per quality tier (src/render/quality.ts already
+      tiers). Verify at the DEFAULT camera distance, not in a close-up — the
+      failure mode to avoid is lighting that only reads when zoomed in.
+    non_goals: >
+      No bloom-dependent look (REFERENCE_BOARD fails a scene that "depends on
+      bloom to look magical"). No copying tiny-glade's night palette or its
+      lantern/timber-frame subject matter — take the warm-point-against-cool-
+      ambient RELATIONSHIP only. No per-object lights (that is 6.9/6.16).
+    acceptance: >
+      At the default camera, sampling any habitat drum's lit side and shadow
+      side yields a measurable hue difference (warm key vs cool fill), not just
+      a value difference. Every habitat, the Nursery and every automation
+      structure casts a visible soft contact shadow onto the terrain. Frame
+      time p95 stays within the 6.1 budget +15%. Reduced-motion and the low
+      quality tier both still render without shadow acne or missing shadows.
+    evidence: >
+      docs/visual-qa/planning-baseline/ before/after pairs at default camera:
+      lighting-before.png, lighting-after.png, plus a low-quality-tier capture.
+    validation: >
+      npm run typecheck && npm run lint && npm test && npm run build; browser
+      pass at default camera on high and low quality tiers.
+    accessibility: >
+      Must not reduce contrast between Sprouts and terrain. Verify the
+      high-contrast/reduced-motion paths still read; light changes must not
+      become the only carrier of any gameplay information.
+    performance: >
+      Shadow-map cost is the main risk. Stay within the 6.1 frame-time budget
+      +15% on the high tier and at parity on the low tier.
+    risk: >
+      Medium — global change, affects every screenshot in the project.
+      Rollback is a single-file revert of lighting.ts. Take before/after
+      captures of all three habitats and the Nursery BEFORE merging.
+    commit: "feat(render): warm/cool light separation with soft contact shadows"
+    verification: Browser pass at default camera; sample lit/shadow-side pixels for hue separation; confirm contact shadows on all six major structures.
+    depends_on: ["6.1", "6.2"]
+
+  - phase: "6.4"
+    title: Fix contact grounding — attach the Nursery's shadow, ground the drums, calm the Sprout crowd
+    status: planned
+    why: >
+      Three concrete, evidenced grounding defects, all of which make objects
+      look pasted onto the world rather than standing in it. One is an
+      outright bug: the Nursery's contact shadow is DETACHED, rendering as a
+      separate dark ellipse offset to the drum's left
+      (02-nursery-closeup.png). Separately, six settled Sprouts' individual
+      shadows stack into an unreadable dark blob
+      (10b-ember-nook-populated.png), while the habitat drums have no contact
+      darkening at all.
+    files:
+      - src/render/world.ts
+      - src/render/habitats.ts
+      - src/render/sprouts.ts (shadow alpha/size constants only)
+    references:
+      - docs/references/slime-rancher-2/lighting-materials/slime-rancher-2-07.jpg
+      - docs/references/tiny-glade/lighting-materials/tiny-glade-09.jpg
+    principle: >
+      slime-rancher-2-07.md — "always anchor it with a faked blob shadow to
+      keep translucency grounded". tiny-glade-09.md — a small prop mid-street
+      is grounded by its contact shadow; grounding is what separates an object
+      resting IN a scene from one drawn OVER it.
+    do: >
+      Find and fix the Nursery shadow offset (start from whatever positions
+      the nursery mound's shadow in world.ts — the visible offset suggests a
+      centre-vs-pivot mismatch of the same class already documented in
+      src/render/sprouts.ts's height notes). Add contact darkening under each
+      habitat drum and each automation plinth, sized to the base footprint.
+      Reduce per-Sprout shadow strength and/or introduce a merged crowd
+      shadow so a full habitat reads as a group standing on a surface rather
+      than a dark smear — the current SHADOW_ALPHA_CONTACT was tuned against a
+      SINGLE Sprout and was never re-checked at six.
+    non_goals: >
+      No shadow-map work (that is 6.3). No change to Sprout size or artwork.
+      Do not remove Sprout shadows — the fix is calibration, not deletion.
+    acceptance: >
+      The Nursery's contact shadow is centred under the mound at every camera
+      angle. Every habitat drum, the Nursery and every automation plinth show
+      contact darkening at their base. With six Sprouts settled on one
+      habitat, individual creatures remain separable from each other and from
+      the shadow mass at the default camera.
+    evidence: >
+      docs/visual-qa/planning-baseline/grounding-before-*.png (reuse
+      02-nursery-closeup.png and 10b-ember-nook-populated.png) plus matching
+      after captures.
+    validation: npm run typecheck && npm run lint && npm test && npm run build; browser pass with a full habitat.
+    accessibility: >
+      Shadow darkening must not reduce Sprout-vs-ground contrast below the
+      level needed to pick a Sprout out of a crowd.
+    performance: Contact decals are cheap; keep them within the 6.1 draw-call budget.
+    risk: Low. Localised. Rollback per file.
+    commit: "fix(render): attach the Nursery contact shadow and calibrate world grounding"
+    verification: Browser pass; orbit-free camera moves at several radii confirming the Nursery shadow tracks its mound; six-Sprout crowd readability check.
+    depends_on: ["6.3"]
+
+  - phase: "6.5"
+    title: Give the world a terrarium vessel and a horizon
+    status: planned
+    why: >
+      The single largest gap between the game's premise and its build. The
+      ground plane simply ends and everything above the horizon is black void
+      (01-fresh-garden-desktop.png). Nothing tells the player they are looking
+      into a contained little world, which is the entire fiction (GameRules
+      §3.1) and the game's name. It also costs the scene its depth cue: with
+      no background layer there is no foreground/midground/background at all.
+    files:
+      - src/render/background.ts
+      - src/render/world.ts
+      - src/render/propDims.ts (any new vessel dimensions)
+    references:
+      - docs/references/slime-rancher-2/scene-composition/slime-rancher-2-13.jpg
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-06.jpg
+      - docs/references/garden-galaxy/decorative-progression/garden-galaxy-06.jpg
+    principle: >
+      slime-rancher-2-13.md — "push background structures 2-3 value steps
+      lighter with warm haze — cheap depth cue achievable in Babylon with fog
+      plus a gradient skybox". slime-rancher-2-06.md — a single enclosing
+      volume (there, a greenhouse) is what makes many small authored zones
+      read as one PLACE. garden-galaxy-06.md — a seamless backdrop isolates a
+      diorama so every object reads cleanly.
+    do: >
+      Add an enclosing vessel: a soft rim/lip bounding the garden floor, a
+      gently curved glass or membrane suggestion above (originally designed —
+      not a greenhouse pastiche), and a graded backdrop plus distance haze so
+      the world reads as contained and has a far layer. The vessel must sit
+      OUTSIDE the playable tile grid so it never becomes a drop target or
+      occludes a habitat.
+    non_goals: >
+      Do NOT copy Slime Rancher 2's greenhouse dome, its white ribbed
+      architecture, its glass panel pattern, or Garden Galaxy's pink backdrop.
+      Take the enclosure RELATIONSHIP and the value/haze falloff only. No new
+      gameplay space — this task adds no buildable tiles.
+    acceptance: >
+      At the default camera and at both zoom limits, no black void is visible
+      above the horizon and the garden reads as enclosed. Background elements
+      sit at least 2 value steps lighter than midground. The vessel is never
+      hit-tested: dragging a Sprout over it produces no drop target and no
+      hover highlight. No habitat, the Nursery, or any path tile is occluded
+      by the vessel at any legal camera position.
+    evidence: docs/visual-qa/planning-baseline/vessel-before.png (reuse 01-fresh-garden-desktop.png) and vessel-after-{default,minzoom,maxzoom}.png
+    validation: npm run typecheck && npm run lint && npm test && npm run build; browser pass sweeping the full zoom and pan range.
+    accessibility: >
+      The vessel must not reduce contrast for gameplay objects; verify Sprouts
+      and habitats still separate cleanly against the new background at both
+      zoom limits.
+    performance: >
+      A skybox/backdrop plus one vessel shell should add a handful of draw
+      calls; must stay within the 6.1 budget.
+    risk: >
+      Medium — a badly scaled vessel could occlude gameplay or trap the camera.
+      Mitigate by keeping it outside the grid and sweeping the full camera
+      range before merge. Rollback is a background.ts revert.
+    commit: "feat(render): enclose the garden in a terrarium vessel with a graded horizon"
+    verification: Browser pass across the full pan/zoom range; drag a Sprout over the vessel to confirm it is inert.
+    depends_on: ["6.3", "6.4"]
+
+  - phase: "6.6"
+    title: Establish camera framing and focal hierarchy
+    status: planned
+    why: >
+      Nothing in the current frame tells the eye where to look — the Nursery,
+      the three habitats and the scatter props all carry equal visual weight
+      (01-fresh-garden-desktop.png). GameRules §4.2 requires the default
+      framing to show the Nursery, active habitats and main paths while
+      keeping interaction targets comfortably large. The 2026-08-01 pass
+      already pulled the default radius 19 -> 15 for target size; this task
+      settles the composition question that change opened.
+    files:
+      - src/render/camera.ts
+      - src/render/world.ts (any framing-driven layout nudges)
+    references:
+      - docs/references/slime-rancher-2/scene-composition/slime-rancher-2-13.jpg
+      - docs/references/ooblets/scene-composition/ooblets-13.jpg
+    principle: >
+      slime-rancher-2-13.md — a focal anchor placed off-centre with layered
+      depth behind it, value/saturation falloff carrying the layers.
+      ooblets-13.md — "use a repeated post-and-rope rail as a leading line
+      along walkable edges" — leading lines make a composition read as
+      authored.
+    do: >
+      Decide and pin the default alpha/beta/radius/target so the Nursery reads
+      as the primary focal point, all three habitats are fully visible
+      (Sunflower Meadow is currently clipped by the bottom edge and the nav
+      bar), and the path network works as a leading line from Nursery outward.
+      Confirm the framing holds at 1440x900, 1280x720 and a 390px-wide
+      viewport.
+    non_goals: >
+      No camera rotation (GARDEN_CAMERA_ALPHA is a standing invariant several
+      render modules depend on — see src/render/camera.ts). No cinematic
+      swoops. No change to pan/zoom limits beyond what framing requires.
+    acceptance: >
+      At default framing on 1440x900, 1280x720 and 390x844: the Nursery, all
+      three habitats and both path spurs are fully visible and unclipped, and
+      no habitat is overlapped by the bottom nav or the build button. A Sprout
+      at the Nursery remains at or above the pixel height recorded in
+      docs/visual-qa/improvement-log.md for the 2026-08-01 pass.
+    evidence: docs/visual-qa/planning-baseline/framing-{1440,1280,390}-after.png
+    validation: npm run typecheck && npm run lint && npm test && npm run build; browser pass at all three viewports.
+    accessibility: >
+      Interaction targets must not shrink below the current measured size;
+      re-check the touch-target forgiveness noted in work_progress.yaml's
+      open_questions for the 390px case.
+    performance: N/A (no new geometry).
+    risk: >
+      Low-medium: framing interacts with the settled-crowd layout and the
+      billboard invariant. Rollback is a constant revert.
+    commit: "feat(render): pin default camera framing for a readable focal hierarchy"
+    verification: Browser pass at three viewports with a full garden; confirm no habitat is clipped or UI-overlapped.
+    depends_on: ["6.5"]
+
+  - phase: "6.7"
+    title: Layer the terrain into zones with elevation and grounded scatter
+    status: planned
+    why: >
+      The garden floor is one uniform green plane with evenly distributed
+      identical props and zero elevation change. REFERENCE_BOARD fails a build
+      whose "terrain is a mostly empty plane or a repeated texture with no
+      layers". Without zones there is also nothing for the habitats to sit IN,
+      which is half of why they read as objects placed on a board rather than
+      homes in a place.
+    files:
+      - src/render/world.ts
+      - src/render/layout.ts (scatter/reserved-tile rules)
+      - src/render/propDims.ts
+    references:
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-06.jpg
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-12.jpg
+      - docs/references/ooblets/habitat-density/ooblets-14.jpg
+      - docs/references/ooblets/garden-composition/ooblets-01.jpg
+    principle: >
+      slime-rancher-2-06.md — "divide the floor into 3-4 readable 'rooms'
+      separated by low rails and trellis walls". slime-rancher-2-12.md — "give
+      each creature group its own visible paddock boundary inside one shared
+      volume, and thread a single path network between plots so high density
+      stays navigable". ooblets-14.md — "pack beds to near-overflow but keep
+      each species' silhouette distinct and HEIGHT-STAGGERED (low rosettes
+      front, bells mid, stalks back) so density reads as abundance rather than
+      noise". ooblets-01.md — "edge garden beds with chunky rounded logs".
+    do: >
+      Introduce gentle elevation (a raised bank, a hollow, a shallow terrace),
+      divide the floor into 3-4 legible zones with original low edging, and
+      replace the uniform scatter with height-staggered planting that is dense
+      in zone interiors and sparse along walking lines and drop targets. Keep
+      the existing reserved-tile discipline so nothing spawns on gameplay
+      tiles.
+    non_goals: >
+      Do NOT copy the reference crop species, log-round props, trellis
+      patterns, paddock fencing or greenhouse rails as designs — take the
+      zoning, height-staggering and edging PRINCIPLES. Do not add scatter
+      within the Sprout pick radius of any drop target.
+    acceptance: >
+      From the default camera, at least three distinct terrain zones are
+      identifiable by ground treatment and edging without reading any text.
+      Planting shows at least three height bands. No scatter prop overlaps a
+      habitat footprint, a path tile, an automation site, or the Nursery
+      waiting-slot fan. Frame time p95 within the 6.1 budget +15%.
+    evidence: docs/visual-qa/planning-baseline/terrain-before.png (reuse 01) and terrain-after-{default,closeup}.png
+    validation: >
+      npm run typecheck && npm run lint && npm test && npm run build; the
+      existing scatter/reserved-tile unit tests must still pass; browser pass.
+    accessibility: >
+      Density must not reduce Sprout or habitat readability; re-run the
+      six-Sprout crowd check from 6.4 against the new ground treatment.
+    performance: >
+      Highest-risk task in the phase for draw calls. Use instancing/thin
+      instances for repeated planting; hard budget is the 6.1 figure +15%.
+    risk: >
+      Medium-high: scatter interacts with hit-testing and with the reserved
+      tile set. Rollback is a world.ts revert. Land instancing before density.
+    commit: "feat(render): layer the garden floor into zones with elevation and staggered planting"
+    verification: Browser pass; drag-test a Sprout to each habitat confirming no scatter blocks a drop; frame-time sample against budget.
+    depends_on: ["6.3", "6.4", "6.6"]
+
+  - phase: "6.8"
+    title: Define the PBR material recipes the world will be rebuilt from
+    status: planned
+    why: >
+      Habitat identity (6.10-6.12) depends on materials that differ by more
+      than tint. Today the three habitat drums share one material family and
+      differ only in base colour, which is precisely why they read as
+      recolours. Writing the recipes once, before three habitat tasks consume
+      them, prevents three divergent ad-hoc material sets.
+    files:
+      - src/render/pbrMaterials.ts
+      - docs/MATERIAL_LIBRARY.md
+    references:
+      - docs/references/tiny-glade/lighting-materials/tiny-glade-09.jpg
+      - docs/references/tiny-glade/tactile-geometry/tiny-glade-02.jpg
+      - docs/references/ooblets/tactile-geometry/ooblets-03.jpg
+    principle: >
+      tiny-glade-09.md — "bevel and chamfer every masonry/timber edge so
+      grazing light produces highlight rolloff"; close-range surfaces show
+      individually bevelled units with visible depth. ooblets-03.md — "rounded
+      bevels plus one oversized hero machine per room gives a tactile toy-like
+      feel WITHOUT high-poly cost".
+    do: >
+      Define and document a small recipe set — wet stone, dry stone, packed
+      soil, moss/turf, bark/root, water surface, glazed ceramic — each
+      specifying albedo variation, normal/bump detail, roughness variation,
+      AO/contact depth, emissive restraint, and tiling/UV scale checked at
+      gameplay distance. Extend the existing procedural-texture approach in
+      pbrMaterials.ts rather than introducing third-party textures.
+    non_goals: >
+      No third-party textures or HDRIs (see docs/ASSET_CREDITS.md and the
+      credits copy — all materials are procedurally generated in-code). No
+      copying reference surface artwork. No emissive-led materials except
+      where a task explicitly calls for a magical accent.
+    acceptance: >
+      docs/MATERIAL_LIBRARY.md documents each recipe with its parameters and
+      the object families that use it. At the default camera, two objects
+      using different recipes are distinguishable by surface response in a
+      DESATURATED screenshot — i.e. without relying on hue. No visible tiling
+      seams or UV stretching on any recipe at either zoom limit.
+    evidence: docs/visual-qa/planning-baseline/materials-swatch-{colour,desaturated}.png
+    validation: npm run typecheck && npm run lint && npm test && npm run build; browser pass; desaturated comparison.
+    accessibility: >
+      The desaturated check IS the accessibility check — material identity
+      must not depend on hue alone.
+    performance: >
+      Watch texture count and memory; procedural textures are generated once
+      and shared. Stay within the 6.1 texture/material budget +25%.
+    risk: >
+      Medium — shared materials touch every object. Rollback per file.
+      Land recipes with the existing geometry before any habitat rebuild.
+    commit: "feat(render): define and document the Phase 6 PBR material recipes"
+    verification: Desaturated screenshot comparison of recipe swatches at gameplay distance; MATERIAL_LIBRARY.md review.
+    depends_on: ["6.3"]
+
+  - phase: "6.9"
+    title: Rebuild the Nursery Pod as a layered, tactile focal point
+    status: planned
+    why: >
+      The Nursery is where the first five seconds of every session happen, and
+      it is currently a smooth brown cylinder with a small illustration cap
+      (02-nursery-closeup.png). It has no layered base, no surrounding
+      dressing, and nothing marking it as the most important object in the
+      garden. It reads as an isolated object rather than a place.
+    files:
+      - src/render/world.ts
+      - src/render/propDims.ts
+      - src/render/pbrMaterials.ts (consumes 6.8 recipes)
+    references:
+      - docs/references/tiny-glade/tactile-geometry/tiny-glade-02.jpg
+      - docs/references/ooblets/tactile-geometry/ooblets-03.jpg
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-06.jpg
+    principle: >
+      tiny-glade-02.md — "construct every structure from visibly stacked
+      sub-parts (base, frame, roof, trim) so it reads as a physical object,
+      not a stamped box". ooblets-03.md — one oversized hero object per room
+      anchors the space. slime-rancher-2-06.md — a helper visibly servicing a
+      zone makes a garden feel worked-in.
+    do: >
+      Rebuild the Pod from stacked sub-parts with real bevels — a layered
+      base that meets the terrain, a body, a rim, and an opening — and dress
+      its immediate surroundings as a place (an approach, edging, a few
+      original props) so it is legibly the heart of the garden. Derive all
+      heights from propDims.ts.
+    non_goals: >
+      Do NOT copy tiny-glade's timber-frame/masonry vocabulary or ooblets'
+      workshop machine props. Take stacked-sub-part construction and hero-
+      object anchoring only. No change to the Nursery's tile position, its
+      waiting-slot fan geometry, or its hit-testing.
+    acceptance: >
+      At the default camera the Nursery is identifiable as the focal object
+      without colour cues (verify desaturated). It shows at least three
+      stacked sub-parts and at least three surrounding dressing families, sits
+      in a contact shadow, and no part of it floats. The waiting-slot fan
+      still places Sprouts clear of all new geometry — no Sprout intersects a
+      prop at any waiting slot index.
+    evidence: docs/visual-qa/planning-baseline/nursery-before.png (reuse 02-nursery-closeup.png) and nursery-after-{default,closeup,desaturated}.png
+    validation: >
+      npm run typecheck && npm run lint && npm test && npm run build; the
+      existing render.nurserySlots unit tests must still pass; browser pass
+      with a full 8-Sprout waiting queue.
+    accessibility: Focal read must survive desaturation; no information carried by colour alone.
+    performance: Within the 6.1 budget; use shared materials from 6.8.
+    risk: >
+      Medium — the Nursery's geometry interacts with the waiting-slot fan and
+      SPROUT_FLOAT_HEIGHT, both derived from the mound's top face. Any height
+      change must go through propDims.ts or the Sprout heights break.
+    commit: "feat(render): rebuild the Nursery Pod as a layered focal point"
+    verification: Browser pass with 8 waiting Sprouts; desaturated focal check; confirm SPROUT_FLOAT_HEIGHT still clears the new mound.
+    depends_on: ["6.4", "6.8"]
+
+  - phase: "6.10"
+    title: Stage the Sprout reveal as an event
+    status: planned
+    why: >
+      GameRules §6.1 makes the first reveal the opening beat of the whole
+      game. Today it is a bounce-in plus a 16-particle sparkle
+      (02b-sprout-reveal.png) with no change to the Pod and no focal light —
+      the Nursery does not react to producing a creature.
+    files:
+      - src/render/world.ts
+      - src/render/particles.ts
+      - src/render/lighting.ts (a local event light)
+    references:
+      - docs/references/tiny-glade/reward-feedback/tiny-glade-01.jpg
+      - docs/references/ooblets/reward-feedback/ooblets-11.jpg
+      - docs/references/ooblets/lighting-materials/ooblets-17.jpg
+    principle: >
+      tiny-glade-01.md — "attach an immediate, legible response to any direct
+      interaction". ooblets-11.md — the reward is anchored in world space AT
+      the creature, with a ground ring, rising light and floating motes.
+      ooblets-17.md — small emissive sources at different heights sculpt form.
+    do: >
+      Give the hatch a staged moment: the Pod reacts (opening//glow), a brief
+      local warm light blooms at the Pod and falls off, a ground ring marks
+      the event position, and the Sprout arrives into that light. Drive
+      amplitude and duration from MotionConfig so reduced motion gets a
+      shorter, smaller — but still present — version.
+    non_goals: >
+      No new SFX in this task (audio already fires on spawn). Do not copy
+      ooblets' sparkle-and-note motif or tiny-glade's heart icon — the
+      symbol must be original to this game's Dewdrop/leaf vocabulary.
+    acceptance: >
+      With audio muted, a first-time viewer can identify where a new Sprout
+      came from purely from the visual event. The event is visible at the
+      default camera without zooming. Under reduced motion the event still
+      occurs with reduced amplitude and no sustained animation. No more than
+      one transient light is added per hatch and it is disposed afterwards.
+    evidence: docs/visual-qa/planning-baseline/reveal-{before,after,reduced-motion}.png
+    validation: >
+      npm run typecheck && npm run lint && npm test && npm run build; e2e
+      capture at the reveal instant; reduced-motion browser pass.
+    accessibility: >
+      Must read with audio muted; must not flash at a rate that risks
+      photosensitivity — no full-screen luminance spikes.
+    performance: >
+      Transient lights must be created and disposed per event, never
+      accumulated. Confirm scene light count returns to baseline after 20
+      hatches.
+    risk: >
+      Medium: per-event lights are a classic leak. Assert light-count return
+      to baseline in the acceptance check.
+    commit: "feat(render): stage the Nursery hatch as a lit, world-anchored event"
+    verification: Browser pass with audio muted; 20-hatch light-count leak check; reduced-motion pass.
+    depends_on: ["6.9"]
+
+  - phase: "6.11"
+    title: EXEMPLAR HABITAT — rebuild the Dew Pond as actual water
+    status: planned
+    why: >
+      This is the phase's proving task: the standard every other habitat is
+      built to. Dew Pond is chosen because it has the largest gap between name
+      and thing — it is a BLUE CYLINDER WITH NO WATER
+      (04-dew-pond-closeup.png), while unrelated water decals sit elsewhere in
+      the same world. It also exercises the most techniques (shoreline
+      geometry, normal-driven motion, roughness separation, transparency
+      cost), so proving it proves the pipeline. Per the phase's prioritisation
+      rule, NO broad polish task may start before this one is complete and
+      accepted.
+    files:
+      - src/render/habitats.ts
+      - src/render/pbrMaterials.ts (water recipe from 6.8)
+      - src/render/propDims.ts
+    references:
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-06.jpg
+      - docs/references/ooblets/habitat-density/ooblets-14.jpg
+      - docs/references/garden-galaxy/collection-density/garden-galaxy-04.jpg
+      - docs/references/tiny-glade/lighting-materials/tiny-glade-09.jpg
+    principle: >
+      garden-galaxy-04.md — "a simple animated splash-ring decal plus a basin
+      mesh gives a disproportionate charm payoff" — water is high-charm per
+      unit of cost. slime-rancher-2-06.md — an authored zone with its own
+      boundary reads as a room. ooblets-14.md — height-staggered planting
+      makes density read as abundance. tiny-glade-09.md — bevelled edges plus
+      material contrast keep surfaces inspectable up close.
+    do: >
+      Replace the drum with a real basin: a non-planar layered shoreline that
+      steps down into the water, an animated water surface with slow
+      normal-driven motion, wet/dry roughness separation at the waterline, and
+      aquatic dressing (reeds, stones, lily-like pads) staggered in height
+      around the rim. Settled Sprouts must stand ON a readable bank, not on a
+      lid. Occupancy must remain readable as the population grows.
+    non_goals: >
+      Do NOT copy Garden Galaxy's fountain/balustrade design, Slime Rancher's
+      pond dressing, or any reference plant species. No screen-space
+      reflections or refraction — cost is not justified at this camera. No
+      change to the habitat's tile position or drop-target footprint.
+    acceptance: >
+      The Dew Pond contains visibly moving water with a wet/dry material
+      transition at the shoreline. Its silhouette is identifiable as a pond
+      from the default camera in a DESATURATED screenshot — i.e. without using
+      blue. Sprouts settled on it remain individually readable at full
+      occupancy. The drop target still resolves identically to today (drag a
+      dew Sprout from the Nursery and it settles first try). Frame time p95
+      within the 6.1 budget +15% with the pond on screen.
+    evidence: docs/visual-qa/planning-baseline/dewpond-before.png (reuse 04-dew-pond-closeup.png) and dewpond-after-{default,closeup,desaturated,full-occupancy}.png
+    validation: >
+      npm run typecheck && npm run lint && npm test && npm run build; existing
+      habitat/settle-slot unit tests must pass; e2e drag-to-settle for a dew
+      Sprout; browser pass at full occupancy.
+    accessibility: >
+      Identity must survive desaturation. Water motion must stop or reduce
+      under reduced motion while the pond remains identifiable.
+    performance: >
+      Water is the main cost. Measure with the pond filling the frame; stay
+      within budget +15% and verify on the low quality tier.
+    risk: >
+      Medium-high — the exemplar sets the standard, so getting it wrong is
+      expensive downstream. Do not start 6.12/6.13 until this is accepted.
+      Rollback is a habitats.ts revert.
+    commit: "feat(render): rebuild the Dew Pond as a real water basin"
+    verification: Browser pass at default and close camera, desaturated identity check, full-occupancy readability, dew-Sprout drag-to-settle, frame-time sample.
+    depends_on: ["6.4", "6.7", "6.8"]
+
+  - phase: "6.12"
+    title: Give the Ember Nook a warm shelter identity
+    status: planned
+    why: >
+      Ember Nook is the same drum in a different colour with a small fire-pit
+      cap (06-settlement-reward.png). Following the accepted Dew Pond
+      standard, it needs its own terrain profile, prop family, material
+      response and ambient motion so it is identifiable before colour.
+    files:
+      - src/render/habitats.ts
+      - src/render/propDims.ts
+    references:
+      - docs/references/tiny-glade/lighting-materials/tiny-glade-09.jpg
+      - docs/references/ooblets/lighting-materials/ooblets-17.jpg
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-12.jpg
+    principle: >
+      tiny-glade-09.md — warm point light against cool ambient, with bevelled
+      masonry catching grazing light. ooblets-17.md — cluster 2-3 small
+      emissive sources at DIFFERENT HEIGHTS to sculpt form with warm pools.
+      slime-rancher-2-12.md — each group gets its own visible boundary.
+    do: >
+      Build a sheltered warm hollow: layered stone/root geometry forming a
+      partial enclosure, a contained ember source as a small warm light at low
+      height, heat-shimmer or ember-mote ambient motion, and its own boundary
+      treatment. Settled Sprouts should read as gathered around warmth.
+    non_goals: >
+      Do NOT copy tiny-glade's arched doorway, stonework pattern, or lantern
+      designs. No open flame VFX that dominates the frame; the light must stay
+      local and restrained per REFERENCE_BOARD's "restrained magical emphasis".
+    acceptance: >
+      Identifiable as a warm shelter from silhouette and terrain profile in a
+      desaturated default-camera screenshot. Carries a local warm light that
+      does not wash out neighbouring objects. Ambient motion present and
+      reduced-motion aware. Full-occupancy Sprout readability preserved. Frame
+      time within budget.
+    evidence: docs/visual-qa/planning-baseline/embernook-before.png (reuse 03-ember-nook-closeup.png / 10b) and embernook-after-{default,desaturated,full-occupancy}.png
+    validation: npm run typecheck && npm run lint && npm test && npm run build; ember-Sprout drag-to-settle e2e; browser pass.
+    accessibility: Identity survives desaturation; local light does not reduce Sprout contrast.
+    performance: One additional local light maximum; within the 6.1 budget.
+    risk: Medium. Rollback per file. Must not regress the settle-slot layout.
+    commit: "feat(render): give the Ember Nook a sheltered warm-hollow identity"
+    verification: Desaturated identity check; full-occupancy readability; drag-to-settle; reduced-motion pass.
+    depends_on: ["6.11"]
+
+  - phase: "6.13"
+    title: Give the Sunflower Meadow a layered foliage identity
+    status: planned
+    why: >
+      The Meadow is an olive drum with a small green cap and four flower
+      stalks (05-sunflower-meadow-closeup.png) — the weakest of the three. It
+      needs layered foliage, landmark flowers and sunlight response to stand
+      as a distinct home.
+    files:
+      - src/render/habitats.ts
+      - src/render/propDims.ts
+    references:
+      - docs/references/ooblets/habitat-density/ooblets-14.jpg
+      - docs/references/ooblets/garden-composition/ooblets-01.jpg
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-06.jpg
+    principle: >
+      ooblets-14.md — "keep each species' silhouette distinct and
+      height-staggered (low rosettes front, bells mid, stalks back) so density
+      reads as abundance rather than noise". ooblets-01.md — "vary crop
+      silhouettes per plot so each tile reads as a different state from the
+      default camera height".
+    do: >
+      Build three height bands of original foliage with distinct silhouettes,
+      one or two tall landmark blooms that read from across the garden, a
+      bed/edging boundary, and gentle wind motion. Sunlight response should
+      differentiate leaf and petal materials.
+    non_goals: >
+      Do NOT copy the reference flower/crop species designs. No wind motion so
+      strong it competes with Sprout idle animation for attention.
+    acceptance: >
+      At least three foliage height bands and at least one landmark bloom
+      visible at default camera. Identifiable as a meadow in a desaturated
+      screenshot. Wind motion present, reduced-motion aware, and does not
+      obscure settled Sprouts at full occupancy. Frame time within budget with
+      instanced foliage.
+    evidence: docs/visual-qa/planning-baseline/meadow-before.png (reuse 05) and meadow-after-{default,desaturated,full-occupancy}.png
+    validation: npm run typecheck && npm run lint && npm test && npm run build; sun-Sprout drag-to-settle e2e; browser pass.
+    accessibility: Identity survives desaturation; motion respects reduced-motion.
+    performance: Foliage must be instanced; within the 6.1 budget.
+    risk: Medium — foliage density is the draw-call risk. Instance before densifying.
+    commit: "feat(render): give the Sunflower Meadow a layered foliage identity"
+    verification: Desaturated identity check; full-occupancy readability; frame-time sample.
+    depends_on: ["6.11"]
+
+  - phase: "6.14"
+    title: Make the Garden Slide's entry, direction, exit and queue legible
+    status: planned
+    why: >
+      The Slide received a geometry and animation pass on 2026-08-01 (deck,
+      rails, rollers, brackets — see docs/visual-qa/improvement-log.md) but
+      its ROUTE semantics are still ambiguous: nothing marks where a Sprout
+      boards, which way traffic flows along the path, where it gets off, or
+      how many are waiting. GameRules §9.3 requires the helper's value to be
+      evident.
+    files:
+      - src/render/automation.ts
+      - src/render/world.ts (route markers)
+    references:
+      - docs/references/ooblets/scene-composition/ooblets-13.jpg
+      - docs/references/ooblets/tactile-geometry/ooblets-03.jpg
+      - docs/references/tiny-glade/ui-readability/tiny-glade-03.jpg
+    principle: >
+      ooblets-13.md — "use a repeated post-and-rope rail as a leading line
+      along walkable edges, and break repetition with alternating colours — a
+      rhythm system that makes a route feel authored". ooblets-03.md — visible
+      bolts, gauges and chunky levers make a machine legible as a machine.
+      tiny-glade-03.md — put the affordance adjacent to the object it affects.
+    do: >
+      Add original entry and exit markers at the structure's boarding and
+      alighting points, a directional rhythm along the served route (distinct
+      from the existing path chevrons, which mark the whole network rather
+      than this Slide's leg), and a queue indicator that grows with waiting
+      Sprouts. Every signal must be readable without colour.
+    non_goals: >
+      Do NOT copy the reference rail/rope or machine designs. No player-facing
+      wording change — "Garden Slide", never "conveyor" (GLOBAL INVARIANT 1).
+      No routing behaviour change.
+    acceptance: >
+      A viewer who has never played can point at where a Sprout gets on, which
+      way it travels, and where it gets off, from a single default-camera
+      screenshot. Queue state is visible as world geometry, not a number.
+      All three signals remain distinguishable in a desaturated screenshot.
+    evidence: docs/visual-qa/planning-baseline/slide-{before,after,desaturated,queued}.png
+    validation: npm run typecheck && npm run lint && npm test && npm run build; e2e with a Slide placed and carrying; browser pass.
+    accessibility: Non-colour signals required for direction and queue state.
+    performance: Within the 6.1 budget; markers should be few and shared.
+    risk: Low-medium. Rollback per file. Must not alter dispatch behaviour.
+    commit: "feat(render): make the Garden Slide's route and queue legible"
+    verification: Browser pass with a placed, loaded Slide; desaturated check; unfamiliar-viewer readability check.
+    depends_on: ["6.7", "6.11"]
+
+  - phase: "6.15"
+    title: Give the Colour Gate a dimensional form and a visible routing decision
+    status: planned
+    why: >
+      The Gate shares the Slide's plinth-and-standee construction and shows
+      its rule through two small lane lamps. The moment that matters — a
+      Sprout arriving and being sent one way rather than the other — has no
+      visible transition, so the Gate's entire purpose is invisible in the
+      world (GameRules §9.4).
+    files:
+      - src/render/automation.ts
+      - src/ui/components/colourGate.ts (only if the in-world/panel pairing needs it)
+    references:
+      - docs/references/ooblets/tactile-geometry/ooblets-03.jpg
+      - docs/references/tiny-glade/ui-readability/tiny-glade-03.jpg
+      - docs/references/ooblets/ui-readability/ooblets-09.jpg
+    principle: >
+      ooblets-03.md — build automation props from capsule-and-cylinder
+      primitives with visible bolts, gauges and chunky levers. tiny-glade-03.md
+      — "place the picker adjacent to the outlined target in-world and preview
+      the change live". ooblets-09.md — pair a dial with a plain-language
+      status pill instead of an abstract icon.
+    do: >
+      Rebuild the Gate as a dimensional garden object whose current rule is
+      readable from its physical state (a set lever/vane position, not only a
+      lamp colour), and add a visible routing transition as each Sprout is
+      sent down a lane. Keep the pictorial lane controls; consider previewing
+      the rule in-world while the panel is open.
+    non_goals: >
+      No boolean logic, syntax, or numeric rule entry (GameRules §6.4). Do not
+      copy reference machine designs or UI layouts. No change to lane
+      semantics or the sim.
+    acceptance: >
+      The Gate's current rule is identifiable from its in-world physical state
+      in a desaturated screenshot. Each routing decision produces a visible
+      world-space transition at the moment the Sprout is sent. The Gate is
+      identifiable as a different KIND of object from the Slide by silhouette
+      alone.
+    evidence: docs/visual-qa/planning-baseline/gate-{before,after,desaturated,routing}.png
+    validation: npm run typecheck && npm run lint && npm test && npm run build; existing colourGate e2e must pass; browser pass.
+    accessibility: Rule state must not be carried by lamp colour alone.
+    performance: Within the 6.1 budget.
+    risk: Low-medium. Rollback per file. Must not change lane routing.
+    commit: "feat(render): give the Colour Gate a dimensional form and visible routing"
+    verification: Desaturated rule-state check; observe a routing transition live; silhouette distinctness against the Slide.
+    depends_on: ["6.14"]
+
+  - phase: "6.16"
+    title: Add ambient environmental life with reduced-motion support
+    status: planned
+    why: >
+      The garden holds still except for Sprout idles and the path chevrons.
+      REFERENCE_BOARD requires a world that feels alive; GameRules §4.1 calls
+      for ambient life. This lands after the habitats so the life can be
+      placed per zone rather than scattered globally.
+    files:
+      - src/render/particles.ts
+      - src/render/world.ts
+      - src/render/motion.ts (config plumbing only)
+    references:
+      - docs/references/ooblets/habitat-density/ooblets-14.jpg
+      - docs/references/garden-galaxy/collection-density/garden-galaxy-04.jpg
+      - docs/references/slime-rancher-2/habitat-density/slime-rancher-2-06.jpg
+    principle: >
+      ooblets-14.md — sparkle particles float above dense beds without
+      obscuring them. garden-galaxy-04.md — "scatter 2-3 tiny ambient critters
+      that hop between perch points to reward inspection".
+      slime-rancher-2-06.md — one helper visibly servicing a zone makes the
+      space feel worked-in rather than staged.
+    do: >
+      Add per-zone ambient life keyed to habitat identity — pollen or motes
+      near the Meadow, surface ripples or skimmers at the Pond, ember motes at
+      the Nook — plus a small number of critters that move between perch
+      points. All amplitude and emission driven by MotionConfig, fully static
+      under reduced motion.
+    non_goals: >
+      Do NOT copy reference critter designs. No unbounded particle systems —
+      GameRules §12 forbids a system-per-object pattern. No ambient life
+      inside Sprout drop targets or the Nursery waiting fan.
+    acceptance: >
+      Each habitat zone shows ambient life distinct from the others. Under
+      reduced motion all ambient motion stops while the objects remain
+      visible. Total particle systems added is bounded and documented. Frame
+      time p95 within the 6.1 budget +15%. Ambient life never overlaps a drop
+      target or obscures a settled Sprout.
+    evidence: docs/visual-qa/planning-baseline/ambient-{default,reduced-motion}.png
+    validation: npm run typecheck && npm run lint && npm test && npm run build; reduced-motion e2e must pass; browser pass.
+    accessibility: Reduced motion must fully stop ambient animation; no flashing.
+    performance: Bounded system count; measure with all zones on screen.
+    risk: Medium — particle cost and clutter. Cap system count before tuning density.
+    commit: "feat(render): add per-zone ambient life with reduced-motion support"
+    verification: Reduced-motion pass; frame-time sample with all zones visible; drop-target overlap check.
+    depends_on: ["6.11", "6.12", "6.13"]
+
+  - phase: "6.17"
+    title: Make decorative progression visibly finish the garden
+    status: planned
+    why: >
+      GameRules §6.6 requires expansion to make the world feel larger and more
+      personal rather than invisibly increasing capacity, and REFERENCE_BOARD
+      fails a build where an unlock only changes a number. Today the first
+      decorative expansion exists but its effect on the space is slight.
+    files:
+      - src/render/world.ts
+      - src/data/upgrades.ts (only if a new decorative tier is required)
+    references:
+      - docs/references/garden-galaxy/decorative-progression/garden-galaxy-06.jpg
+      - docs/references/ooblets/decorative-progression/ooblets-07.jpg
+      - docs/references/ooblets/collection-density/ooblets-19.jpg
+      - docs/references/slime-rancher-2/reward-feedback/slime-rancher-2-05.jpg
+    principle: >
+      garden-galaxy-06.md — "auto-scatter grass tufts along tile borders once a
+      decoration threshold is met, so progression visibly FINISHES a space
+      rather than just adding objects". ooblets-19.md — "one object per
+      pedestal makes a collection legible and makes each new unlock feel like
+      an event". slime-rancher-2-05.md — tie decorative unlocks to event
+      moments so progression visibly transforms the space.
+    do: >
+      Define a small decorative progression: each unlock both places a
+      distinct object AND triggers a soft-edge pass that dresses zone borders,
+      so the garden visibly becomes more finished. Cap total decoration so
+      density stays readable.
+    non_goals: >
+      Do NOT copy reference props, pedestals, pergolas or string-light
+      designs. No unbounded decoration. No new currency or economy change
+      without a GameRules revision — surface the conflict first if one seems
+      needed.
+    acceptance: >
+      Purchasing a decorative unlock produces an immediately visible world
+      change at the default camera, not only a counter change. Total
+      decoration is capped and the cap is documented. At the cap, all
+      gameplay objects remain readable and frame time stays within budget.
+    evidence: docs/visual-qa/planning-baseline/decor-{none,mid,capped}.png
+    validation: npm run typecheck && npm run lint && npm test && npm run build; browser pass at three decoration levels.
+    accessibility: Decoration must never overlap or obscure a drop target or Sprout.
+    performance: Measure at the decoration cap; within the 6.1 budget +15%.
+    risk: >
+      Medium — clutter risk is exactly what REFERENCE_BOARD warns about.
+      The cap is the mitigation and must land with the feature, not after.
+    commit: "feat(world): make decorative unlocks visibly finish the garden"
+    verification: Capture at zero, mid and capped decoration; readability and frame-time checks at the cap.
+    depends_on: ["6.7", "6.16"]
+
+  - phase: "6.18"
+    title: Phase 6 acceptance — viewports, accessibility, performance, documentation
+    status: planned
+    why: >
+      Closes the phase against the REFERENCE_BOARD rubric and fixes the
+      outstanding 390px defect (F5): the bottom nav overlaps Sunflower Meadow
+      and collides with the Garden Slide build button
+      (11-mobile-390.png). Without this task the phase can be declared done
+      while the smallest supported viewport is broken.
+    files:
+      - src/ui/styles.ts
+      - src/ui/components/buildMenu.ts
+      - docs/visual-qa/improvement-log.md
+      - docs/ART_DIRECTION.md
+      - docs/ARCHITECTURE.md
+      - work_progress.yaml
+    references:
+      - docs/references/ooblets/ui-readability/ooblets-09.jpg
+      - docs/references/tiny-glade/ui-readability/tiny-glade-03.jpg
+    principle: >
+      ooblets-09.md — anchor a compact status card and pair controls with
+      plain-language status rather than abstract icons. tiny-glade-03.md —
+      keep controls adjacent to what they affect.
+    do: >
+      Resolve the 390px overlap between the nav bar, the build button and the
+      Sunflower Meadow habitat. Run the full acceptance sweep: desktop and
+      390px, reduced motion, high contrast, keyboard-only, audio muted.
+      Re-measure performance against the 6.1 budget. Score every changed area
+      against REFERENCE_BOARD's 1-5 rubric and record scores, evidence and
+      remaining defects in docs/visual-qa/improvement-log.md. Update
+      ART_DIRECTION.md and ARCHITECTURE.md to describe the world as-built.
+    non_goals: >
+      No new art. No new features. If a rubric score lands below 4, record it
+      as a documented blocker with a concrete next fix rather than quietly
+      accepting it — that is the established practice in the improvement log.
+    acceptance: >
+      At 390x844 no UI element overlaps a habitat, the Nursery, or a drop
+      target. Keyboard-only navigation reaches every panel and returns focus
+      correctly. With audio muted, settlement and hatch feedback both remain
+      legible. Reduced motion stops all ambient animation while keeping every
+      gameplay signal. Frame time p95 within the 6.1 budget +15% at the
+      busiest measured state. improvement-log.md records a rubric score for
+      creature appeal, reward satisfaction, material richness, garden density,
+      lighting, animation, automation readability, UI polish, accessibility
+      and browser performance, each with evidence.
+    evidence: docs/visual-qa/planning-baseline/final-{1440,390,reduced-motion,high-contrast}.png
+    validation: >
+      npm run typecheck && npm run lint && npm test && npm run build && npm
+      run test:e2e; full browser sweep from a clean save at both viewports.
+    accessibility: This task IS the accessibility gate for the phase.
+    performance: Final measurement against the 6.1 budget.
+    risk: >
+      Low technically; high process risk if skipped, because the phase would
+      otherwise be declared complete without a viewport or accessibility pass.
+    commit: "chore(qa): Phase 6 acceptance sweep, viewport fixes and documentation"
+    verification: Full sweep at both viewports with reduced motion, high contrast, keyboard-only and muted audio; documented rubric scores.
+    depends_on: ["6.9", "6.10", "6.11", "6.12", "6.13", "6.14", "6.15", "6.16", "6.17"]
 
 # =============================================================================
 # VERIFICATION (every phase)
