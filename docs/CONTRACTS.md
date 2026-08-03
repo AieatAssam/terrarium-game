@@ -2,18 +2,13 @@
 
 Authoritative shared interfaces. Any agent needing a change here must report it back for integration, not silently redefine it elsewhere.
 
-> **INCREMENTAL CONTRACT CHANGE — Garden Transit (GameRules 2026-08-02 revision).**
-> Every interface below describes the **shipped** code and is accurate as such.
-> GameRules §9.3 and §9.12–§9.17 now specify a replacement automation model —
-> multiple Garden Slides with per-Slide Sprout-kind filters, buildable Sprout
-> Conveyor segments, and explicit connection **ports** — which will change
-> `AutomationId`, `AutomationInstance`, the `automation:*` events, the save
-> shape, and the fixed trunk topology described under "Grid and layout".
->
-> Phase 7 is landing incrementally. The port contract below is current as of
-> task **7.6**; the remaining automation, save and fixed-topology sections are
-> still reconciled by task **7.16**. Read GameRules §9.3 for the full design
-> intent.
+> **GARDEN TRANSIT — shipped 2026-08-03 (GameRules 2026-08-02 revision).**
+> The live contract is multiple purchaseable Garden Slides with per-Slide
+> Sprout-kind filters, buildable Sprout Conveyor segments, derived connection
+> ports, route-state events, and save shape/version 8. The old one-Slide model
+> is retained below only where it explains migration history; it is not the
+> current runtime contract. GameRules §9.3 and §9.12–§9.17 remain authoritative
+> for the player-facing design.
 
 ## Project layout (file ownership)
 
@@ -45,22 +40,23 @@ function tileToWorld(tile: TileCoord): { x: number; y: number; z: number }; // s
 ```
 Nursery, habitats, paths, slides, gates all place via `TileCoord`. Automation routing in sim references tiles only — no screen-space math in sim.
 
-`src/sim/layout.ts` owns every gameplay tile position and the garden's topology:
-a shared **trunk** north out of the Nursery (8,8) → Garden Slide (8,7) → Colour
-Gate (8,6), which is a genuine **fork** — a west lane to Ember Nook (4,4) and an
-east lane to Dew Pond (12,4) — a southern run from the Nursery to Sunflower
-Meadow (8,13) that the Garden Slide always rides (2026-07-31; a player can
-still walk it by hand too), and a short spur east of the Nursery to the Mood
-Bell (9,8) — decorative only, no ride ever travels through it (its own rides
-reuse the same Nursery→habitat network the Slide and Gate already use).
-*(2026-08-02: this fixed trunk-and-fork topology is scheduled for replacement by player-placed Sprout Conveyor segments — GameRules §9.9's naming resolution makes Conveyors the single buildable route substrate. `plan.yaml` 7.10 replaces the constant; 7.2 backfills existing saves from it so no garden loses its paths.)*
+`src/sim/layout.ts` owns the authored gameplay tile positions and the garden's
+backdrop topology: a shared trunk and Colour Gate fork, a southern run to
+Sunflower Meadow, and the Mood Bell spur. The painted path remains the
+compatibility route for a garden with no owned Conveyor segments. Once a save
+contains player-built Conveyors, `findConveyorRoute` uses only those occupied
+tiles plus the requested endpoints, with deterministic adjacency BFS. Players
+can own up to four Slides and thirty Conveyor segments; Slide placement and
+configuration are separate from unlock permission.
 
 `COLOUR_GATE_LANE_HABITATS` maps each lane to the home it leads to; that mapping
-is a fact about the garden's shape and is never player-editable (the player
+is a fact about the authored fork and is never player-editable (the player
 chooses which *kind* each lane invites, not where a lane goes).
-`src/render/layout.ts` re-exports all of it and derives the painted path tiles
-from the same four runs, so the road on screen and the routes in sim can never
-disagree. `tileDistance(Nursery, Gate) + tileDistance(Gate, home)` equals
+`src/render/layout.ts` re-exports the authored backdrop and derives its painted
+path tiles from the same four runs. Dynamic Slide/Conveyor artifacts are
+rendered from the state-backed transit collections, so the road art and the
+active owned route remain separate, explicit layers. `tileDistance(Nursery,
+Gate) + tileDistance(Gate, home)` equals
 `tileDistance(Nursery, home)` for both northern homes, so travelling *through*
 the Gate costs a Sprout nothing.
 
@@ -104,6 +100,12 @@ footprints and anchor height remain renderer-owned. `src/render/propDims.ts`
 resolves a port through `portWorldPosition(port, body)`: the body dimensions
 derive its ground-level height and socket inset, while opposite adjacent ports
 share the exact half-tile seam within `PORT_ANCHOR_TOLERANCE`.
+
+Transit artifact ids are stable save identifiers: Slides are `slide-1`,
+`slide-2`, … in ownership order; Conveyor segments are
+`conveyor-<x>-<z>`, unique because a tile can hold only one segment. Ports and
+route state are derived from the saved artifact kind and tile; they are not
+persisted fields.
 
 ### Build-mode transit placement (Phase 7.6)
 
@@ -149,7 +151,7 @@ type AchievementId =
 type GameEvent =
   | { type: 'sprout:spawned'; sproutId: string; sproutType: SproutTypeId; mood: MoodId; podId: string }
   | { type: 'sprout:pickedUp'; sproutId: string }
-  | { type: 'sprout:dropped'; sproutId: string; overHabitat: HabitatId | null; overHabitatInstance: string | null; overAutomation?: AutomationId | null }
+  | { type: 'sprout:dropped'; sproutId: string; overHabitat: HabitatId | null; overHabitatInstance?: string | null; overAutomation?: AutomationId | null }
   | { type: 'sprout:placed:correct'; sproutId: string; habitatId: HabitatId; habitatInstanceId: string }
   | { type: 'sprout:placed:incorrect'; sproutId: string; habitatId: HabitatId; habitatInstanceId: string }
   | { type: 'sprout:settled'; sproutId: string; habitatId: HabitatId; habitatInstanceId: string }
@@ -193,7 +195,7 @@ interface SaveLoadedSnapshot {
   moodBellRule?: MoodId;
   nurseryRhythm?: 'lively' | 'easing' | 'resting';
   waitingSproutCount?: number;
-  slides?: { id: string; tile: TileCoord }[];
+  slides?: { id: string; tile: TileCoord; acceptedKind?: SproutTypeId | 'any'; destination?: HabitatId; enabled?: boolean }[];
   conveyors?: { id: string; tile: TileCoord }[];
 }
 ```
@@ -458,16 +460,15 @@ Original Web Audio synthesis only (no external license risk). F implements a sma
 
 Versioned JSON object in IndexedDB, top-level `{ version: number, sim: SimState, meta: { lastSavedAt: number } }`. Any sim state shape change bumps `version`; A owns migration stub (no-op for v1).
 
-Current version is **5**. v2→v3 backfills `SimState.colourGateLanes` (the Colour
-Gate's lane rule, defaulting to the safe recommendation) and
-`SimState.nurseryRhythm` (defaulting to `'lively'`, which the very next tick
-re-derives from how many Sprouts are actually waiting — so a returning,
-overcrowded garden correctly settles into `'resting'` immediately). v3→v4
-backfills `SproutInstance.mood` on every already-persisted Sprout (a
-deterministic default, `'sunny'` — migration is pure and cannot re-roll with
-RNG, so this is a one-time visual quirk for saves that predate mood) and
-`SimState.moodBellRule` (defaulting to `'sunny'`, the same safe default a
-freshly-built Bell starts with). v4→v5 (2026-08-01, manual placement)
-backfills `AutomationInstance.siteTile` on every already-placed automation
-from the old fixed `AUTOMATION_SITE_TILES[automationId]` default — the true
-historical value, since a v4 save's automations were always built there.
+Current version is **8**, matching `SIM_SHAPE_VERSION`. The migration chain is
+explicit and non-mutating: v2→v3 adds the Colour Gate rule and Nursery rhythm;
+v3→v4 adds deterministic Sprout moods and the Mood Bell rule; v4→v5 adds
+manual-placement `siteTile`; v5→v6 converts kind-keyed habitats to concrete
+habitat instances; v6→v7 converts the legacy Garden Slide and painted path into
+`slides` plus owned `conveyors`; and v7→v8 backfills idle/in-flight Slide ride
+fields (`carryingSproutId`, endpoints, and `completesAtTick`).
+
+`normaliseEnvelope()` only additively fills missing top-level fields on a save
+already labelled current; per-item repair belongs in an explicit migration.
+After load, `repairTransitRides()` clears stale or duplicate Slide claims before
+the first tick, returning any affected Sprout to a recoverable waiting tile.

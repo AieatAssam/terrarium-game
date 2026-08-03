@@ -7,16 +7,21 @@ serve. Art direction (palette, silhouette rules, animation timing) lives in
 `docs/ART_DIRECTION.md`, owned by Subagent C — referenced here, not
 duplicated.
 
-> **DESIGN SUPERSEDED IN PART, 2026-08-02 — Garden Transit.** GameRules'
-> 2026-08-02 revision replaces the single Garden Slide with **Garden Transit**:
-> multiple purchaseable Slides with per-Slide Sprout-kind filters, plus
+> **GARDEN TRANSIT SHIPPED AND VERIFIED, 2026-08-03.** GameRules' 2026-08-02
+> revision replaces the single Garden Slide with **Garden Transit**: up to four
+> paid, configured Slides with per-Slide Sprout-kind filters, plus up to thirty
 > buildable Sprout Conveyor segments (GameRules §9.3, §9.12–§9.17). The old
 > single-Slide model is explicitly rejected, not merely superseded — see
-> GameRules §9.17. **None of it is implemented yet**; `plan.yaml` Phase 7
-> carries the staged work. Everywhere below that assumes exactly one Slide, a
-> free Slide, or a Slide with no kind filter describes the SHIPPED game and
-> remains accurate as a record of it — it is no longer the design target.
-> Inline `2026-08-02` notes mark the specific beats that move.
+> GameRules §9.17. Passages below that describe the old model are labelled as
+> shipped history or historical pacing; current behavior is the Garden Transit
+> model above.
+
+> **Current live model:** a Slide has an `acceptedKind`, `destination`, and
+> `enabled` rule; a Conveyor is an owned tile in the route graph. Ports are
+> derived, ride endpoints are persisted for safe reload, and removal,
+> disablement, blocked destinations, disconnected routes, and save repair return
+> Sprouts without loss. The authored painted route remains the empty-Conveyor
+> compatibility seam.
 
 > **Status note (updated 2026-08-02):** Phase 1 of this document is
 > **implemented and verified** — all three common Sprouts, the Garden Slide,
@@ -95,15 +100,15 @@ toward.
   re-walked against manual placement — treat the timing as approximately
   right and the "always Meadow" specifics as stale.**
 
-  **Superseded again 2026-08-02 (Garden Transit, GameRules §9.3/§9.12 — DESIGN
-  TARGET, NOT YET BUILT):** the 20-placement milestone survives, but it now
+  **Garden Transit implementation, 2026-08-03:** the 20-placement milestone
+  survives, but it now
   grants *permission* to build rather than a free Slide. The first Slide
   **costs 150 Dewdrops**, and Slides are owned in multiples at
   `round5(150 × 1.8^(N-1))` capped at 2400. At the ~20-settled-Sprout income
   rate (4.8 Dewdrops/minute per settled Sprout) that first purchase is roughly
   90 seconds after the milestone, so this beat moves to ~6:00–6:30 rather than
-  disappearing. Nothing below has been re-walked against that change; see
-  `plan.yaml` Phase 7.
+  disappearing. The shipped acceptance matrix covers the purchase, configure,
+  route, recovery, and save-repair behavior.
 
 ### Arc to 15–25 minutes
 
@@ -112,8 +117,8 @@ toward.
   manual sorting, so a small "unsorted pile" starts building near the nursery
   — the first felt sense that one slide isn't enough.
 
-  **2026-08-02 (Garden Transit — DESIGN TARGET, NOT YET BUILT):** "one slide
-  isn't enough" now has two answers rather than one, and the design intends
+  **2026-08-03 (Garden Transit shipped):** "one slide isn't enough" now has
+  two answers rather than one, and the game supports both:
   the player to meet both. A **second Slide** (270 Dewdrops, filtered to a
   different Sprout kind) is the direct answer; the **Colour Gate** remains the
   answer when one *route* must serve two kinds. Both are legitimate, and the
@@ -290,16 +295,16 @@ construction (the behavioral gate is satisfied the instant the Gate is), and
 is a first-pass estimate not yet checked against real play at this stage of
 progression the way the earlier values were.
 
-### Garden topology: the trunk and the fork
+### Garden topology: authored backdrop and transit network
 
-The Colour Gate needs somewhere to *be* a gate. The first layout gave each
-habitat its own straight run out of the Nursery, so the three routes shared
-exactly one tile — the Nursery itself — and then fanned out immediately. There
-was no junction anywhere in the garden, so there was nothing for a routing
-helper to govern; and both automation site tiles sat in open grass, off every
-path, which GameRules §9.2 explicitly rules out.
+The Colour Gate needs somewhere to *be* a gate. The authored garden therefore
+keeps a shared trunk and a real fork, while Garden Transit adds a player-owned
+route layer on top: up to thirty Conveyor tiles compose the route for Slides
+once any are built. With no owned Conveyors, the painted path below remains the
+compatibility route for a fresh or migrated garden. Slide sites are player
+chosen and their ports are validated; no Slide has a fixed automatic site.
 
-The garden now has a short shared **trunk** ending in a real **fork**:
+The authored backdrop has a short shared **trunk** ending in a real **fork**:
 
 ```
               Ember Nook (4,4)                    Dew Pond (12,4)
@@ -314,8 +319,11 @@ The garden now has a short shared **trunk** ending in a real **fork**:
                                         |
                                 (8,9) ... (8,12)
                                         |
-                              Sunflower Meadow (8,13)
+                             Sunflower Meadow (8,13)
 ```
+
+The diagram is the visual/layout contract for the backdrop and the empty-
+Conveyor fallback, not a list of owned transit artifacts.
 
 Why this shape:
 

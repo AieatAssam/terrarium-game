@@ -20,13 +20,13 @@ src/audio/        Web Audio synthesis (music + SFX) — reacts to bus events
 
 ## State model
 
-`SimState` (`src/sim/state.ts`) is the single source of gameplay truth: a plain, JSON-serializable object (no classes, no Maps/Sets/functions as fields) covering the tick counter, RNG seed, Dewdrops, every Sprout instance, per-habitat counts/capacity, every automation instance, unlock/upgrade/achievement/journal progress, and small bookkeeping fields (spawn accumulator, per-habitat Dewdrop fraction). `SIM_SHAPE_VERSION` is bumped whenever this shape changes; `src/persistence/save.ts` carries a matching migration in `migrateEnvelope()`. The current version and the exact v1→v2→v3→v4→v5→v6→v7 migration chain are defined in `src/persistence/save.ts` (`CURRENT_SAVE_VERSION`) / `src/sim/state.ts` (`SIM_SHAPE_VERSION`), not duplicated here — this file went stale before by restating them.
+`SimState` (`src/sim/state.ts`) is the single source of gameplay truth: a plain, JSON-serializable object (no classes, no Maps/Sets/functions as fields) covering the tick counter, RNG seed, Dewdrops, every Sprout instance, concrete habitat instances, owned Slides, owned Conveyor segments, singleton helper automations, unlock/upgrade/achievement/journal progress, and small bookkeeping fields. `SIM_SHAPE_VERSION` is bumped whenever this shape changes; `src/persistence/save.ts` carries a matching migration in `migrateEnvelope()`. The current version is 8; the exact v1→v2→v3→v4→v5→v6→v7→v8 chain remains defined in source rather than duplicated here.
 
 `src/ui/uiState.ts` holds a *separate*, UI-only mirror (`UiState`) built purely by reducing over bus events — it never reads `SimState` directly. On a restored save, `save:loaded` carries a `snapshot` of the relevant `SimState` fields specifically so this mirror can hydrate correctly on load (see docs/QA_REPORT.md, finding #8, for why this needed fixing).
 
 ## Event model
 
-`src/events/types.ts` defines one flat `GameEvent` union — every state change simulation cares to announce (`sprout:spawned` (carries both `sproutType` and `mood`), `sprout:placed:correct/incorrect`, `sprout:settled`, `sprout:transportStarted/Completed`, `habitat:dewdropTick`, `habitat:full`, `currency:dewdropsChanged`, `automation:unlocked/built`, `automation:colourGateRuleChanged`, `automation:moodBellRuleChanged`, `nursery:rhythmChanged`, `upgrade:purchased`, `achievement:unlocked`, `journal:entryDiscovered`, `save:loaded/written`). `src/events/bus.ts` is a small typed pub/sub (`EventBus`): `subscribe`/`unsubscribe`/`emit`, snapshotting listeners on emit so mid-emit unsubscribes can't affect delivery order.
+`src/events/types.ts` defines one flat `GameEvent` union — every state change simulation cares to announce (`sprout:spawned` (carries both `sproutType` and `mood`), placement/settling, transport start/complete/return, habitat and currency changes, transit build/configure/move/remove/route-state changes, helper unlock/build/rule changes, nursery rhythm, progression, and save load/write). `src/events/bus.ts` is a small typed pub/sub (`EventBus`): `subscribe`/`unsubscribe`/`emit`, snapshotting listeners on emit so mid-emit unsubscribes can't affect delivery order.
 
 Inbound player intent (a drop, a purchase) also flows over this same bus/direct-call boundary: `src/input/` emits `sprout:dropped` for `src/sim/runtime.ts` to adjudicate; UI purchase/debug actions call plain functions the runtime exposes (`SimRuntime.purchaseUpgrade`, `SimRuntime.setColourGateLane`, `SimRuntime.getColourGateRule`, `SimRuntime.getUpgradeLockReason`, `SimRuntime.debug.*`) since there's no dedicated "player wants to buy X" event in the union (a gap noted during integration; the plain-function-call path was the pragmatic choice over expanding the union further).
 
@@ -40,11 +40,11 @@ Inbound player intent (a drop, a purchase) also flows over this same bus/direct-
 
 ## World grid and coordinates
 
-`src/sim/layout.ts` (not `src/render/`) owns the canonical tile positions for the Nursery, the three habitats, the three automation sites (Garden Slide, Colour Gate, and the Mood Bell's own decorative spur), and the shared trunk-and-fork path topology (Nursery -> Garden Slide -> Colour Gate, then west/east lanes to the two northern habitats with the separate southern run to Sunflower Meadow), plus the lane->habitat map the Colour Gate routes against. The fork exists so the Gate has something to actually govern: the routes previously shared only the Nursery tile and fanned out immediately, leaving no junction anywhere, and neither automation site even sat on a path — simulation needs these to compute transport distance/duration, and simulation must never import from render, so the positions live on the sim side and `src/render/layout.ts` re-exports them for the renderer's own path/scenery-scatter concerns. `src/sim/grid.ts`'s `tileToWorld()` is the single shared coordinate mapping; the renderer never invents its own screen-space placement.
+`src/sim/layout.ts` (not `src/render/`) owns the authored tile positions for the Nursery, habitats, helper sites, and the trunk-and-fork backdrop. Garden Transit routing is state-backed: `findConveyorRoute` performs deterministic BFS over owned Conveyor tiles plus the requested endpoints whenever Conveyors exist; the empty-Conveyor case keeps the authored painted path as a compatibility seam. Slides and Conveyors are player-placed artifacts, with derived ports and explicit join/clearance validation. `src/render/layout.ts` re-exports the authored backdrop for scenery and path art; `src/sim/grid.ts`'s `tileToWorld()` remains the single shared coordinate mapping.
 
-The Colour Gate's fork physically cannot reach Sunflower Meadow (its two lanes leave from the northern fork; the Meadow sits on the separate southern run) — this made the 2026-07-31 Garden Slide "always target Sunflower Meadow" rule the only way to reach it via automation. **Superseded 2026-08-01 (manual placement, GameRules §9.8, plan.yaml Phase 1):** every automation is now player-PLACED rather than auto-built the instant it unlocks, via the new `placeAutomation` (`src/sim/systems.ts`), constrained to a legal site by `isValidAutomationSite` (`src/sim/layout.ts`: on the path network, not the Nursery/a habitat/another automation's site, and — for the Colour Gate only — a genuine junction, `isJunctionTile`). A placed automation's destination is no longer hardcoded: `nearestReachableHabitat` computes it from the site tile itself — the nearest habitat reachable over the real path network without routing through another automation's site — so wherever the player puts the Garden Slide is what it actually serves. This is also what fixes the structure-vs-route visual incoherence a player reported (the Slide's structure standing north of the Nursery while its forced-Meadow ride went south, never touching it): the player now chooses where it stands, and its destination always matches. `GARDEN_PATH_TILES` and the path-search BFS moved from `src/render/layout.ts` to `src/sim/layout.ts` (as `findPathRoute`) so sim can run this computation without importing render — `src/render/sprouts.ts`'s `gardenRouteBetween` now calls the shared function instead of keeping its own copy. Sunflower Meadow remains reachable by hand-drag exactly as before, independent of where any automation is placed.
+The Colour Gate's fork still physically cannot reach Sunflower Meadow; its lanes serve the two northern homes and the southern run remains an independent authored route. That is a property of the backdrop, not a fixed Slide destination. Unlocking grants permission only: the player places a Slide or Conveyor on a valid join, configures each Slide's accepted kind/destination/enabled state, and can remove or move it without losing an in-flight Sprout. Sunflower Meadow remains reachable by hand-drag, while a Slide uses the owned Conveyor graph when one is present and the empty-graph compatibility route otherwise.
 
-**Partially superseded in design 2026-08-02 (Garden Transit, GameRules §9.3/§9.12–§9.17, `plan.yaml` Phase 7).** Phases 7.2–7.13 now provide N-instance configured Slides, deterministic owned-Conveyor composition, explicit derived ports, per-Slide filters/destinations/enabled state, v7→v8 save hydration, grown-garden Conveyor art, an accessible configuration panel with in-world rule cards and destination previews, and loss-free ride recovery across route edits, removal, disablement, full destinations, stale targets, duplicate claims, and save repair. The audit below still records the pre-phase assumptions for traceability until 7.16 performs the final document reconciliation.
+**Garden Transit is shipped and verified (GameRules §9.3/§9.12–§9.17, `plan.yaml` Phase 7.2–7.15).** The current implementation provides N-instance configured Slides, deterministic owned-Conveyor composition, explicit derived ports, per-Slide filters/destinations/enabled state, v8 save hydration, grown-garden Conveyor art, accessible configuration with in-world rule cards and destination previews, and loss-free ride recovery across route edits, removal, disablement, full destinations, stale targets, duplicate claims, and save repair. The historical Phase 7.1 audit below remains for traceability and is explicitly labelled as pre-implementation evidence.
 
 ## Rendering notes
 
@@ -52,7 +52,7 @@ Babylon's `CreateCylinder`/`CreateBox` apply one UV rect across every face by de
 
 ## Save format
 
-`src/persistence/save.ts`: a versioned envelope `{ version, sim: SimState, meta: { lastSavedAt } }` in a single IndexedDB object store (`src/persistence/db.ts`, hand-rolled, no `idb` dependency). `loadGame()` runs the persisted envelope through `migrateEnvelope()` (the v1 → v2 → v3 → v4 → v5 → v6 → v7 chain), then `normaliseEnvelope()`, which additively backfills any field missing from an envelope already *labelled* current — a real failure mode, since no migration case ever revisits a current-version envelope, and one written mid-development came back with an empty Colour Gate rule routing nobody. It can add a missing key, never overwrite a saved value. Offline progress is a **separate closed-form calculation** (`src/data/offlineProgress.ts`), not a huge delta fed through the normal tick loop (which would be silently clamped by the loop's max-delta guard) — it estimates Dewdrops earned from the settled-Sprout counts and rates at close time, capped both by elapsed real time (2 hours) and an absolute ceiling (200 Dewdrops).
+`src/persistence/save.ts`: a versioned envelope `{ version, sim: SimState, meta: { lastSavedAt } }` in a single IndexedDB object store (`src/persistence/db.ts`, hand-rolled, no `idb` dependency). `loadGame()` runs the persisted envelope through the explicit v1 → v2 → v3 → v4 → v5 → v6 → v7 → v8 migration chain, then `normaliseEnvelope()`, which additively backfills any field missing from an envelope already *labelled* current. It can add a missing key, never overwrite a saved value. `repairTransitRides()` then clears stale or duplicate Slide claims before the first tick. Offline progress is a **separate closed-form calculation** (`src/data/offlineProgress.ts`), not a huge delta fed through the normal tick loop (which would be silently clamped by the loop's max-delta guard) — it estimates Dewdrops earned from the settled-Sprout counts and rates at close time, capped both by elapsed real time (2 hours) and an absolute ceiling (200 Dewdrops).
 
 ## Test strategy
 
@@ -63,22 +63,21 @@ Babylon's `CreateCylinder`/`CreateBox` apply one UV rect across every face by de
 
 ---
 
-# Garden Transit audit (plan.yaml Phase 7.1 — 2026-08-02)
+# Garden Transit audit and as-built history (Phase 7.1–7.16 — 2026-08-02 to 2026-08-03)
 
 Desk audit produced before any Phase 7 code, per plan.yaml 7.1: map every
 existing assumption Garden Transit must change, classify each
 preserve / generalise / replace, and leave a record from which a reader can
 plan 7.2 (save migration) and 7.3 (transit domain model) without re-reading
-`src/`. Every claim cites `file:line` against HEAD `52a0c98`. This section is
-a snapshot, not a living contract; plan.yaml task 7.16 owns the post-ship
-rewrite of the rest of this document.
+`src/`. The pre-implementation claims are retained below as historical
+traceability; the current contract and as-built state are documented above.
 
 Design authority for the phase (read before planning 7.2/7.3):
 `docs/_scratch/GameRules.md` §9.3 (Garden Transit), §9.12 (cost/refund/caps),
 §9.13 (ports/anchors/validity), §9.14 (configuration), §9.15 (route states),
 §9.16 (art/readability acceptance), §9.17 (rejected old Slide), §9.9 (Conveyors
-= the single buildable route substrate). `plan.yaml` Phase 7 steps 7.2–7.16
-own the implementation; this audit only maps the terrain.
+= the single buildable route substrate). Phase 7.2–7.15 own the implementation;
+Phase 7.16 reconciles the dependent documents.
 
 ### Incremental as-built note — Phase 7.7 (2026-08-02)
 
@@ -111,8 +110,8 @@ The Sprout height follows the channel surface plus its own clearance, so the
 ride no longer floats at a fixed plinth height. Reduced motion quantises the
 same route into readable steps; the existing MotionConfig-driven Slide flow
 remains the state signal. In-world filter labels, route-state safety, and
-mid-ride save/restore remain later 7.12–7.14 work; Conveyor composition is
-recorded below.
+mid-ride save/restore and edit safety are completed in Phases 7.13–7.15;
+Conveyor composition is recorded below.
 
 ### Incremental as-built note — Phase 7.10 (2026-08-03)
 
@@ -123,9 +122,9 @@ reachable destination by route length, and derives its transport duration from
 the composed route rather than static painted-path distance. A complete route
 marks its segments idle; a loose segment remains waiting/inert. Removing a
 middle segment breaks the route, and restoring it reproduces the same ordered
-route after save/load. Empty-conveyor gardens retain the pre-7.10 fixed-path
-fallback as a compatibility seam; legacy Colour Gate/Mood Bell routing and
-their visual orientation remain later integration work.
+route after save/load. Empty-Conveyor gardens retain the authored painted-path
+fallback as a compatibility seam; the Colour Gate and Mood Bell keep their
+established helper-specific routing outside the player-owned Slide graph.
 
 ### Incremental as-built note — Phase 7.11 (2026-08-03)
 
@@ -151,8 +150,8 @@ with icon, species text, direction arrow, and status, and draws a temporary
 dashed destination trace while a draft is being previewed. High-contrast and
 desaturated captures retain the text and silhouette signals. Manual carry,
 Slide routes, Conveyor joins, and Colour Gate decisions are named explicitly
-in the panel copy; route-state safety and mid-ride edit protection remain 7.13+
-scope (implemented in the following 7.13 note).
+in the panel copy; route-state safety and mid-ride edit protection are covered
+by the following 7.13–7.15 notes.
 
 ### Incremental as-built note — Phase 7.13 (2026-08-03)
 
@@ -166,7 +165,7 @@ last recovery in a screen-reader reachable status message. Deterministic unit
 coverage covers conservation, stable priority, safe completion, route edits,
 duplicate claims, and save repair; focused browser coverage passed for removal
 and disablement with no console/page errors. The full-destination and reload
-browser matrix remains part of the Phase 7.15 acceptance gate.
+browser matrix was closed by the Phase 7.15 acceptance gate.
 
 ### Incremental as-built note — Phase 7.14 (2026-08-03)
 
@@ -177,12 +176,28 @@ artifact through moves and are disposed on removal. The ground/path receivers
 remain owned by `world.ts`, so dynamic transit does not add a second terrain
 system or scatter into gameplay tiles. The cap browser pass covered four
 Slides and thirty Conveyors at desktop/high and mobile/low, with no console or
-page errors; the full accessibility, persistence, and cross-tier matrix is
-still the Phase 7.15 gate.
+page errors; the full accessibility, persistence, and cross-tier matrix was
+closed by the Phase 7.15 gate.
 
-## The two core shapes Phase 7 changes
+### Incremental as-built note — Phase 7.15 (2026-08-03)
 
-1. **`AutomationInstance` (src/sim/state.ts:50-70) is currently one-per-
+The Garden Transit acceptance matrix passed from clean and migrated saves:
+single and multiple configured Slides, owned-Conveyor routing, invalid and
+blocked placement, destination-full recovery, disable/remove refund, reload
+repair, v7 migration, 390px touch/keyboard, reduced motion, and high contrast.
+The full suite recorded 37 passing E2E tests and 15 explicit legacy/duplicate
+skips; cap p95 was 91.5 ms high tier and 45.7 ms low tier. The project gate
+passed with 375 unit tests and no acceptance-gate console/page errors.
+
+## Historical Phase 7.1 audit (pre-implementation traceability)
+
+The following section records the assumptions found before Phase 7.2. Current
+as-built shapes and behavior are described above; these bullets are not live
+claims about the shipped implementation.
+
+### The two core shapes Phase 7 changed
+
+1. **Before Phase 7, `AutomationInstance` (src/sim/state.ts:50-70) was one-per-
    `AutomationId`.** `placeAutomation` hard-codes the id `\`${automationId}-1\``
    (src/sim/systems.ts:276) and refuses a second instance of the same kind
    outright (src/sim/systems.ts:272). `SimState.automations` is a flat array
@@ -195,7 +210,7 @@ still the Phase 7.15 gate.
    stay one-per-garden (plan.yaml 7.2 non_goals) and can remain ordinary
    `AutomationInstance`s.
 
-2. **`GARDEN_PATH_TILES` is a compile-time constant, not state.** Defined as an
+2. **Before Phase 7, `GARDEN_PATH_TILES` was a compile-time constant, not state.** Defined as an
    IIFE at src/sim/layout.ts:193-212 from `pathBetween` runs, frozen into
    `PATH_TILE_KEY_SET` at src/sim/layout.ts:218, and consumed by every routing
    and rendering path. Phase 7 replaces it with player-placed Conveyor segments
@@ -203,7 +218,7 @@ still the Phase 7.15 gate.
    network into that new state so existing gardens keep their paths. Consumers
    are enumerated in the "replace" table below.
 
-## One-instance-per-automation assumptions (map of what must generalise)
+## Historical one-instance-per-automation assumptions (map of what generalised)
 
 Every place that assumes a `gardenSlide`/`colourGate`/`moodBell` automationId
 maps to at most one live instance:
@@ -230,7 +245,7 @@ maps to at most one live instance:
 | src/ui/components/buildMenu.ts:118-120 | "placeable = unlocked minus already-placed" — one button per kind, gone once placed | **generalise** — Slides offer a button while owned count < cap (4); Conveyors get their own entry (7.11) |
 | src/sim/layout.ts:99-103 | `AUTOMATION_SITE_TILES: Record<AutomationId, TileCoord>` — one default site per kind | **generalise** — keep as the list of AutomationIds + fallback, but real sites come from state (already true since Phase 1.2 manual placement) |
 
-## Unlock / threshold path (plan.yaml 7.4 must not break it)
+## Historical unlock / threshold path (preserved by Phase 7.4)
 
 - `src/data/unlocks.ts:40-76` `UNLOCK_THRESHOLDS`: gardenSlide unlocks on
   `requiredCorrectPlacements: 20` (:58); colourGate requires gardenSlide built,
@@ -252,12 +267,13 @@ maps to at most one live instance:
   already enforces (`isMoodBellClaimed` keyed off an actual instance,
   src/sim/systems.ts:484-486).
 
-## Currency paths (deduction + the missing refund)
+## Currency paths (current deduction and refund behavior)
 
-There is **no refund path today** — nothing in `src/` removes a built
-automation or a habitat. 7.4 must introduce one (GameRules §9.12: full refunds;
-Slide refunds at the price of slide N at current owned count — which is why the
-save must store **no per-instance purchase price**, see plan.yaml 7.2/7.4).
+Slides and Conveyor segments now have symmetric sim-side purchase/removal
+paths. Placement charges the configured cost; removal refunds the Slide's
+current-count price or the Conveyor's fixed cost. No per-instance purchase
+price is stored, so save/load remains compact and deterministic. Habitat
+building keeps its existing geometric cost path.
 
 - Deduction sites:
   - `src/sim/systems.ts:342-343` `placeHabitat` checks `state.dewdrops < cost`.
@@ -275,21 +291,22 @@ save must store **no per-instance purchase price**, see plan.yaml 7.2/7.4).
   `purchaseUpgrade`/`setColourGateLane` are (plain function on SimRuntime —
   there is no GameEvent member for "player removed X").
 
-## Save shape and the migration seam (plan.yaml 7.2 — the risky part)
+## Historical save-shape migration seam (resolved by Phase 7.2 and 7.15)
 
-- `CURRENT_SAVE_VERSION = 7` (src/persistence/save.ts:10), matching
-  `SIM_SHAPE_VERSION = 7` (src/sim/state.ts:183). Envelope is
+- `CURRENT_SAVE_VERSION = 8` (src/persistence/save.ts:16), matching
+  `SIM_SHAPE_VERSION = 8` (src/sim/state.ts:183). Envelope is
   `{ version, sim, meta: { lastSavedAt } }` (src/persistence/save.ts:14-20).
-- `migrateEnvelope` (src/persistence/save.ts:78-260) upgrades v1→v7 with
+- `migrateEnvelope` (src/persistence/save.ts:78-286) upgrades v1→v8 with
   **explicit cases, never mutating the input envelope in place** (each case
-  builds a fresh object and falls through). 7.2 adds the v6→v7 case.
+  builds a fresh object and falls through). Phase 7.2 adds v6→v7 and v7→v8
+  completes the persisted Slide ride shape.
 - `normaliseEnvelope` (src/persistence/save.ts:56-67) is the last line of
   defence for saves *labelled* current but missing fields. **It can only add
   missing TOP-LEVEL `SimState` keys — it cannot reach into `automations[]`,
   `sprouts[]`, or `habitats[]`.** This limitation is documented twice
   (src/persistence/save.ts:130-135 for per-sprout `mood`, and :159-162 for
   per-automation `siteTile`), and both were the reason those backfills became
-  explicit migration cases. **7.2's Conveyor backfill is an explicit v6→v7
+  explicit migration cases. **Phase 7.2's Conveyor backfill is an explicit v6→v7
   migration case for the same reason** — `normaliseEnvelope` cannot
   synthesise Conveyor segments or a transit config inside an existing
   `automations[]`.
@@ -303,12 +320,14 @@ save must store **no per-instance purchase price**, see plan.yaml 7.2/7.4).
 - Offline progress (`src/data/offlineProgress.ts`) reads only settled-Sprout
   counts/rates, not automation state — **preserve untouched**; a shape change
   to `AutomationInstance` doesn't affect it.
-- **Classification: generalise (v6→v7 case) + preserve (envelope discipline).**
+- **Classification: generalise (v6→v8 cases) + preserve (envelope discipline).**
 
-## Fixed path network consumers (plan.yaml 7.10/7.11 — the replace surface)
+## Historical fixed-path consumers (resolved by Phase 7.10/7.15)
 
 `GARDEN_PATH_TILES` (src/sim/layout.ts:193) and its derived `PATH_TILE_KEY_SET`
-(:218) are the substrate. Consumers to move onto a state-backed network:
+(:218) were the original substrate. The consumers below are the recorded
+replacement surface; current Slide routing uses the owned-Conveyor graph when
+segments exist and retains the empty-graph fallback for compatibility.
 
 | Consumer | What it uses it for |
 |---|---|
@@ -321,7 +340,7 @@ save must store **no per-instance purchase price**, see plan.yaml 7.2/7.4).
 | src/render/sprouts.ts:341, gardenRouteBetween | renderer-side ride animation route |
 | tests/unit/sim.layout.test.ts, render.pathPieces.test.ts, render.gardenRoute.test.ts, render.procgen.test.ts, e2e/automation.dev.spec.ts:213, e2e/habitatBuild.dev.spec.ts:30 | pinned identities / path tile assumptions |
 
-## Pinned topology identities (plan.yaml 7.2 must rewrite these carefully)
+## Historical pinned topology identities (rewritten by Phase 7.2)
 
 - **`tests/unit/sim.layout.test.ts`** pins `nearestReachableHabitat` results
   for the fixed network: Nursery→SunflowerMeadow (:51-53), Gate fork→dewPond

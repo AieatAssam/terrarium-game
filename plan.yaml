@@ -2415,7 +2415,7 @@ steps:
 
   - phase: "7.16"
     title: Land the documentation updates GameRules' revision deferred
-    status: planned
+    status: completed
     why: >
       GameRules §17 requires a revision to carry updates to dependent design,
       architecture and QA documents plus test updates. The 2026-08-02 revision
@@ -2456,7 +2456,7 @@ steps:
     save_compat: Documents the migration; changes nothing.
     risk: Low. Rollback per file.
     commit: "docs: reconcile project documentation with the Garden Transit revision"
-    verification: Grep every doc for stale single-Slide language; diff CONTRACTS.md's event union against src/events/types.ts.
+    verification: Grep found no unmarked stale current-state claims; CONTRACTS.md's transit ids, ports, event union, snapshot, and v8 save version were cross-checked against src/. Exact project gate passed: typecheck, lint, 375 unit tests, and production build.
     depends_on: ["7.15"]
 
 # =============================================================================

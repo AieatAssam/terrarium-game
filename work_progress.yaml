@@ -16,7 +16,7 @@
 
 meta:
   updated: 2026-08-03
-  head: a7a9760 Phase 7.14 Garden Transit material and terrain integration (codex/phase-7.11; 52a0c98 = Phase 2 buildable habitats)
+  head: HEAD docs: reconcile project documentation with the Garden Transit revision (codex/phase-7.11; 52a0c98 = Phase 2 buildable habitats)
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
   tests_passing: "375 unit tests / 36 files (re-verified 2026-08-03 via the exact required gate — all green)"
@@ -2461,6 +2461,25 @@ decisions:
       automation or duplicate timing-sensitive captures. Cap p95 measured
       91.5 ms high / 45.7 ms low, and the exact project gate passed with 375
       unit tests and no acceptance-gate console/page errors.
+
+  - owner: codex session 2026-08-03 (Phase 7.16 intent)
+    files:
+      [
+        docs/CONTRACTS.md,
+        docs/ARCHITECTURE.md,
+        docs/GAME_DESIGN.md,
+        plan.yaml,
+        work_progress.yaml,
+      ]
+    task: >
+      Reconcile the dependent contracts, as-built architecture, and player-facing
+      design notes with the shipped Garden Transit revision. Verify ids, ports,
+      event members, route ownership, and the v8 save shape against src/; remove
+      stale current-state claims while retaining clearly marked history.
+    status: DONE, 2026-08-03: reconciled the current v8 Garden Transit
+      contracts, as-built architecture, and player-facing design notes against
+      src/. Historical Phase 7.1 assumptions are explicitly labelled; the exact
+      project gate passed with 375 unit tests and a successful production build.
 
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?
