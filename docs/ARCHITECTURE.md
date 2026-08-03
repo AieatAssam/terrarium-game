@@ -101,8 +101,17 @@ Accepted kind, destination, enabled state, and idle/in-flight ride fields are
 persisted through save version 8, with v7 migration backfilling safe idle
 values. The build menu exposes text selects for filter and destination; the
 renderer keeps the authored 7.7 silhouette while listening to configured Slide
-events. Conveyors, in-world filter labels, route-state safety, and ride
-animation remain the later 7.9–7.14 work.
+events.
+
+### Incremental as-built note — Phase 7.9 (2026-08-03)
+
+`src/render/sprouts.ts` now composes each Garden Slide ride from the Nursery
+approach, the authored raised `GARDEN_SLIDE.path`, and the destination route.
+The Sprout height follows the channel surface plus its own clearance, so the
+ride no longer floats at a fixed plinth height. Reduced motion quantises the
+same route into readable steps; the existing MotionConfig-driven Slide flow
+remains the state signal. Conveyors, in-world filter labels, route-state safety,
+and mid-ride save/restore remain the later 7.10–7.14 work.
 
 ## The two core shapes Phase 7 changes
 

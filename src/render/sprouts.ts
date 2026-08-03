@@ -25,7 +25,13 @@ import { findPathRoute, NURSERY_TILE } from './layout';
 import { easingFn, getMotionConfig, prefersReducedMotion, type MotionConfig } from './motion';
 import { createMoodBadgeMaterial } from './pbrMaterials';
 import { createSparkleBurst } from './particles';
-import { automationSiteTopY, habitatTopY, nurseryTopY } from './propDims';
+import {
+  automationSiteTopY,
+  GARDEN_SLIDE,
+  GARDEN_SLIDE_BASE_BODY,
+  habitatTopY,
+  nurseryTopY,
+} from './propDims';
 import type { EventBus } from '../events/bus';
 import type { HabitatId, MoodId, SproutTypeId } from '../core/ids';
 import { getEffectiveHabitatCapacity } from '../data/habitats';
@@ -453,6 +459,62 @@ export function gardenRouteBetween(from: TileCoord, to: TileCoord): GardenRoute 
   const route = tiles && tiles.length > 1 ? buildGardenRoute(tiles) : null;
   routeCache.set(key, route);
   return route;
+}
+
+export interface GardenRideRoute extends GardenRoute {
+  /** World-space Sprout centre heights for each route point. */
+  heights: Float64Array;
+}
+
+function buildGardenRideRoute(points: Array<{ x: number; y: number; z: number }>): GardenRideRoute | null {
+  const compact = points.filter((point, index) => {
+    const previous = points[index - 1];
+    return !previous || Math.hypot(point.x - previous.x, point.y - previous.y, point.z - previous.z) > 1e-6;
+  });
+  if (compact.length < 2) return null;
+  const flattened = new Float64Array(compact.length * 2);
+  const heights = new Float64Array(compact.length);
+  const cumulative = new Float64Array(compact.length);
+  let totalLength = 0;
+  for (let index = 0; index < compact.length; index += 1) {
+    const point = compact[index];
+    flattened[index * 2] = point.x;
+    flattened[index * 2 + 1] = point.z;
+    heights[index] = point.y;
+    if (index > 0) {
+      const previous = compact[index - 1];
+      totalLength += Math.hypot(point.x - previous.x, point.y - previous.y, point.z - previous.z);
+    }
+    cumulative[index] = totalLength;
+  }
+  return { points: flattened, heights, cumulative, count: compact.length, totalLength };
+}
+
+export function gardenSlideRideBetween(slideTile: TileCoord, destinationTile: TileCoord): GardenRideRoute | null {
+  const approach = gardenRouteBetween(NURSERY_TILE, slideTile);
+  const departure = gardenRouteBetween(slideTile, destinationTile);
+  if (!approach || !departure) return null;
+
+  const slideWorld = tileToWorld(slideTile);
+  const channelLift = GARDEN_SLIDE.channelThickness / 2 + SPROUT_SURFACE_CLEARANCE + SPROUT_HALF_HEIGHT;
+  const channelPoint = (pathPoint: (typeof GARDEN_SLIDE.path)[number]): { x: number; y: number; z: number } => ({
+    x: slideWorld.x,
+    y: slideWorld.y + GARDEN_SLIDE_BASE_BODY.centreY + pathPoint.y + channelLift,
+    z: slideWorld.z + pathPoint.z,
+  });
+  const entry = channelPoint(GARDEN_SLIDE.path[0]);
+  const points: Array<{ x: number; y: number; z: number }> = [];
+  const appendRoute = (route: GardenRoute, start: number, end: number, y: number): void => {
+    for (let index = start; index < end; index += 1) {
+      points.push({ x: route.points[index * 2], y, z: route.points[index * 2 + 1] });
+    }
+  };
+
+  appendRoute(approach, 0, approach.count - 1, SPROUT_RIDE_HEIGHT);
+  points.push(entry);
+  for (const pathPoint of GARDEN_SLIDE.path.slice(1)) points.push(channelPoint(pathPoint));
+  appendRoute(departure, 1, departure.count, SPROUT_RIDE_HEIGHT);
+  return buildGardenRideRoute(points);
 }
 
 /** Fallback ms-per-tile if a `sprout:transportStarted` ever arrives without the
@@ -1150,7 +1212,9 @@ export function createSproutManager(scene: Scene, bus: EventBus, habitats: Habit
       // corners and all, instead of drifting diagonally across the grass.
       // Straight lerp stays as the fallback for an endpoint that somehow isn't
       // on the path network, so a Sprout always still visibly arrives.
-      const route = gardenRouteBetween(e.fromTile, e.toTile);
+      const route = e.automationId === 'gardenSlide'
+        ? gardenSlideRideBetween(e.fromTile, e.toTile)
+        : gardenRouteBetween(e.fromTile, e.toTile);
 
       // Duration comes from the SIM, which is the only side that knows the
       // gardenSlideSpeed upgrade level (src/events/types.ts explains why). The
@@ -1176,7 +1240,13 @@ export function createSproutManager(scene: Scene, bus: EventBus, habitats: Habit
         //
         // Deliberately linear rather than eased: a Garden Slide is a conveyor,
         // and an ease-in-out here reads as the ride speeding up in the middle.
-        const t = Math.min(1, (performance.now() - start) / durationMs);
+        let routeHeight = SPROUT_RIDE_HEIGHT;
+        const rawT = Math.min(1, (performance.now() - start) / durationMs);
+        // Reduced motion keeps the full route and its state changes, but
+        // advances in a handful of legible positions instead of continuous
+        // travel. This is intentionally quantised here rather than shortening
+        // the ride: the player still sees entry, channel, exit, and arrival.
+        const t = lastMotion?.ambientIntensity === 0 ? Math.floor(rawT * 8) / 8 : rawT;
         if (route) {
           const target = t * route.totalLength;
           while (segment < route.count - 2 && route.cumulative[segment + 1] < target) segment += 1;
@@ -1186,6 +1256,10 @@ export function createSproutManager(scene: Scene, bus: EventBus, habitats: Habit
           const i = segment * 2;
           visual.mesh.position.x = route.points[i] + (route.points[i + 2] - route.points[i]) * local;
           visual.mesh.position.z = route.points[i + 1] + (route.points[i + 3] - route.points[i + 1]) * local;
+          if (e.automationId === 'gardenSlide') {
+            const heights = (route as GardenRideRoute).heights;
+            routeHeight = heights[segment] + (heights[segment + 1] - heights[segment]) * local;
+          }
         } else {
           visual.mesh.position.x = from.x + (to.x - from.x) * t;
           visual.mesh.position.z = from.z + (to.z - from.z) * t;
@@ -1193,12 +1267,12 @@ export function createSproutManager(scene: Scene, bus: EventBus, habitats: Habit
         // The carried arc is decoration on top of the essential travel, so it
         // is the part reduced motion drops: ambientIntensity 0 rides flat, and
         // the Sprout still visibly moves along the path.
-        const hop = TRANSPORT_HOP_HEIGHT * (lastMotion?.ambientIntensity ?? 1);
+        const hop = e.automationId === 'gardenSlide' ? 0 : TRANSPORT_HOP_HEIGHT * (lastMotion?.ambientIntensity ?? 1);
         // SPROUT_RIDE_HEIGHT, not SPROUT_FLOAT_HEIGHT: a carried Sprout rides
         // low, close to the Slide/Gate's own belt, not at the taller height
         // reserved for standing/dragging near the Nursery mound.
-        visual.mesh.position.y = SPROUT_RIDE_HEIGHT + Math.sin(t * Math.PI) * hop;
-        if (t >= 1) endRide(e.sproutId);
+        visual.mesh.position.y = routeHeight + Math.sin(t * Math.PI) * hop;
+        if (rawT >= 1) endRide(e.sproutId);
       });
       rides.set(e.sproutId, { observer, toTile: e.toTile });
     }),

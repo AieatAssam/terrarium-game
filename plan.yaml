@@ -2036,7 +2036,7 @@ steps:
 
   - phase: "7.9"
     title: Make Sprouts visibly enter, travel and exit a Slide
-    status: planned
+    status: completed
     why: >
       GameRules §9.3.1 forbids teleporting a Sprout from entry to exit. The
       journey is the charm and the legibility — it is how a player learns what
@@ -2080,7 +2080,7 @@ steps:
     save_compat: A Sprout saved mid-ride must restore safely to a valid position (see 7.13).
     risk: Medium — mid-ride save/restore is the subtle case. Cover it in 7.13's tests.
     commit: "feat(render): show Sprouts entering, riding and leaving a Garden Slide"
-    verification: Frame-by-frame ride capture; contact check against the channel; reduced-motion pass.
+    verification: Frame-by-frame ride capture; contact check against the authored channel; reduced-motion pass; exact gate green.
     depends_on: ["7.8"]
 
   - phase: "7.10"

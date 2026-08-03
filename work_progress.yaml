@@ -2250,6 +2250,29 @@ decisions:
     status: DONE, committed 2026-08-02 (see the commit for the full
       report); typecheck/lint/unit/build all pass, YAML re-parsed clean.
 
+  - owner: codex session 2026-08-03 (Phase 7.9 intent)
+    files:
+      [
+        src/render/sprouts.ts,
+        tests/e2e/transitRide.dev.spec.ts,
+        plan.yaml,
+        docs/ARCHITECTURE.md,
+        docs/visual-qa/improvement-log.md,
+        work_progress.yaml,
+      ]
+    task: >
+      Make Sprouts visibly enter a Garden Slide, ride the raised channel
+      surface, and emerge toward the configured destination. Reuse the
+      existing MotionConfig and active-flow signal, keep reduced motion
+      discrete and readable, add focused browser evidence, then run the
+      exact project gate.
+    status: >
+      DONE, 2026-08-03: Garden Slide rides now use Nursery approach → authored
+      raised channel → destination route, with channel-contact height and
+      reduced-motion quantisation. Focused transitRide.dev.spec.ts passed with
+      fresh entry/mid/exit/reduced-motion screenshots and no console errors.
+      Exact gate passed: typecheck, lint, 366 tests, and production build.
+
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?
   - Should SPROUT_PICK_RADIUS/HOVER_MARGIN_TILES scale with viewport width

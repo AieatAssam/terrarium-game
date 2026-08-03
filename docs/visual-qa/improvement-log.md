@@ -2,6 +2,22 @@
 
 ---
 
+## 2026-08-03 — Garden Slide ride contact and readable motion
+
+Phase 7.9 browser pass: a real paid Garden Slide was placed, a filtered Star
+Sprout was dispatched, and the live mesh sampler confirmed movement through the
+authored raised channel before the exit route. The close-zoom evidence removes
+the dev panel and transient toast so the Slide silhouette and ride path stay
+legible. Reduced motion was toggled during the same active ride and retained
+the route/state clarity without continuous travel animation.
+
+Evidence: `docs/visual-qa/transit/ride-entry.png`,
+`ride-mid.png`, `ride-exit.png`, and `ride-reduced-motion.png`.
+
+Remaining visual debt: the temporary browser fixture keeps the Nursery in a
+resting state with waiting Sprouts visible so natural pods cannot race the
+deliberate passenger; this is test setup only, not a runtime rendering change.
+
 ## 2026-08-01 — The "square block" on a Sprout: it was the mood badge
 
 Player report: *"look at what happens to sprout when it is hovering over a

@@ -12,8 +12,9 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { gardenRouteBetween, type GardenRoute } from '../../src/render/sprouts';
-import { GARDEN_PATH_TILES, HABITAT_TILES, NURSERY_TILE } from '../../src/render/layout';
+import { gardenRouteBetween, gardenSlideRideBetween, SPROUT_RIDE_HEIGHT, type GardenRoute } from '../../src/render/sprouts';
+import { GARDEN_PATH_TILES, GARDEN_SLIDE_TILE, HABITAT_TILES, NURSERY_TILE } from '../../src/render/layout';
+import { GARDEN_SLIDE } from '../../src/render/propDims';
 import { tileToWorld, worldToTile } from '../../src/render/coords';
 import type { TileCoord } from '../../src/sim/grid';
 
@@ -139,5 +140,27 @@ describe('garden-path routes for transported Sprouts', () => {
     expect(PATH_KEYS.has('0,0')).toBe(false); // fixture sanity
     expect(gardenRouteBetween(NURSERY_TILE, offPath)).toBeNull();
     expect(gardenRouteBetween(offPath, HABITAT_TILES.emberNook)).toBeNull();
+  });
+
+  it('keeps a Garden Slide ride on its authored channel before leaving for the habitat', () => {
+    const route = gardenSlideRideBetween(GARDEN_SLIDE_TILE, HABITAT_TILES.sunflowerMeadow);
+    if (!route) throw new Error('no Garden Slide ride route');
+    expect(route.points[0]).toBeCloseTo(NURSERY_TILE.x, 6);
+    expect(route.points[1]).toBeCloseTo(NURSERY_TILE.z, 6);
+    expect(route.points[(route.count - 1) * 2]).toBeCloseTo(HABITAT_TILES.sunflowerMeadow.x, 6);
+    expect(route.points[(route.count - 1) * 2 + 1]).toBeCloseTo(HABITAT_TILES.sunflowerMeadow.z, 6);
+    expect(route.heights[0]).toBeCloseTo(SPROUT_RIDE_HEIGHT, 6);
+
+    const entryZ = GARDEN_SLIDE_TILE.z + GARDEN_SLIDE.path[0].z;
+    const exitZ = GARDEN_SLIDE_TILE.z + GARDEN_SLIDE.path[GARDEN_SLIDE.path.length - 1].z;
+    const entryIndex = Array.from({ length: route.count }, (_, index) => index).find(
+      (index) => Math.abs(route.points[index * 2 + 1] - entryZ) < 1e-6,
+    );
+    const exitIndex = Array.from({ length: route.count }, (_, index) => index).find(
+      (index) => Math.abs(route.points[index * 2 + 1] - exitZ) < 1e-6,
+    );
+    expect(entryIndex).toBeDefined();
+    expect(exitIndex).toBeDefined();
+    expect(route.heights[entryIndex!]).toBeGreaterThan(route.heights[exitIndex!]);
   });
 });
