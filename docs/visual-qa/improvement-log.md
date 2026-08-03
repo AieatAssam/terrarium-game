@@ -2,6 +2,32 @@
 
 ---
 
+## 2026-08-03 — Live visual regression follow-up
+
+The reported deployed screenshot was confirmed to be the unpublished build:
+the live 1280×720 page was still drawing into a 320×180 canvas, so the
+resolution fix already present on local `main` could not affect it. The native
+local render was crisp at 1280×720, and the Dew Pond cap matched the approved
+close-up; no habitat geometry change was warranted.
+
+Two remaining regressions were fixed. Settings switches now use a 64×44px
+touch target with a 60×28px visible pill and a 26px circular knob, instead of
+the previous 56×44px rounded rectangle. Conveyor terrain beds are enabled
+again so the belt reads as planted in the soil; the duplicate contact disc
+stays disabled for Conveyors to preserve the crowded-garden frame budget.
+
+Evidence: focused `panels.dev.spec.ts` and
+`transitIntegration.dev.spec.ts` passed with no new console/page errors;
+transit cap frame-time p95 measured 83.5 ms high / 37.5 ms low. Refreshed
+`docs/visual-qa/transit/integration-{empty,mid,at-cap,low-tier}.png` show the
+restored green bedding under the Conveyor grid. The existing approved Dew Pond
+reference remains `docs/visual-qa/planning-baseline/04-dew-pond-closeup.png`.
+
+Remaining delivery step: publish the two local commits so the live site stops
+serving the stale 320×180 build.
+
+---
+
 ## 2026-08-03 — Render resolution regression recovery
 
 The Garden Transit performance pass had applied Babylon hardware scaling level

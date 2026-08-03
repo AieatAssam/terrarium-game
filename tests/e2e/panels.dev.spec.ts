@@ -32,6 +32,22 @@ test.describe('nav panels: Journal, Settings, Credits', () => {
     await expect(dialog.getByRole('switch', { name: 'Mute all audio' })).toBeVisible();
     await expect(dialog.getByRole('switch', { name: 'Reduced motion' })).toBeVisible();
     await expect(dialog.getByRole('switch', { name: 'High contrast' })).toBeVisible();
+    const toggleGeometry = await dialog.getByRole('switch').evaluateAll((elements) => elements.map((element) => {
+      const track = element.getBoundingClientRect();
+      const trackStyle = getComputedStyle(element, '::before');
+      const knob = element.querySelector('.tt-toggle-knob')?.getBoundingClientRect();
+      return {
+        trackRatio: track.width / track.height,
+        trackBorderRadius: trackStyle.borderRadius,
+        knobRatio: knob ? knob.width / knob.height : 0,
+      };
+    }));
+    expect(toggleGeometry).toHaveLength(3);
+    for (const geometry of toggleGeometry) {
+      expect(geometry.trackRatio).toBeGreaterThan(1.4);
+      expect(geometry.trackBorderRadius).toBe('999px');
+      expect(geometry.knobRatio).toBeCloseTo(1, 5);
+    }
 
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();

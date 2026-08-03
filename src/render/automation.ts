@@ -1209,9 +1209,8 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
         conveyorMaterials.bedding,
         contactPadMaterial,
       );
-      // ponytail: the body already carries bedding; batch these pads before
-      // re-enabling per-segment grounding at the cap.
-      grounding.terrainBed.setEnabled(false);
+      // Keep the raised bedding/contact term visible so every conveyor is
+      // grounded against the soil instead of reading as a floating belt.
       grounding.contactPad.setEnabled(false);
       grounding.terrainBed.position.set(world.x, TRANSIT_GROUNDING.beddingHeight / 2, world.z);
       grounding.contactPad.position.set(world.x, TRANSIT_GROUNDING.contactY, world.z);

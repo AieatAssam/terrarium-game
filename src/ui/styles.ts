@@ -842,31 +842,40 @@ export const UI_CSS = /* css */ `
 
 .tt-toggle {
   position: relative;
-  width: 56px;
+  width: 64px;
   height: var(--tt-touch);
-  min-height: unset;
-  border-radius: 999px;
-  border: 2px solid var(--tt-border);
-  background: var(--tt-panel);
+  min-height: var(--tt-touch);
+  border: 0;
+  background: transparent;
   padding: 0;
+}
+
+.tt-toggle::before {
+  content: '';
+  position: absolute;
+  inset: 6px 0;
+  border: 2px solid var(--tt-border);
+  border-radius: 999px;
+  background: var(--tt-panel);
 }
 
 .tt-toggle-knob {
   position: absolute;
-  top: 3px;
+  z-index: 1;
+  top: 9px;
   left: 3px;
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   border-radius: 999px;
   background: var(--tt-text-muted);
 }
 
-.tt-toggle[aria-checked='true'] {
+.tt-toggle[aria-checked='true']::before {
   border-color: var(--tt-good);
 }
 
 .tt-toggle[aria-checked='true'] .tt-toggle-knob {
-  left: 23px;
+  left: 35px;
   background: var(--tt-good);
 }
 

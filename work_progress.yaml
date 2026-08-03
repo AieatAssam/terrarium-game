@@ -16,7 +16,7 @@
 
 meta:
   updated: 2026-08-03
-  head: HEAD fix(render): keep normal gardens at native resolution
+  head: HEAD fix(render): restore crisp visual grounding
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
   tests_passing: "375 unit tests / 36 files (re-verified 2026-08-03 via the exact required gate — all green)"
@@ -2506,6 +2506,36 @@ decisions:
       transitIntegration.dev.spec.ts passed with cap p95 70.5 ms high / 32.1 ms
       low and no new console/page errors. The exact project gate passed with
       375 unit tests and a successful production build.
+
+  - owner: codex session 2026-08-03 (live visual regression follow-up)
+    files:
+      [
+        src/render/index.ts,
+        src/render/automation.ts,
+        src/render/habitats.ts,
+        src/ui/styles.ts,
+        src/ui/components/settings.ts,
+        tests/e2e/transitIntegration.dev.spec.ts,
+        docs/visual-qa/improvement-log.md,
+        work_progress.yaml,
+      ]
+    task: >
+      Reproduce the reported deployed low-resolution/deformation state and
+      separate the stale unpublished build from live geometry/CSS regressions.
+      Verify settings toggle geometry, conveyor terrain grounding, and the
+      Dew Pond habitat cap before changing code.
+    status: >
+      DONE, 2026-08-03: confirmed the deployed site still serves the stale
+      pre-resolution-fix build (320x180 at a 1280x720 viewport). Native local
+      browser QA measured 1280x720 and the approved Dew Pond cap geometry
+      remained intact, so no habitat mesh/art change was needed. Restored the
+      Conveyor terrain bed while keeping the duplicate contact disc disabled
+      for the 30-segment cap, and reshaped Settings switches to a 64x44 touch
+      target with a true visible pill. Added a panel geometry regression
+        assertion; focused panel and transit browser checks passed with cap p95
+        83.5ms high / 37.5ms low and no new console/page errors. The exact
+      project gate passed: typecheck, lint, 375 unit tests, and production
+      build. Publishing is still pending explicit approval for the new commit.
 
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?
