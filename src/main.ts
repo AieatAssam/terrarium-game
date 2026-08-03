@@ -156,6 +156,10 @@ void bootstrap(root).then((result) => {
       },
     });
     inputHandle = input;
+    if (isDev) {
+      const debug = (window as unknown as { __debug?: Record<string, unknown> }).__debug;
+      if (debug) debug.inputReady = true;
+    }
     markRendererSubscribed();
     window.addEventListener('beforeunload', () => {
       input.dispose();

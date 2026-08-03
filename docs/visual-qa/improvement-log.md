@@ -2,6 +2,30 @@
 
 ---
 
+## 2026-08-03 — Garden Transit acceptance gate
+
+Phase 7.15 closes the Garden Transit browser gate across clean and migrated
+saves. Chrome coverage includes configured single and multiple Slides,
+Conveyor routing, invalid and blocked placement, full destinations, disabled
+rides, removal/refund, mid-transit reload repair, v7 migration, 390px
+touch/keyboard, reduced motion, high contrast, pointer placement, and the
+accessible rules surface.
+
+Evidence: `docs/visual-qa/transit/gate-{single,multi,conveyor,invalid,
+blocked,full,reload,390,reduced-motion,high-contrast}.png`.
+
+Scores: transit readability 4/5, material richness 4/5, animation 4/5,
+accessibility 4/5, performance 4/5. At the Phase 1 cap, the full E2E run
+measured frame-time p95 at 91.5 ms high tier and 45.7 ms low tier. The exact
+project gate passed: typecheck, lint, 375 unit tests, build, and 37 passing
+E2E tests with 15 explicit skips for superseded legacy automation or duplicate
+timing-sensitive captures. Acceptance tests reported no console/page errors.
+The only observed browser warning is the pre-existing missing
+`structure.moodBell.base` manifest placeholder.
+
+Remaining debt: documentation reconciliation is Phase 7.16; no generic bloom
+or decorative-prop pass was added.
+
 ## 2026-08-03 — Garden Transit material and terrain integration
 
 Phase 7.14 binds placed Slides and Conveyors to the established Phase 6

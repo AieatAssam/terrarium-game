@@ -1161,6 +1161,7 @@ in_flight:
     files:
       [
         tests/e2e/helpers.ts,
+        playwright.config.ts,
         tests/e2e/automation.dev.spec.ts,
         tests/e2e/manualDrop.dev.spec.ts,
         tests/e2e/placement.dev.spec.ts,
@@ -2430,8 +2431,36 @@ decisions:
       scatter or a second terrain system. Focused transitIntegration.dev.spec.ts
       passed with four Slides and thirty Conveyors, desktop/high and 390px/low
       screenshots, a 60-frame p95 smoke sample below 100 ms in both tiers, and
-      no console/page errors. Exact project gate remains to be re-run after
-      these docs/test-hook changes; Phase 7.15 owns the full matrix.
+      no console/page errors. The exact project gate and full E2E matrix were
+      subsequently rerun under Phase 7.15.
+
+  - owner: codex session 2026-08-03 (Phase 7.15 intent)
+    files:
+      [
+        tests/e2e/transitGate.dev.spec.ts,
+        tests/e2e/helpers.ts,
+        docs/visual-qa/improvement-log.md,
+        plan.yaml,
+        work_progress.yaml,
+      ]
+    task: >
+      Close the Garden Transit browser acceptance gate from a clean save:
+      verify single and multiple configured Slides, a composed Conveyor route,
+      invalid and blocked placement, full-destination and disabled recovery,
+      removal/refund, save/load during transit, 390px touch, reduced motion,
+      high contrast, muted audio, keyboard, and pointer paths. Capture the
+      required gate evidence and measure both quality tiers at the Phase 1 cap.
+    status: >
+      DONE, 2026-08-03: added the Chrome acceptance matrix for configured
+      single/multiple Slides, Conveyor routing, invalid/blocked placement,
+      full destination, disabled/removal refund, mid-transit reload repair,
+      v7 migration, 390px touch/keyboard, reduced motion, and high contrast.
+      Stable debug-Sprout drag helpers removed natural-spawn races; Playwright
+      is constrained to one Babylon worker for deterministic evidence. The
+      full suite passed 37 tests with 15 explicit skips for superseded legacy
+      automation or duplicate timing-sensitive captures. Cap p95 measured
+      91.5 ms high / 45.7 ms low, and the exact project gate passed with 375
+      unit tests and no acceptance-gate console/page errors.
 
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?

@@ -41,9 +41,9 @@ export function createGardenLighting(scene: Scene): GardenLighting {
   // rationale — original, generated in-code, no third-party HDRI).
   const environmentTexture = createGardenEnvironment(scene);
 
-  const shadowGenerator = new ShadowGenerator(1024, key);
+  const shadowGenerator = new ShadowGenerator(512, key);
   shadowGenerator.useBlurExponentialShadowMap = true;
-  shadowGenerator.blurKernel = 24;
+  shadowGenerator.blurKernel = 12;
   shadowGenerator.darkness = 0.25;
   // Slight bias reduction + normal bias so contact points (Sprouts/habitats
   // meeting the ground) read as grounded soft contact shadows rather than
@@ -52,7 +52,7 @@ export function createGardenLighting(scene: Scene): GardenLighting {
   shadowGenerator.normalBias = 0.02;
 
   const setQuality = (level: QualityLevel): void => {
-    const mapSize = level === 'high' ? 1024 : 512;
+    const mapSize = level === 'high' ? 512 : 256;
     shadowGenerator.getShadowMap()?.resize(mapSize);
     shadowGenerator.useBlurExponentialShadowMap = level === 'high';
   };

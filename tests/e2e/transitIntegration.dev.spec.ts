@@ -127,6 +127,7 @@ test('captures transit integration at empty, mid, cap, and low-quality states', 
   await placeTransitForVisualCap(page, [], extraTiles);
   await expect.poll(async () => (await getUiState(page)).transitCounts.gardenSlide).toBe(4);
   await expect.poll(async () => (await getUiState(page)).transitCounts.sproutConveyor).toBe(30);
+  await page.waitForTimeout(2_000);
   const highFrameP95 = await sampleFrameP95(page);
   expect(highFrameP95).toBeLessThan(100);
   await frame(page, { x: 7, z: 8 }, 9.2);

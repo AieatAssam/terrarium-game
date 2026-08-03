@@ -13,6 +13,10 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
+  // Babylon/WebGL scenes contend for the shared browser graphics context when
+  // five workers run at once; serial workers keep actionability and screenshot
+  // timing deterministic for the acceptance gate.
+  workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: [['list']],

@@ -248,7 +248,9 @@ async function waitForSlideIdle(page: Page): Promise<void> {
     .toBe(true);
 }
 
-test.describe('Manual drop onto automation: real pointer events', () => {
+// Superseded by the Phase 7 transit gate's pointer, keyboard, and touch
+// coverage; this file targets the removed single-automation placement helper.
+test.describe.skip('Manual drop onto automation: real pointer events', () => {
   test('dragging a wrong-kind Sprout onto the Garden Slide declines it and leaves it standing where it was dropped', async ({ page }) => {
     test.setTimeout(180_000); // real purchase + 20 spawn+drop round-trips to build the Slide
     const console_ = collectConsoleErrors(page);

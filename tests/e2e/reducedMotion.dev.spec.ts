@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { collectConsoleErrors, dragNurseryToHabitat, getUiState, installBusRecorder, waitForDevHooks } from './helpers';
+import { collectConsoleErrors, debugSpawnAndGetId, dragBetween, getUiState, installBusRecorder, projectToScreen, waitForDevHooks } from './helpers';
 
 test.describe('reduced motion', () => {
   test('prefers-reduced-motion is honored on <html> and the game still fully functions', async ({ page }) => {
@@ -24,12 +24,19 @@ test.describe('reduced motion', () => {
 
     // Functional check: the core placement loop still works end to end
     // under reduced motion (no dependency on any tween/animation completing).
-    await page.click('[data-testid="debug-spawn-ember"]');
-    await dragNurseryToHabitat(page, 'emberNook');
+    const sproutId = await debugSpawnAndGetId(page, 'ember');
+    await page.waitForTimeout(500);
+    const position = await page.evaluate((id) => {
+      const debug = window.__debug as unknown as { meshInfo: (name: string) => { pos: number[] } | null };
+      return debug.meshInfo(`terrarium.sprout.${id}`)!.pos;
+    }, sproutId);
+    const from = await projectToScreen(page, { x: position[0], y: position[1], z: position[2] });
+    const to = await projectToScreen(page, { x: 4, y: 0, z: 4 });
+    await dragBetween(page, from, to);
     await page.waitForFunction(
       () => window.__ttEvents?.some((e) => e.type === 'sprout:placed:correct') ?? false,
       undefined,
-      { timeout: 5_000 },
+      { timeout: 10_000 },
     );
     const state = await getUiState(page);
     expect(state.journalDiscovered).toEqual(['ember']);

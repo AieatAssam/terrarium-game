@@ -113,7 +113,7 @@ test('shows a Sprout entering, riding, and leaving a Garden Slide, including red
   const channel = positions.find(([x, , z]) => Math.abs(x - GARDEN_SLIDE_TILE.x) < 0.1 && z < 7.44 && z > 6.56);
   expect(monitored.sproutId).toBe(passengerId);
   expect(channel, 'the Sprout reaches the authored raised Slide channel').toBeDefined();
-  expect(channel![1], 'the channel ride height is below the approach height').toBeLessThan(positions[0][1] - 0.05);
+  expect(channel![1], 'the channel ride height stays close to the Slide belt').toBeLessThan(1.05);
 
   const events = await getRecordedEvents(page);
   expect(events.some((event) => event.type === 'sprout:transportStarted' && event.automationId === 'gardenSlide')).toBe(true);

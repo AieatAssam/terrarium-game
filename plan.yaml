@@ -2350,15 +2350,29 @@ steps:
 
   - phase: "7.15"
     title: Garden Transit acceptance gate — browser, accessibility, performance, persistence
-    status: planned
+    status: complete
     why: >
       Closes the phase against GameRules §9.16's acceptance criteria and §16's
       revised Definition of Done, and proves the guarantees in §9.15 hold in a
       real browser rather than only in unit tests.
     supersedes: []
     files:
-      - tests/e2e/ (new transit specs)
+      - tests/e2e/transitGate.dev.spec.ts
+      - tests/e2e/helpers.ts
+      - tests/e2e/transitIntegration.dev.spec.ts
+      - tests/e2e/transitPlacement.dev.spec.ts
+      - tests/e2e/transitRide.dev.spec.ts
+      - tests/e2e/reducedMotion.dev.spec.ts
+      - playwright.config.ts
+      - src/main.ts
+      - src/input/index.ts
+      - src/render/automation.ts
+      - src/render/index.ts
+      - src/render/lighting.ts
+      - src/ui/components/buildMenu.ts
+      - src/ui/styles.ts
       - docs/visual-qa/improvement-log.md
+      - work_progress.yaml
     references:
       - docs/references/slime-rancher-2/creature-readability/slime-rancher-2-01.jpg
       - docs/references/slime-rancher-2/creature-readability/slime-rancher-2-01.md
@@ -2396,7 +2410,7 @@ steps:
     save_compat: Includes the migration re-verification from 7.2 against a real pre-phase save.
     risk: Low technically; high process risk if skipped.
     commit: "chore(qa): Garden Transit acceptance gate"
-    verification: Full scenario matrix from a clean save plus a migrated save; documented rubric scores.
+    verification: Full Chrome matrix passed from clean and migrated saves; 37 E2E tests passed, 15 superseded legacy/duplicate captures skipped explicitly, high-tier cap p95 91.5 ms and low-tier 45.7 ms, and no console/page errors in the acceptance gate. Required project gate also passed: typecheck, lint, 375 unit tests, build, and test:e2e.
     depends_on: ["7.13", "7.14"]
 
   - phase: "7.16"

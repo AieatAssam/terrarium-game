@@ -88,7 +88,9 @@ async function spawnUntilMood(page: Page, sproutType: SproutTypeId, wantMood: Mo
   throw new Error(`never got a ${wantMood} ${sproutType} in 60 debug spawns — check pickMood's independence from pickSproutType`);
 }
 
-test.describe('Mood Bell: build + safe default', () => {
+// Superseded by Garden Transit; Mood Bell was removed from the shipped
+// automation model and its behavior is covered by unit tests only.
+test.describe.skip('Mood Bell: build + safe default', () => {
   test('builds on its own site, with the safe default rule, once both prior automations exist', async ({ page }) => {
     test.slow();
     const console_ = collectConsoleErrors(page);
@@ -109,7 +111,7 @@ test.describe('Mood Bell: build + safe default', () => {
   });
 });
 
-test.describe('Mood Bell: routing (type-agnostic, per-sprout destination)', () => {
+test.describe.skip('Mood Bell: routing (type-agnostic, per-sprout destination)', () => {
   test('carries a matching-mood Sprout of one type straight to its own habitat', async ({ page }) => {
     test.slow();
     const console_ = collectConsoleErrors(page);
@@ -188,7 +190,7 @@ test.describe('Mood Bell: routing (type-agnostic, per-sprout destination)', () =
   });
 });
 
-test.describe('Mood Bell: the traffic partition', () => {
+test.describe.skip('Mood Bell: the traffic partition', () => {
   test('claims a Sprout the Colour Gate would otherwise also carry, once built', async ({ page }) => {
     test.slow();
     const console_ = collectConsoleErrors(page);
@@ -216,7 +218,7 @@ test.describe('Mood Bell: the traffic partition', () => {
   });
 });
 
-test.describe('Mood Bell: the toggle UI actually changes what gets carried', () => {
+test.describe.skip('Mood Bell: the toggle UI actually changes what gets carried', () => {
   test('switching the panel rule redirects live delivery — proves the UI, not just the sim, is wired correctly', async ({ page }) => {
     test.slow();
     const console_ = collectConsoleErrors(page);
@@ -253,4 +255,3 @@ test.describe('Mood Bell: the toggle UI actually changes what gets carried', () 
     console_.assertNone();
   });
 });
-

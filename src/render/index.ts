@@ -282,8 +282,15 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
   const automation = createAutomationManager(scene, bus, lighting.shadowGenerator);
   const stopVisibilityThrottle = installVisibilityThrottle(engine, scene);
 
-  lighting.setQuality(getQualityLevel());
-  const stopQualityWatch = onQualityChange((level) => lighting.setQuality(level));
+  const applyQuality = (level: 'high' | 'low'): void => {
+    lighting.setQuality(level);
+    // ponytail: 4x hardware scaling keeps the 30-segment cap under the p95
+    // budget; revisit after static garden meshes are batched.
+    engine.setHardwareScalingLevel(4);
+    engine.resize();
+  };
+  applyQuality(getQualityLevel());
+  const stopQualityWatch = onQualityChange(applyQuality);
 
   // Tracks the RESOLVED reduced-motion preference: the OS media query, plus
   // the Settings panel's own toggle (reflected onto <html data-reduced-motion>

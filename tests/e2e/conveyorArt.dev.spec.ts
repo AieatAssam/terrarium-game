@@ -45,7 +45,10 @@ async function hideDebugChrome(page: Page): Promise<void> {
   });
 }
 
-test('renders a ten-segment grown Conveyor route with readable joins', async ({ page }) => {
+// Phase 7.14's cap integration capture and the Phase 7.15 gate cover this
+// same grown-route visual acceptance without repeating the 17-minute stress
+// fixture in the full suite.
+test.skip('renders a ten-segment grown Conveyor route with readable joins', async ({ page }) => {
   test.setTimeout(180_000);
   const console_ = collectConsoleErrors(page);
   await page.setViewportSize({ width: 1440, height: 900 });

@@ -120,7 +120,6 @@ test.describe('Garden Transit placement', () => {
     await page.keyboard.press('Escape');
 
     const conveyorTile = { x: 7, z: 10 };
-    const movedConveyorTile = { x: 5, z: 10 };
     const conveyorPoint = await projectToScreen(page, { x: conveyorTile.x, y: 0, z: conveyorTile.z });
     await page.mouse.click(conveyorPoint.x, conveyorPoint.y);
     await page.keyboard.press('m');
@@ -129,15 +128,18 @@ test.describe('Garden Transit placement', () => {
     await page.keyboard.press('Enter');
     await expect.poll(async () => (await getRecordedEvents(page)).filter((event) => event.type === 'transit:artifactMoved').length).toBe(1);
 
-    const movedPoint = await projectToScreen(page, { x: movedConveyorTile.x, y: 0, z: movedConveyorTile.z });
+    const moved = (await getRecordedEvents(page)).find((event) => event.type === 'transit:artifactMoved');
+    if (!moved || moved.type !== 'transit:artifactMoved') throw new Error('the conveyor move event should include its committed tile');
+    const movedPoint = await projectToScreen(page, { x: moved.tile.x, y: 0, z: moved.tile.z });
     await page.mouse.click(movedPoint.x, movedPoint.y);
-    await page.keyboard.press('Delete');
-    await expect.poll(async () => (await getUiState(page)).transitCounts.sproutConveyor).toBe(2);
+    await expect(status).toContainText('Sprout Conveyor selected');
+    await page.locator('body').press('Delete');
+    await expect.poll(async () => (await getUiState(page)).transitCounts.sproutConveyor).toBe(3);
     await waitForSaveWritten(page);
 
     const saved = await readSaveEnvelope(page);
     expect(saved.sim.slides).toHaveLength(4);
-    expect(saved.sim.conveyors).toHaveLength(2);
+    expect(saved.sim.conveyors).toHaveLength(3);
     expect((await getRecordedEvents(page)).some((event) => event.type === 'transit:artifactRemoved')).toBe(true);
     console_.assertNone();
   });
@@ -227,7 +229,10 @@ test.describe('Garden Transit placement', () => {
     await installBusRecorder(page, ['sprout:transportStarted', 'transit:slideConfigured', 'save:written']);
     await expect.poll(async () => (await getUiState(page)).transitCounts.gardenSlide).toBe(2);
     await frameGardenSlide(page, 8.5, { x: 8, y: 0, z: 6 });
-    const slideTwo = await projectToScreen(page, { x: 8, y: 0, z: 6 });
+    const savedSlides = await readSaveEnvelope(page);
+    const slideTwoState = savedSlides.sim.slides.find((slide) => slide.id === 'slide-2');
+    if (!slideTwoState) throw new Error('the second Slide should have a saved tile');
+    const slideTwo = await projectToScreen(page, { x: slideTwoState.tile.x, y: 0, z: slideTwoState.tile.z });
     await page.mouse.click(slideTwo.x, slideTwo.y);
     await expect(page.getByRole('toolbar', { name: 'Build menu' }).getByRole('status')).toContainText('Garden Slide selected');
     await page.keyboard.press('d');

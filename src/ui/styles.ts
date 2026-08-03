@@ -309,7 +309,7 @@ export const UI_CSS = /* css */ `
 
 .tt-transit-panel {
   position: fixed;
-  right: 14px;
+  right: 400px;
   bottom: 98px;
   z-index: 21;
   width: min(360px, calc(100vw - 28px));
@@ -924,7 +924,7 @@ export const UI_CSS = /* css */ `
   font-weight: 700;
 }
 
-@media (max-width: 480px) {
+@media (max-width: 900px) {
   .tt-nav-btn span {
     display: none;
   }
@@ -941,6 +941,7 @@ export const UI_CSS = /* css */ `
     bottom: 86px;
   }
   .tt-transit-panel {
+    right: 14px;
     bottom: 170px;
   }
 }

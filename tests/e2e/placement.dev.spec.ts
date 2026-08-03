@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 import {
   collectConsoleErrors,
-  dragNurseryToHabitat,
+  debugSpawnAndGetId,
+  dragSproutToHabitat,
   getRecordedEvents,
   getUiState,
   installBusRecorder,
@@ -19,8 +20,8 @@ test.describe('manual placement via real pointer drag', () => {
     expect(before.dewdropTotal).toBe(0);
     expect(before.journalDiscovered).toEqual([]);
 
-    await page.click('[data-testid="debug-spawn-ember"]');
-    await dragNurseryToHabitat(page, 'emberNook');
+    const sproutId = await debugSpawnAndGetId(page, 'ember');
+    await dragSproutToHabitat(page, sproutId, 'emberNook');
 
     // Correct settle -> journal discovery fires immediately; Dewdrop income
     // accrues on the next tick (dewdropSystem), so poll rather than assert
@@ -57,9 +58,9 @@ test.describe('manual placement via real pointer drag', () => {
     await waitForDevHooks(page);
     await installBusRecorder(page, ['sprout:placed:correct', 'sprout:placed:incorrect']);
 
-    await page.click('[data-testid="debug-spawn-ember"]');
+    const sproutId = await debugSpawnAndGetId(page, 'ember');
     // Ember's correct home is emberNook; dropping on dewPond is a deliberate mismatch.
-    await dragNurseryToHabitat(page, 'dewPond');
+    await dragSproutToHabitat(page, sproutId, 'dewPond');
 
     await page.waitForFunction(() => (window.__ttEvents?.length ?? 0) > 0, undefined, { timeout: 5_000 });
     const events = await getRecordedEvents(page);
@@ -77,7 +78,7 @@ test.describe('manual placement via real pointer drag', () => {
     // placeable correctly afterwards — dragging from the Nursery again picks
     // it up (it's the only idle Sprout in this fresh save) and this time we
     // drop it on its real home.
-    await dragNurseryToHabitat(page, 'emberNook');
+    await dragSproutToHabitat(page, sproutId, 'emberNook');
     await page.waitForFunction(
       () => window.__ttEvents?.some((e) => e.type === 'sprout:placed:correct') ?? false,
       undefined,

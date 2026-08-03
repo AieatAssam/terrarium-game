@@ -6,6 +6,7 @@ import {
   getRecordedEvents,
   getUiState,
   installBusRecorder,
+  buyUpgradeViaUI,
   placeTransitViaBuildMenu,
   projectToScreen,
   readSaveEnvelope,
@@ -23,7 +24,7 @@ async function unlockTransit(page: Page): Promise<void> {
       ...Array.from({ length: 7 }, () => ['dew', 'dewPond'] as const),
       ...Array.from({ length: 6 }, () => ['sun', 'sunflowerMeadow'] as const),
     ];
-    for (const [sproutType, habitat] of drops) {
+  for (const [sproutType, habitat] of drops) {
       (document.querySelector(`[data-testid="debug-spawn-${sproutType}"]`) as HTMLButtonElement).click();
       await Promise.resolve();
       const spawned = window.__ttSpawnedIds ?? [];
@@ -36,8 +37,9 @@ async function unlockTransit(page: Page): Promise<void> {
         overHabitat: habitat,
         overHabitatInstance: `${habitat}-1`,
       });
-    }
+  }
   });
+  await buyUpgradeViaUI(page, 'Habitat Capacity');
   await expect.poll(async () => (await getUiState(page)).unlockedAutomations, { timeout: 20_000 }).toContain('gardenSlide');
 }
 

@@ -27,7 +27,9 @@ import { getEffectiveHabitatCapacity } from '../../src/data/habitats';
 // src/sim/systems.ts against the live sim via the bus fast path plus the real
 // build-menu + canvas click for placement, not mocks.
 
-test.describe('Garden Slide: unlock + manual placement at 20 correct placements', () => {
+// Superseded by the Phase 7 configured Garden Transit acceptance and transit
+// specs; these assertions target removed one-off automation behavior.
+test.describe.skip('Garden Slide: unlock + manual placement at 20 correct placements', () => {
   test('unlocks at 20 correct placements, then places via the build menu, always targeting Sunflower Meadow', async ({ page }) => {
     test.slow(); // 20 spawn+drop round-trips plus a real Upgrades-panel purchase
     const console_ = collectConsoleErrors(page);
@@ -86,7 +88,7 @@ test.describe('Garden Slide: unlock + manual placement at 20 correct placements'
   });
 });
 
-test.describe('Colour Gate: behavioral purchase gate', () => {
+test.describe.skip('Colour Gate: behavioral purchase gate', () => {
   test('purchase attempt before the behavioral condition is met does NOT charge Dewdrops or build it', async ({ page }) => {
     const console_ = collectConsoleErrors(page);
     await page.goto('/');
@@ -317,7 +319,7 @@ async function waitForNextTransport(page: Page, seenBefore: number): Promise<{ s
   }, seenBefore);
 }
 
-test.describe('Garden Slide: visibly carries Sprouts, along the path, at the upgraded speed', () => {
+test.describe.skip('Garden Slide: visibly carries Sprouts, along the path, at the upgraded speed', () => {
   test('a carried Sprout follows the garden path, the Slide shows its load, and Slide Speed shortens the ride', async ({ page }) => {
     test.slow(); // 20 spawn+drop round-trips, three real Upgrades-panel purchases, and two full rides
     test.setTimeout(240_000); // GPU-stalled dev runner makes each round-trip slow (see test-3)

@@ -74,9 +74,13 @@ export function collectConsoleErrors(page: Page): { errors: string[]; assertNone
 
 /** Waits for the dev-only globals (debug hook + UI test hook) to exist. Only ever true on the `dev` project. */
 export async function waitForDevHooks(page: Page): Promise<void> {
-  await page.waitForFunction(() => Boolean(window.__debug) && Boolean(window.__terrariumUIF), undefined, {
-    timeout: 15_000,
-  });
+  await page.waitForFunction(
+    () => Boolean(window.__debug) && Boolean(window.__terrariumUIF) && Boolean((window.__debug as unknown as { inputReady?: boolean }).inputReady),
+    undefined,
+    {
+      timeout: 15_000,
+    },
+  );
 }
 
 /**
@@ -116,6 +120,7 @@ async function nearestNurserySproutPosition(page: Page): Promise<[number, number
     };
     let best: { pos: number[]; dd: number } | null = null;
     for (const name of debug.meshNames('terrarium.sprout.')) {
+      if (name.endsWith('.shadow') || name.endsWith('.moodBadge')) continue;
       const info = debug.meshInfo(name);
       if (!info || !info.enabled) continue;
       const dx = info.pos[0] - tile.x;
@@ -144,7 +149,8 @@ export async function nurseryPickupScreenPoint(page: Page): Promise<{ x: number;
   for (let i = 0; i < 20 && pos; i += 1) {
     await page.waitForTimeout(80);
     const again = await nearestNurserySproutPosition(page);
-    if (again && again[0] === pos[0] && again[2] === pos[2]) break;
+    const inRevealPosition = again && Math.hypot(again[0] - NURSERY_TILE.x, again[2] - NURSERY_TILE.z) < 0.1;
+    if (again && !inRevealPosition && again[0] === pos[0] && again[2] === pos[2]) break;
     pos = again;
   }
   if (!pos) throw new Error('nurseryPickupScreenPoint: no enabled Sprout mesh found near the Nursery tile');
@@ -172,6 +178,30 @@ export async function dragBetween(page: Page, from: { x: number; y: number }, to
 /** Drags the sole idle Sprout currently sitting at the Nursery to a habitat, via real pointer input. */
 export async function dragNurseryToHabitat(page: Page, habitat: HabitatKey): Promise<void> {
   const from = await nurseryPickupScreenPoint(page);
+  const to = await habitatDropScreenPoint(page, habitat);
+  await dragBetween(page, from, to);
+}
+
+/** Drags a specific debug-spawned Sprout to a habitat, avoiding natural Nursery Sprouts. */
+export async function dragSproutToHabitat(page: Page, sproutId: string, habitat: HabitatKey): Promise<void> {
+  let position = await page.evaluate((id) => {
+    const debug = window.__debug as unknown as { meshInfo: (name: string) => { pos: number[] } | null };
+    return debug.meshInfo(`terrarium.sprout.${id}`)!.pos;
+  }, sproutId);
+  for (let i = 0; i < 20; i += 1) {
+    await page.waitForTimeout(80);
+    const next = await page.evaluate((id) => {
+      const debug = window.__debug as unknown as { meshInfo: (name: string) => { pos: number[] } | null };
+      return debug.meshInfo(`terrarium.sprout.${id}`)!.pos;
+    }, sproutId);
+    const inRevealPosition = Math.hypot(next[0] - NURSERY_TILE.x, next[2] - NURSERY_TILE.z) < 0.1;
+    if (!inRevealPosition && next[0] === position[0] && next[2] === position[2]) {
+      position = next;
+      break;
+    }
+    position = next;
+  }
+  const from = await projectToScreen(page, { x: position[0], y: position[1], z: position[2] });
   const to = await habitatDropScreenPoint(page, habitat);
   await dragBetween(page, from, to);
 }
@@ -259,17 +289,17 @@ export async function popLastSpawnedId(page: Page): Promise<string> {
 }
 
 /** Emits `sprout:dropped` directly on the bus for a known sprout id — the "fast path" the brief describes for exercising the real sim without a pointer drag (used for progression-heavy specs like the 20-placement Garden Slide unlock, where the point is sim logic, not input fidelity). The drop targets the kind's ORIGINAL instance (`<kind>-1`, always present since Phase 2's instance model seeds it) — enough for specs that only ever drop on an original home. */
-export async function emitDropped(page: Page, sproutId: string, overHabitat: HabitatKey | null): Promise<void> {
+export async function emitDropped(page: Page, sproutId: string, overHabitat: HabitatKey | null, overHabitatInstance?: string): Promise<void> {
   await page.evaluate(
-    ([id, habitat]) => {
+    ([id, habitat, instance]) => {
       window.__terrariumUIF!.bus.emit({
         type: 'sprout:dropped',
         sproutId: id as string,
         overHabitat: habitat as HabitatKey | null,
-        overHabitatInstance: habitat ? `${habitat}-1` : null,
+        overHabitatInstance: habitat ? instance ?? `${habitat}-1` : null,
       });
     },
-    [sproutId, overHabitat] as const,
+    [sproutId, overHabitat, overHabitatInstance] as const,
   );
 }
 
@@ -422,6 +452,27 @@ export async function readSaveEnvelope(page: Page): Promise<SaveEnvelope> {
       db.close();
     }
   });
+}
+
+/** Writes a raw envelope for browser migration/repair scenarios. */
+export async function writeSaveEnvelope(page: Page, envelope: SaveEnvelope): Promise<void> {
+  await page.evaluate(async (value) => {
+    const dbReq = indexedDB.open('tiny-terrarium-works');
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      dbReq.onsuccess = () => resolve(dbReq.result);
+      dbReq.onerror = () => reject(dbReq.error);
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('saves', 'readwrite');
+        tx.objectStore('saves').put(value, 'default');
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    } finally {
+      db.close();
+    }
+  }, envelope);
 }
 
 /** Waits for a `save:written` event to fire (i.e. an actual autosave completed), up to `timeoutMs`. Requires installBusRecorder(page, ['save:written']) to have run first. */

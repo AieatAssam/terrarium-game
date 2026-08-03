@@ -422,6 +422,8 @@ function buildConveyorVisual(
   layout: ConveyorVisualLayout,
   materials: ConveyorMaterials,
 ): Mesh {
+  // ponytail: one channel mesh per arm keeps the 30-segment cap responsive;
+  // restore inset/rim detail after repeated transit geometry is batched.
   const root = buildAutomationMesh(scene, name, SPROUT_CONVEYOR_BODY);
   root.material = materials.bedding;
   root.isPickable = false;
@@ -439,19 +441,6 @@ function buildConveyorVisual(
   centre.position.y = deckLocalY;
   centre.material = materials.channel;
   centre.isPickable = false;
-
-  const inset = bevelledSlab(
-    scene,
-    `${name}.channel.inset`,
-    SPROUT_CONVEYOR.channelInsetHalfWidth,
-    0.014,
-    SPROUT_CONVEYOR.channelInsetHalfWidth,
-    0.018,
-  );
-  inset.parent = root;
-  inset.position.y = deckLocalY + SPROUT_CONVEYOR.channelThickness / 2 + 0.012;
-  inset.material = materials.inset;
-  inset.isPickable = false;
 
   for (const direction of layout.connections) {
     const vector = directionVector(direction);
@@ -472,33 +461,6 @@ function buildConveyorVisual(
     arm.material = materials.channel;
     arm.isPickable = false;
 
-    const armInset = bevelledSlab(
-      scene,
-      `${name}.arm.${direction}.inset`,
-      SPROUT_CONVEYOR.channelInsetHalfWidth,
-      0.014,
-      SPROUT_CONVEYOR.armHalfLength,
-      0.016,
-    );
-    armInset.parent = armRoot;
-    armInset.position.y = SPROUT_CONVEYOR.channelThickness / 2 + 0.012;
-    armInset.material = materials.inset;
-    armInset.isPickable = false;
-
-    for (const side of [-1, 1]) {
-      const rim = bevelledSlab(
-        scene,
-        `${name}.arm.${direction}.rim.${side > 0 ? 'right' : 'left'}`,
-        SPROUT_CONVEYOR.rimWidth / 2,
-        SPROUT_CONVEYOR.rimHeight / 2,
-        SPROUT_CONVEYOR.armHalfLength,
-        0.018,
-      );
-      rim.parent = armRoot;
-      rim.position.set(side * (SPROUT_CONVEYOR.channelHalfWidth - SPROUT_CONVEYOR.rimWidth / 2), SPROUT_CONVEYOR.rimHeight / 2, 0);
-      rim.material = materials.rim;
-      rim.isPickable = false;
-    }
   }
 
   if (layout.flowDirection !== null && layout.connected) {
@@ -1210,7 +1172,6 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       marker.mesh = mesh;
       marker.bodyMaterial = conveyorMaterials.bedding;
       oldMesh.dispose(false, false);
-      shadowGenerator.addShadowCaster(mesh);
     }
   };
 
@@ -1248,10 +1209,12 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
         conveyorMaterials.bedding,
         contactPadMaterial,
       );
+      // ponytail: the body already carries bedding; batch these pads before
+      // re-enabling per-segment grounding at the cap.
+      grounding.terrainBed.setEnabled(false);
+      grounding.contactPad.setEnabled(false);
       grounding.terrainBed.position.set(world.x, TRANSIT_GROUNDING.beddingHeight / 2, world.z);
       grounding.contactPad.position.set(world.x, TRANSIT_GROUNDING.contactY, world.z);
-      shadowGenerator.addShadowCaster(mesh);
-      shadowGenerator.addShadowCaster(grounding.terrainBed);
       transitMarkers.set(id, {
         id,
         kind,

@@ -592,7 +592,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   };
 
   const handleKeyDown = (event: KeyboardEvent): void => {
-    if (event.target instanceof HTMLButtonElement) return;
+    if (event.target instanceof HTMLButtonElement && !(selectedTransit && (event.key === 'Delete' || event.key === 'Backspace'))) return;
     if (buildMode) {
       if (event.key === 'Escape') {
         event.preventDefault();

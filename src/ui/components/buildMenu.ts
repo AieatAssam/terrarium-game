@@ -130,6 +130,9 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
     'aria-live': 'polite',
     'data-placement-state': 'idle',
   });
+  const transitConfigPanel = el('fieldset', { className: 'tt-transit-config' });
+  let acceptedKindSelect: HTMLSelectElement | null = null;
+  let destinationSelect: HTMLSelectElement | null = null;
 
   const setPlacementStatus = (state: PlacementPreviewEventDetail['state'] | 'idle', message: string): void => {
     placementStatus.dataset.placementState = state;
@@ -331,28 +334,34 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
       }
     }
 
-    const configPanel = el('fieldset', { className: 'tt-transit-config' });
-    if (selected?.kind === 'transit' && selected.id === 'gardenSlide') {
-      configPanel.append(el('legend', {}, ['Garden Slide rule']));
-      const kindSelect = el('select', { 'aria-label': 'Accepted Sprout kind' }) as HTMLSelectElement;
-      kindSelect.append(el('option', { value: 'any' }, ['Any Sprout']));
+    const slideSelected = selected?.kind === 'transit' && selected.id === 'gardenSlide';
+    if (slideSelected && !acceptedKindSelect) {
+      transitConfigPanel.append(el('legend', {}, ['Garden Slide rule']));
+      acceptedKindSelect = el('select', { 'aria-label': 'Accepted Sprout kind' }) as HTMLSelectElement;
+      acceptedKindSelect.append(el('option', { value: 'any' }, ['Any Sprout']));
       for (const definition of Object.values(SPROUT_TYPES)) {
-        kindSelect.append(el('option', { value: definition.id }, [definition.displayName]));
+        acceptedKindSelect.append(el('option', { value: definition.id }, [definition.displayName]));
       }
-      kindSelect.value = transitConfig.acceptedKind;
-      kindSelect.addEventListener('change', () => setTransitConfig({ acceptedKind: kindSelect.value as TransitBuildConfig['acceptedKind'] }));
-      const destinationSelect = el('select', { 'aria-label': 'Slide destination' }) as HTMLSelectElement;
+      acceptedKindSelect.addEventListener('change', () => setTransitConfig({ acceptedKind: acceptedKindSelect?.value as TransitBuildConfig['acceptedKind'] }));
+      destinationSelect = el('select', { 'aria-label': 'Slide destination' }) as HTMLSelectElement;
       for (const habitatId of Object.keys(HABITATS) as HabitatId[]) {
         destinationSelect.append(el('option', { value: habitatId }, [HABITATS[habitatId].displayName]));
       }
-      destinationSelect.value = transitConfig.destination;
-      destinationSelect.addEventListener('change', () => setTransitConfig({ destination: destinationSelect.value as HabitatId }));
-      configPanel.append(
-        el('label', {}, ['Carries ', kindSelect]),
+      destinationSelect.addEventListener('change', () => setTransitConfig({ destination: destinationSelect?.value as HabitatId }));
+      transitConfigPanel.append(
+        el('label', {}, ['Carries ', acceptedKindSelect]),
         el('label', {}, ['To ', destinationSelect]),
       );
+    } else if (!slideSelected && acceptedKindSelect) {
+      transitConfigPanel.replaceChildren();
+      acceptedKindSelect = null;
+      destinationSelect = null;
     }
-    element.replaceChildren(...desiredAutomations, ...desiredTransit, ...desiredHabitats, configPanel, placementStatus);
+    if (slideSelected) {
+      acceptedKindSelect!.value = transitConfig.acceptedKind;
+      destinationSelect!.value = transitConfig.destination;
+    }
+    element.replaceChildren(...desiredAutomations, ...desiredTransit, ...desiredHabitats, transitConfigPanel, placementStatus);
   }
 
   preloadManifestIcons(Object.values(AUTOMATION_MANIFEST_KEY));
