@@ -42,7 +42,9 @@ import {
   COLOUR_GATE_LANE_HABITATS,
   COLOUR_GATE_LANE_LIST,
   COLOUR_GATE_TILE,
+  type ConveyorRoute,
   defaultColourGateLanes,
+  findConveyorRoute,
   findPathRoute,
   HABITAT_TILES,
   isValidAutomationSite,
@@ -98,23 +100,13 @@ function transitTileKey(tile: TileCoord): string {
   return `${tile.x},${tile.z}`;
 }
 
-function hasOrthogonalConveyorNeighbour(tile: TileCoord, conveyorKeys: ReadonlySet<string>): boolean {
-  return (
-    conveyorKeys.has(`${tile.x + 1},${tile.z}`) ||
-    conveyorKeys.has(`${tile.x - 1},${tile.z}`) ||
-    conveyorKeys.has(`${tile.x},${tile.z + 1}`) ||
-    conveyorKeys.has(`${tile.x},${tile.z - 1}`)
-  );
-}
-
 /**
- * Derives the legible §9.15 state for every transit artifact in O(artifacts).
- * This phase only owns model truth: active transport/backpressure details are
- * added later, while disabled, invalid, waiting and idle are already useful.
+ * Derives the legible §9.15 state for every transit artifact. Conveyor state is
+ * based on complete endpoint-to-endpoint routes, not mere adjacency: a loose
+ * segment is waiting/inert, while every segment on a valid Slide route is idle.
  */
 export function deriveTransitRouteStates(state: SimState): Record<string, RouteState> {
   const states: Record<string, RouteState> = {};
-  const conveyorKeys = new Set(state.conveyors.map((segment) => transitTileKey(segment.tile)));
   const duplicateConveyorKeys = new Set<string>();
   const seenConveyorKeys = new Set<string>();
   for (const segment of state.conveyors) {
@@ -122,13 +114,7 @@ export function deriveTransitRouteStates(state: SimState): Record<string, RouteS
     if (seenConveyorKeys.has(key)) duplicateConveyorKeys.add(key);
     seenConveyorKeys.add(key);
   }
-  const endpointKeys = new Set([
-    transitTileKey(NURSERY_TILE),
-    ...Object.values(HABITAT_TILES).map(transitTileKey),
-    ...state.slides.map((slide) => transitTileKey(slide.tile)),
-    ...state.automations.map((automation) => transitTileKey(automation.siteTile)),
-  ]);
-  const connected = (tile: TileCoord): boolean => endpointKeys.has(transitTileKey(tile)) || hasOrthogonalConveyorNeighbour(tile, conveyorKeys);
+  const activeSegments = new Set<string>();
 
   for (const slide of state.slides) {
     if (!slide.enabled) {
@@ -136,13 +122,15 @@ export function deriveTransitRouteStates(state: SimState): Record<string, RouteS
     } else if (!Object.prototype.hasOwnProperty.call(HABITAT_TILES, slide.destination)) {
       states[slide.id] = 'invalid';
     } else {
-      states[slide.id] = connected(slide.tile) ? 'idle' : 'waiting';
+      const route = nearestReachableSlideDestination(state, slide);
+      states[slide.id] = route ? 'idle' : 'waiting';
+      route?.route.segmentIds.forEach((id) => activeSegments.add(id));
     }
   }
 
   for (const segment of state.conveyors) {
     const key = transitTileKey(segment.tile);
-    states[segment.id] = duplicateConveyorKeys.has(key) ? 'invalid' : connected(segment.tile) ? 'idle' : 'waiting';
+    states[segment.id] = duplicateConveyorKeys.has(key) ? 'invalid' : activeSegments.has(segment.id) ? 'idle' : 'waiting';
   }
 
   for (const automation of state.automations) states[automation.id] = 'idle';
@@ -191,6 +179,33 @@ export function nearestReachableHabitatInstance(
     .filter((c): c is { instance: HabitatInstance; length: number } => c !== null)
     .sort((a, b) => a.length - b.length || a.instance.id.localeCompare(b.instance.id));
   return candidates[0]?.instance ?? null;
+}
+
+/**
+ * A Slide uses the player-built graph once any Conveyor exists. Empty graphs
+ * retain the pre-7.10 painted-path fallback so older Phase 7 flows remain
+ * playable while a player is still laying the first route.
+ */
+function slideRouteBetween(state: SimState, slide: SlideInstance, destination: HabitatInstance): ConveyorRoute | null {
+  if (state.conveyors.length > 0) return findConveyorRoute(slide.tile, destination.tile, state.conveyors);
+  const legacy = findPathRoute(slide.tile, destination.tile);
+  return legacy ? { tiles: legacy, segmentIds: [], length: legacy.length - 1 } : null;
+}
+
+interface SlideDestinationRoute {
+  instance: HabitatInstance;
+  route: ConveyorRoute;
+}
+
+function nearestReachableSlideDestination(state: SimState, slide: SlideInstance): SlideDestinationRoute | null {
+  return state.habitats
+    .filter((habitat) => habitat.habitatId === slide.destination && !instanceIsFull(state, habitat))
+    .map((instance) => {
+      const route = slideRouteBetween(state, slide, instance);
+      return route ? { instance, route } : null;
+    })
+    .filter((candidate): candidate is SlideDestinationRoute => candidate !== null)
+    .sort((a, b) => a.route.length - b.route.length || a.instance.id.localeCompare(b.instance.id))[0] ?? null;
 }
 
 /**
@@ -499,7 +514,6 @@ export function placeSlide(state: SimState, placement: SlidePlacement): TickResu
   const occupied = occupiedTransitTiles(state);
   if (!isValidAutomationSite('gardenSlide', placement.tile, occupied)) return { state, events: [] };
   if (!slideHasCompatiblePort(state, placement.tile)) return { state, events: [] };
-  if (!findPathRoute(placement.tile, HABITAT_TILES[placement.destination])) return { state, events: [] };
 
   const cost = nextGardenSlidePrice(state.slides.length);
   const slide: SlideInstance = {
@@ -605,8 +619,7 @@ export function configureSlide(state: SimState, slideId: string, configuration: 
   if (!slide || (slide.carryingSproutId && !configuration.enabled)) return { state, events: [] };
   if (
     (configuration.acceptedKind !== 'any' && !Object.prototype.hasOwnProperty.call(SPROUT_TYPES, configuration.acceptedKind)) ||
-    !Object.prototype.hasOwnProperty.call(HABITATS, configuration.destination) ||
-    !findPathRoute(slide.tile, HABITAT_TILES[configuration.destination])
+    !Object.prototype.hasOwnProperty.call(HABITATS, configuration.destination)
   ) {
     return { state, events: [] };
   }
@@ -1167,7 +1180,7 @@ export function slideAutomationSystem(state: SimState): TickResult {
       nextSlides.push(slide);
       continue;
     }
-    const destination = nearestReachableHabitatInstance(working, slide.tile, slide.destination);
+    const destination = nearestReachableSlideDestination(working, slide);
     if (!destination) {
       nextSlides.push(slide);
       continue;
@@ -1183,8 +1196,8 @@ export function slideAutomationSystem(state: SimState): TickResult {
       continue;
     }
     const fromTile = slide.tile;
-    const toTile = destination.tile;
-    const duration = transportDurationForKind('gardenSlide', working.upgradeLevels, tileDistance(fromTile, toTile));
+    const toTile = destination.instance.tile;
+    const duration = transportDurationForKind('gardenSlide', working.upgradeLevels, destination.route.length);
     sprouts = sprouts.map((item) => (item.id === sprout.id ? { ...item, state: 'transporting' as const, tile: toTile } : item));
     nextSlides.push({
       ...slide,

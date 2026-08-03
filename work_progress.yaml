@@ -2273,6 +2273,38 @@ decisions:
       fresh entry/mid/exit/reduced-motion screenshots and no console errors.
       Exact gate passed: typecheck, lint, 366 tests, and production build.
 
+  - owner: codex session 2026-08-03 (Phase 7.10 intent)
+    files:
+      [
+        src/sim/state.ts,
+        src/sim/systems.ts,
+        src/sim/layout.ts,
+        src/sim/ports.ts,
+        tests/unit/sim.transit.test.ts,
+        tests/unit/sim.layout.test.ts,
+        tests/e2e/conveyorRoute.dev.spec.ts,
+        plan.yaml,
+        docs/ARCHITECTURE.md,
+        docs/visual-qa/improvement-log.md,
+        work_progress.yaml,
+      ]
+    task: >
+      Replace static-path Conveyor placeholder connectivity with deterministic
+      state-backed segment composition. Three placed segments must form a
+      valid Slide-exit-to-habitat route; disconnected segments remain inert;
+      save-shaped state must reproduce the same route and matching Sprouts
+      must be delivered without per-frame route work.
+    status: >
+      DONE, 2026-08-03: added deterministic state-backed Conveyor BFS route
+      composition and switched Slide dispatch to owned routes whenever a garden
+      has Conveyor segments. Complete routes derive transport duration from
+      composed length; disconnected segments remain waiting/inert. Unit tests
+      cover three-segment delivery, loose-segment state, and JSON route
+      determinism. Focused conveyorRoute.dev.spec.ts passed in-browser with
+      complete/broken/repaired screenshots, save assertions, end-to-end Ember
+      delivery, and no console/page errors. Empty-conveyor compatibility
+      fallback remains documented for the staged migration.
+
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?
   - Should SPROUT_PICK_RADIUS/HOVER_MARGIN_TILES scale with viewport width

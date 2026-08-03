@@ -2085,7 +2085,7 @@ steps:
 
   - phase: "7.10"
     title: Implement the Sprout Conveyor segment entity and network composition
-    status: planned
+    status: completed
     why: >
       Conveyors are how a route reaches across a growing garden. GameRules
       §9.9's naming resolution makes this the single buildable route
@@ -2128,7 +2128,7 @@ steps:
     save_compat: Segments and their connection state persist; 7.2 backfills the legacy fixed network into them.
     risk: Medium-high — this replaces the fixed path network many modules read. Land behind the 7.2 migration.
     commit: "feat(sim): implement Sprout Conveyor segments and route composition"
-    verification: Three-segment route traversal; break/repair; save/load determinism.
+    verification: Three-segment route traversal; break/repair; save/load determinism; focused browser delivery e2e.
     depends_on: ["7.6", "7.8"]
 
   - phase: "7.11"

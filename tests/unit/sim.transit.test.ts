@@ -17,7 +17,7 @@ import {
   toggleSlide,
   unlockSystem,
 } from '../../src/sim/systems';
-import { GARDEN_PATH_TILES, GARDEN_SLIDE_TILE, HABITAT_TILES } from '../../src/sim/layout';
+import { findConveyorRoute, GARDEN_PATH_TILES, GARDEN_SLIDE_TILE, HABITAT_TILES } from '../../src/sim/layout';
 
 function transitFixture(): SimState {
   const state = createInitialSimState(17);
@@ -216,5 +216,51 @@ describe('Garden Transit domain model', () => {
     const conveyorMove = moveConveyor(conveyor.state, 'conveyor-7-8', { x: 7, z: 9 });
     expect(conveyorMove.state.conveyors.find((segment) => segment.id === 'conveyor-7-8')?.tile).toEqual({ x: 7, z: 9 });
     expect(conveyorMove.state.dewdrops).toBe(0);
+  });
+
+  it('composes a deterministic three-segment route and leaves a loose segment inert', () => {
+    const segments = [
+      { id: 'conveyor-8-6', tile: { x: 8, z: 6 }, builtAtTick: 0 },
+      { id: 'conveyor-7-6', tile: { x: 7, z: 6 }, builtAtTick: 0 },
+      { id: 'conveyor-6-6', tile: { x: 6, z: 6 }, builtAtTick: 0 },
+    ];
+    const route = findConveyorRoute({ x: 8, z: 7 }, { x: 6, z: 7 }, segments);
+    expect(route).toEqual({
+      tiles: [{ x: 8, z: 7 }, { x: 8, z: 6 }, { x: 7, z: 6 }, { x: 6, z: 6 }, { x: 6, z: 7 }],
+      segmentIds: segments.map((segment) => segment.id),
+      length: 4,
+    });
+    expect(findConveyorRoute({ x: 8, z: 7 }, { x: 6, z: 7 }, JSON.parse(JSON.stringify(segments)))).toEqual(route);
+    expect(findConveyorRoute({ x: 8, z: 7 }, HABITAT_TILES.emberNook, [...segments, { id: 'loose', tile: { x: 12, z: 12 } }])).toBeNull();
+
+    const slide = {
+      id: 'slide-1',
+      tile: { x: 8, z: 7 },
+      acceptedKind: 'ember' as const,
+      destination: 'emberNook' as const,
+      enabled: true,
+      builtAtTick: 0,
+    };
+    const state = {
+      ...createInitialSimState(17),
+      slides: [slide],
+      conveyors: [...segments, { id: 'loose', tile: { x: 12, z: 12 }, builtAtTick: 0 }],
+      habitats: [
+        ...createInitialSimState(17).habitats,
+        { id: 'emberNook-2', habitatId: 'emberNook' as const, tile: { x: 6, z: 7 }, count: 0, builtAtTick: 0 },
+      ],
+      sprouts: [{ id: 'ember-1', sproutType: 'ember' as const, mood: 'sunny' as const, tile: { x: 8, z: 8 }, state: 'idle' as const }],
+    };
+    const started = slideAutomationSystem(state);
+    expect(started.events).toEqual([
+      expect.objectContaining({ type: 'sprout:transportStarted', toTile: { x: 6, z: 7 }, durationMs: 1700 }),
+    ]);
+    expect(deriveTransitRouteStates(state)).toMatchObject({
+      'slide-1': 'idle',
+      'conveyor-8-6': 'idle',
+      'conveyor-7-6': 'idle',
+      'conveyor-6-6': 'idle',
+      loose: 'waiting',
+    });
   });
 });

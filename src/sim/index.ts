@@ -1,6 +1,13 @@
 export { GRID_SIZE, isWithinGrid, tileToWorld } from './grid';
 export type { TileCoord } from './grid';
-export { AUTOMATION_SITE_TILES, HABITAT_TILES, NURSERY_TILE, tileDistance } from './layout';
+export {
+  AUTOMATION_SITE_TILES,
+  findConveyorRoute,
+  HABITAT_TILES,
+  NURSERY_TILE,
+  tileDistance,
+} from './layout';
+export type { ConveyorRoute, ConveyorRouteSegment } from './layout';
 export {
   getColourGatePorts,
   getConveyorPorts,

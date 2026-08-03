@@ -110,8 +110,22 @@ approach, the authored raised `GARDEN_SLIDE.path`, and the destination route.
 The Sprout height follows the channel surface plus its own clearance, so the
 ride no longer floats at a fixed plinth height. Reduced motion quantises the
 same route into readable steps; the existing MotionConfig-driven Slide flow
-remains the state signal. Conveyors, in-world filter labels, route-state safety,
-and mid-ride save/restore remain the later 7.10–7.14 work.
+remains the state signal. In-world filter labels, route-state safety, and
+mid-ride save/restore remain later 7.12–7.14 work; Conveyor composition is
+recorded below.
+
+### Incremental as-built note — Phase 7.10 (2026-08-03)
+
+`src/sim/layout.ts` now exposes `findConveyorRoute`, a deterministic BFS over
+only owned Conveyor segment tiles and the two requested endpoint tiles. The
+Slide system uses that graph whenever a garden has placed Conveyors, chooses a
+reachable destination by route length, and derives its transport duration from
+the composed route rather than static painted-path distance. A complete route
+marks its segments idle; a loose segment remains waiting/inert. Removing a
+middle segment breaks the route, and restoring it reproduces the same ordered
+route after save/load. Empty-conveyor gardens retain the pre-7.10 fixed-path
+fallback as a compatibility seam; legacy Colour Gate/Mood Bell routing and
+Conveyor visual orientation remain later integration work.
 
 ## The two core shapes Phase 7 changes
 

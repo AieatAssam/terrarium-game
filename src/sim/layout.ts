@@ -266,6 +266,80 @@ export function findPathRoute(from: TileCoord, to: TileCoord, avoid?: ReadonlySe
   return null;
 }
 
+export interface ConveyorRouteSegment {
+  id: string;
+  tile: TileCoord;
+}
+
+export interface ConveyorRoute {
+  /** Ordered endpoint/segment tiles, including both endpoints. */
+  tiles: TileCoord[];
+  /** Segment ids in the same order as they appear between the endpoints. */
+  segmentIds: string[];
+  /** Orthogonal tile length, used by the simulation's transport clock. */
+  length: number;
+}
+
+/**
+ * Finds the shortest deterministic route through placed Conveyor tiles. The
+ * fixed painted path is deliberately not part of this graph: a route only
+ * becomes active when its endpoints are joined by owned segments. Neighbor
+ * order is stable so identical saved state always produces identical routing.
+ */
+export function findConveyorRoute(
+  from: TileCoord,
+  to: TileCoord,
+  segments: readonly ConveyorRouteSegment[],
+): ConveyorRoute | null {
+  const byKey = new Map<string, ConveyorRouteSegment>();
+  for (const segment of segments) {
+    const key = tileKeyOf(segment.tile);
+    if (byKey.has(key)) return null;
+    byKey.set(key, segment);
+  }
+
+  const fromKey = tileKeyOf(from);
+  const toKey = tileKeyOf(to);
+  if (fromKey === toKey) return { tiles: [from], segmentIds: [], length: 0 };
+  const allowed = new Set(byKey.keys());
+  allowed.add(fromKey);
+  allowed.add(toKey);
+  const cameFrom = new Map<string, string | null>([[fromKey, null]]);
+  let frontier: TileCoord[] = [from];
+  while (frontier.length > 0) {
+    const next: TileCoord[] = [];
+    for (const tile of frontier) {
+      for (const step of ROUTE_NEIGHBOUR_STEPS) {
+        const neighbour = { x: tile.x + step.x, z: tile.z + step.z };
+        const key = tileKeyOf(neighbour);
+        if (!allowed.has(key) || cameFrom.has(key)) continue;
+        cameFrom.set(key, tileKeyOf(tile));
+        if (key === toKey) {
+          const keys: string[] = [key];
+          let cursor = cameFrom.get(key);
+          while (cursor !== null && cursor !== undefined) {
+            keys.push(cursor);
+            cursor = cameFrom.get(cursor);
+          }
+          keys.reverse();
+          const tiles = keys.map((item) => {
+            const [x, z] = item.split(',').map(Number);
+            return { x, z };
+          });
+          return {
+            tiles,
+            segmentIds: keys.slice(1, -1).map((item) => byKey.get(item)?.id).filter((id): id is string => id !== undefined),
+            length: tiles.length - 1,
+          };
+        }
+        next.push(neighbour);
+      }
+    }
+    frontier = next;
+  }
+  return null;
+}
+
 /**
  * What a manually-placed automation at `siteTile` should target: the
  * NEAREST habitat reachable from the site tile over the real path network,

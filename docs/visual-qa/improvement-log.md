@@ -2,6 +2,23 @@
 
 ---
 
+## 2026-08-03 — Conveyor route composition, repair, and delivery
+
+Phase 7.10 browser pass: a real Slide route was built from six paid Conveyor
+segments to Ember Nook, the middle segment was removed and visibly left a gap,
+then the same tile was repaired. Save reads confirmed the composed route was
+deterministic in the complete and repaired states; a matching Ember Sprout
+then traversed the repaired route to the habitat with no console/page errors.
+
+Evidence: `docs/visual-qa/transit/conveyor-route-complete.png`,
+`conveyor-route-broken.png`, and `conveyor-route-repaired.png`.
+
+The temporary Conveyor marker remains the existing pre-7.11 silhouette; the
+grown-garden visual identity and directional joint art are intentionally owned
+by Phase 7.11.
+
+---
+
 ## 2026-08-03 — Garden Slide ride contact and readable motion
 
 Phase 7.9 browser pass: a real paid Garden Slide was placed, a filtered Star
