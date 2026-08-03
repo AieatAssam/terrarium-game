@@ -90,6 +90,10 @@ export interface TransitBuildConfig {
   destination: HabitatId;
 }
 
+export interface TransitSlidePreviewConfig extends TransitBuildConfig {
+  enabled: boolean;
+}
+
 export interface InputHandle {
   /** Screen point -> tile, for Subagent F's build menu to track where a ghost preview should appear. Null if the ray doesn't hit the ground plane (shouldn't normally happen with this camera). */
   screenToTile: (clientX: number, clientY: number) => TileCoord | null;
@@ -108,6 +112,7 @@ export interface InputHandle {
   enterHabitatBuildMode: (habitatId: HabitatId) => void;
   enterTransitBuildMode: (kind: PricedTransitKind) => void;
   setTransitConfig: (config: TransitBuildConfig) => void;
+  previewTransitConfiguration: (slideId: string, config: TransitSlidePreviewConfig | null) => void;
   /** Exits build mode (if active) and clears the ghost preview. Safe to call when not in build mode. */
   exitBuildMode: () => void;
   dispose: () => void;
@@ -746,6 +751,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     enterHabitatBuildMode,
     enterTransitBuildMode,
     setTransitConfig,
+    previewTransitConfiguration: (slideId, config) => renderer.automation.previewTransitConfiguration(slideId, config),
     exitBuildMode,
     dispose,
   };

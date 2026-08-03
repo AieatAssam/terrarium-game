@@ -2,6 +2,27 @@
 
 ---
 
+## 2026-08-03 — Accessible Garden Transit configuration
+
+Phase 7.12 adds a compact Garden transit rules panel for every placed Slide.
+The native selects, checkbox, details summary, visible focus ring, and Apply
+button are keyboard reachable; destination changes show a live dashed trace
+and a `Preview · Apply` world card before the saved rule changes. The world
+card repeats the icon, species text, direction arrow, and status line so the
+rule does not depend on colour. The panel copy distinguishes manual carry,
+Garden Slide routes, Sprout Conveyor joins, and Colour Gate decisions.
+
+Evidence: `docs/visual-qa/transit/config-{panel,in-world,desaturated,
+high-contrast,keyboard-focus,390}.png`. The focused browser scenario passed
+with no console/page errors; the saved Slide destination was confirmed as
+`dewPond` after keyboard selection and Apply.
+
+Scores: UI polish 4/5, accessibility 4/5, automation readability 4/5,
+desaturated/high-contrast clarity 4/5, mobile layout 4/5. Remaining debt:
+route-state-specific error copy and safe mid-ride editing belong to 7.13–7.16.
+
+---
+
 ## 2026-08-03 — Sprout Conveyor grown-garden identity
 
 Phase 7.11 replaced the temporary Conveyor plinth marker with low rounded

@@ -60,6 +60,7 @@ export const UI_CSS = /* css */ `
 .tt-hud,
 .tt-nav,
 .tt-buildmenu,
+.tt-transit-panel,
 .tt-onboarding,
 .tt-panel-overlay,
 .tt-toast-region,
@@ -302,6 +303,158 @@ export const UI_CSS = /* css */ `
 
 .tt-buildmenu-status[data-placement-state='blocked'] {
   border-style: double;
+}
+
+/* ---------- Garden transit rules ---------- */
+
+.tt-transit-panel {
+  position: fixed;
+  right: 14px;
+  bottom: 98px;
+  z-index: 21;
+  width: min(360px, calc(100vw - 28px));
+  color: var(--tt-text);
+}
+
+.tt-transit-panel[hidden] {
+  display: none;
+}
+
+.tt-transit-panel-toggle,
+.tt-transit-panel-body {
+  width: 100%;
+  border: 2px solid var(--tt-border);
+  border-radius: var(--tt-radius-md);
+  background: var(--tt-panel);
+  box-shadow: 0 4px 14px var(--tt-shadow);
+}
+
+.tt-transit-panel-toggle {
+  min-height: var(--tt-touch);
+  padding: 8px 14px;
+  text-align: left;
+  font-weight: 700;
+}
+
+.tt-transit-panel-body {
+  display: grid;
+  gap: 10px;
+  max-height: min(70vh, 560px);
+  margin-bottom: 8px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.tt-transit-panel-body h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.tt-transit-panel-copy,
+.tt-transit-card-status,
+.tt-transit-preview-copy {
+  margin: 0;
+  color: var(--tt-text-muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.tt-transit-card {
+  border: 1px solid var(--tt-border);
+  border-radius: var(--tt-radius-sm);
+  background: var(--tt-panel-raised);
+}
+
+.tt-transit-card summary {
+  display: flex;
+  min-height: var(--tt-touch);
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.tt-transit-card summary:focus-visible {
+  outline: 3px solid var(--tt-focus);
+  outline-offset: -3px;
+}
+
+.tt-transit-card-title {
+  min-width: 0;
+}
+
+.tt-transit-status-pill {
+  flex: 0 0 auto;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--tt-good);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tt-transit-status-pill[data-status='paused'] {
+  color: var(--tt-accent);
+}
+
+.tt-transit-card-body {
+  display: grid;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.tt-transit-card-body label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.78rem;
+}
+
+.tt-transit-card-body select {
+  min-height: 36px;
+  max-width: 190px;
+  border: 1px solid var(--tt-border);
+  border-radius: var(--tt-radius-sm);
+  background: var(--tt-bg);
+  color: var(--tt-text);
+  font: inherit;
+}
+
+.tt-transit-check {
+  justify-content: flex-start !important;
+}
+
+.tt-transit-check input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--tt-accent);
+}
+
+.tt-transit-preview-copy {
+  border-left: 3px solid var(--tt-info);
+  padding-left: 8px;
+  color: var(--tt-info);
+}
+
+.tt-transit-apply {
+  min-height: 40px;
+  border: 2px solid var(--tt-accent);
+  border-radius: var(--tt-radius-sm);
+  background: var(--tt-accent);
+  color: #2b1a05;
+  font-weight: 800;
+}
+
+.tt-transit-apply:disabled {
+  border-color: var(--tt-border);
+  background: var(--tt-panel);
+  color: var(--tt-text-muted);
+  cursor: not-allowed;
 }
 
 /* ---------- Dev-only debug panel ---------- */
@@ -780,6 +933,9 @@ export const UI_CSS = /* css */ `
      the nav instead of beside it rather than shrinking either further. */
   .tt-buildmenu {
     bottom: 86px;
+  }
+  .tt-transit-panel {
+    bottom: 170px;
   }
 }
 

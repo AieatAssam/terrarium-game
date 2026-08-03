@@ -45,6 +45,12 @@ import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
+import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
+import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
+import { Texture } from '@babylonjs/core/Materials/Textures/texture';
+import { Material } from '@babylonjs/core/Materials/material';
+import '@babylonjs/core/Engines/Extensions/engine.dynamicTexture';
+import '@babylonjs/core/Engines/WebGPU/Extensions/engine.dynamicTexture';
 import type { Scene } from '@babylonjs/core/scene';
 import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator';
 
@@ -828,11 +834,35 @@ interface TransitMarker {
   capMaterial: PBRMetallicRoughnessMaterial | null;
   tile: TileCoord;
   ownsBodyMaterial: boolean;
+  label: TransitLabelVisual | null;
+  previewLine: Mesh | null;
+}
+
+interface TransitSlideVisualState {
+  id: string;
+  tile: TileCoord;
+  acceptedKind: SproutTypeId | 'any';
+  destination: HabitatId;
+  enabled: boolean;
+}
+
+interface TransitSlidePreviewConfig {
+  acceptedKind: SproutTypeId | 'any';
+  destination: HabitatId;
+  enabled: boolean;
+}
+
+interface TransitLabelVisual {
+  mesh: Mesh;
+  texture: DynamicTexture;
+  material: PBRMetallicRoughnessMaterial;
+  drawn: string;
 }
 
 export interface AutomationManager {
   previewAt: (automationId: AutomationId, tile: TileCoord, status: boolean | 'valid' | 'invalid' | 'blocked') => void;
   previewTransitAt: (kind: PricedTransitKind, tile: TileCoord, status: 'valid' | 'invalid' | 'blocked') => void;
+  previewTransitConfiguration: (slideId: string, configuration: TransitSlidePreviewConfig | null) => void;
   clearPreview: () => void;
   /**
    * The nearest BUILT automation site within `marginTiles` of `world`, or
@@ -931,12 +961,74 @@ function activityOf(site: SiteMarker): SiteActivity {
   return 'idle';
 }
 
+const TRANSIT_LABEL_TEXTURE = { width: 640, height: 192 };
+const TRANSIT_LABEL_WIDTH = 2.05;
+const TRANSIT_LABEL_HEIGHT = 0.62;
+const TRANSIT_LABEL_Y = 1.18;
+const TRANSIT_PREVIEW_Y = 0.16;
+
+function highContrastLabels(): boolean {
+  return typeof document !== 'undefined' && document.documentElement?.getAttribute('data-contrast') === 'high';
+}
+
+function sproutLabelColour(acceptedKind: SproutTypeId | 'any'): string {
+  if (acceptedKind === 'any') return '#ffe08a';
+  return SPROUT_TYPES[acceptedKind]?.primaryColor ?? '#ffe08a';
+}
+
+function drawTransitLabel(
+  label: TransitLabelVisual,
+  state: TransitSlideVisualState,
+  preview: TransitSlidePreviewConfig | null,
+): void {
+  const config = preview ?? state;
+  const contrast = highContrastLabels();
+  const acceptedName = config.acceptedKind === 'any' ? 'ANY SPROUT' : SPROUT_TYPES[config.acceptedKind]?.displayName.toUpperCase() ?? 'ANY SPROUT';
+  const destinationName = HABITATS[config.destination]?.displayName.toUpperCase() ?? 'HOME';
+  const status = preview ? 'PREVIEW · APPLY' : config.enabled ? 'READY · ROUTE OPEN' : 'PAUSED · ENABLE TO RESUME';
+  const signature = `${acceptedName}/${destinationName}/${status}/${contrast}`;
+  if (label.drawn === signature) return;
+  label.drawn = signature;
+
+  const ctx = label.texture.getContext() as unknown as CanvasRenderingContext2D;
+  const { width, height } = TRANSIT_LABEL_TEXTURE;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = contrast ? '#ffffff' : 'rgba(22, 34, 25, 0.94)';
+  ctx.strokeStyle = contrast ? '#000000' : '#d8b56b';
+  ctx.lineWidth = contrast ? 10 : 7;
+  ctx.beginPath();
+  ctx.roundRect(8, 8, width - 16, height - 16, 22);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = contrast ? '#000000' : '#fff4d5';
+  ctx.font = '700 29px Segoe UI, sans-serif';
+  ctx.textBaseline = 'top';
+  ctx.fillText(`✦ GARDEN SLIDE  →  ${destinationName}`, 28, 24);
+  ctx.fillStyle = sproutLabelColour(config.acceptedKind);
+  ctx.beginPath();
+  ctx.arc(41, 97, 14, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = contrast ? '#000000' : '#fff4d5';
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  ctx.fillStyle = contrast ? '#000000' : '#fff4d5';
+  ctx.font = '700 27px Segoe UI, sans-serif';
+  ctx.fillText(`${acceptedName}  →  ${status}`, 70, 81);
+  label.texture.update();
+}
+
 export function createAutomationManager(scene: Scene, bus: EventBus, shadowGenerator: ShadowGenerator): AutomationManager {
   const sites = {} as Record<AutomationId, SiteMarker>;
   const transitMarkers = new Map<string, TransitMarker>();
   const conveyorMaterials = createConveyorMaterials(scene, 'terrarium.transit.conveyor');
-  let knownSlides: Array<{ id: string; tile: TileCoord }> = [];
+  let knownSlides: TransitSlideVisualState[] = [];
   let knownConveyors: Array<{ id: string; tile: TileCoord }> = [];
+  const previewConfigs = new Map<string, TransitSlidePreviewConfig>();
+  const previewRouteMaterial = new StandardMaterial('terrarium.transit.preview.route.mat', scene);
+  previewRouteMaterial.diffuseColor = new Color3(0.96, 0.78, 0.35);
+  previewRouteMaterial.emissiveColor = new Color3(0.34, 0.2, 0.06);
+  previewRouteMaterial.alpha = 0.76;
+  let contrastObserver: MutationObserver | undefined;
   const slideMaterials: GardenSlideMaterials = {
     channel: createWoodBodyMaterial(scene, 'terrarium.automation.slide.channel.mat', GARDEN_SLIDE_CHANNEL_COLOR.clone()),
     inset: createWoodBodyMaterial(scene, 'terrarium.automation.slide.inset.mat', GARDEN_SLIDE_INSET_COLOR.clone()),
@@ -952,6 +1044,71 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     { x: 0, z: 1 },
     { x: -1, z: 0 },
   ];
+
+  const updateTransitLabel = (marker: TransitMarker, state: TransitSlideVisualState): void => {
+    if (marker.kind !== 'gardenSlide') return;
+    if (!marker.label) {
+      const mesh = MeshBuilder.CreatePlane(`terrarium.transit.${marker.id}.rule`, {
+        width: TRANSIT_LABEL_WIDTH,
+        height: TRANSIT_LABEL_HEIGHT,
+      }, scene);
+      mesh.billboardMode = Mesh.BILLBOARDMODE_Y;
+      mesh.isPickable = false;
+      const texture = new DynamicTexture(
+        `terrarium.transit.${marker.id}.rule.tex`,
+        TRANSIT_LABEL_TEXTURE,
+        scene,
+        true,
+        Texture.TRILINEAR_SAMPLINGMODE,
+      );
+      texture.hasAlpha = true;
+      const material = new PBRMetallicRoughnessMaterial(`terrarium.transit.${marker.id}.rule.mat`, scene);
+      material.baseTexture = texture;
+      material.emissiveTexture = texture;
+      material.emissiveColor = new Color3(0.42, 0.42, 0.42);
+      material.metallic = 0;
+      material.roughness = 0.8;
+      material.backFaceCulling = false;
+      (material as unknown as { _useAlphaFromAlbedoTexture: boolean })._useAlphaFromAlbedoTexture = true;
+      material.transparencyMode = Material.MATERIAL_ALPHABLEND;
+      mesh.material = material;
+      marker.label = { mesh, texture, material, drawn: '' };
+    }
+    const world = tileToWorld(marker.tile);
+    marker.label.mesh.position.set(world.x, TRANSIT_LABEL_Y, world.z);
+    drawTransitLabel(marker.label, state, previewConfigs.get(marker.id) ?? null);
+  };
+
+  const clearTransitPreview = (marker: TransitMarker): void => {
+    marker.previewLine?.dispose();
+    marker.previewLine = null;
+    if (marker.label) marker.label.drawn = '';
+  };
+
+  const updateTransitPreview = (marker: TransitMarker, state: TransitSlideVisualState): void => {
+    clearTransitPreview(marker);
+    const preview = previewConfigs.get(marker.id);
+    if (!preview || marker.kind !== 'gardenSlide') {
+      updateTransitLabel(marker, state);
+      return;
+    }
+    const destinationTile = HABITAT_TILES[preview.destination];
+    const from = tileToWorld(marker.tile);
+    const to = tileToWorld(destinationTile);
+    const line = MeshBuilder.CreateDashedLines(`terrarium.transit.${marker.id}.preview`, {
+      points: [
+        new Vector3(from.x, TRANSIT_PREVIEW_Y, from.z),
+        new Vector3(to.x, TRANSIT_PREVIEW_Y, to.z),
+      ],
+      dashNb: 12,
+      dashSize: 0.18,
+      gapSize: 0.12,
+    }, scene);
+    line.isPickable = false;
+    line.material = previewRouteMaterial;
+    marker.previewLine = line;
+    updateTransitLabel(marker, state);
+  };
 
   const conveyorVisuals = (): Map<string, ConveyorVisualLayout> => {
     const endpointTiles = [
@@ -1025,13 +1182,19 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     }
   };
 
-  const addTransitMarker = (id: string, kind: PricedTransitKind, tile: TileCoord): void => {
+  const addTransitMarker = (
+    id: string,
+    kind: PricedTransitKind,
+    tile: TileCoord,
+    slideState?: TransitSlideVisualState,
+  ): void => {
     const existing = transitMarkers.get(id);
     if (existing) {
       existing.tile = tile;
       const world = tileToWorld(tile);
       existing.mesh.position.set(world.x, kind === 'sproutConveyor' ? SPROUT_CONVEYOR_BODY.centreY : AUTOMATION_BODIES.gardenSlide.centreY, world.z);
       existing.mesh.metadata = { kind: 'transit', transitKind: kind, artifactId: id, tile };
+      if (slideState) updateTransitPreview(existing, slideState);
       return;
     }
     if (kind === 'sproutConveyor') {
@@ -1053,6 +1216,8 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
         capMaterial: null,
         tile,
         ownsBodyMaterial: false,
+        label: null,
+        previewLine: null,
       });
       return;
     }
@@ -1085,12 +1250,28 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     mesh.position.set(world.x, body.centreY, world.z);
     mesh.metadata = { kind: 'transit', transitKind: kind, artifactId: id, tile };
     shadowGenerator.addShadowCaster(mesh);
-    transitMarkers.set(id, { id, kind, mesh, bodyMaterial, capMaterial, tile, ownsBodyMaterial: true });
+    const marker: TransitMarker = {
+      id,
+      kind,
+      mesh,
+      bodyMaterial,
+      capMaterial,
+      tile,
+      ownsBodyMaterial: true,
+      label: null,
+      previewLine: null,
+    };
+    transitMarkers.set(id, marker);
+    if (slideState) updateTransitPreview(marker, slideState);
   };
 
   const removeTransitMarker = (id: string): void => {
     const marker = transitMarkers.get(id);
     if (!marker) return;
+    marker.previewLine?.dispose();
+    marker.label?.mesh.dispose();
+    marker.label?.material.dispose();
+    marker.label?.texture.dispose();
     marker.mesh.dispose();
     if (marker.ownsBodyMaterial) marker.bodyMaterial.dispose();
     marker.capMaterial?.dispose();
@@ -1098,7 +1279,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
   };
 
   const syncTransitMarkers = (
-    slides: Array<{ id: string; tile: TileCoord }> | undefined,
+    slides: TransitSlideVisualState[] | undefined,
     conveyors: Array<{ id: string; tile: TileCoord }> | undefined,
   ): void => {
     knownSlides = slides ?? [];
@@ -1107,7 +1288,9 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     for (const slide of slides ?? []) next.set(slide.id, { kind: 'gardenSlide', tile: slide.tile });
     for (const conveyor of conveyors ?? []) next.set(conveyor.id, { kind: 'sproutConveyor', tile: conveyor.tile });
     for (const id of transitMarkers.keys()) if (!next.has(id)) removeTransitMarker(id);
-    for (const [id, marker] of next) addTransitMarker(id, marker.kind, marker.tile);
+    for (const [id, marker] of next) {
+      addTransitMarker(id, marker.kind, marker.tile, slides?.find((slide) => slide.id === id));
+    }
     refreshConveyorVisuals();
   };
 
@@ -1408,8 +1591,8 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
   const unsubscribers = [
     bus.subscribe('automation:built', (e) => markBuilt(e.automationId, e.siteTile, e.targetHabitatId ?? null)),
 
-    bus.subscribe('transit:slideBuilt', (e) => syncTransitMarkers([...knownSlides.filter((slide) => slide.id !== e.slide.id), { id: e.slide.id, tile: e.slide.tile }], knownConveyors)),
-    bus.subscribe('transit:slideConfigured', (e) => syncTransitMarkers([...knownSlides.filter((slide) => slide.id !== e.slide.id), { id: e.slide.id, tile: e.slide.tile }], knownConveyors)),
+    bus.subscribe('transit:slideBuilt', (e) => syncTransitMarkers([...knownSlides.filter((slide) => slide.id !== e.slide.id), e.slide], knownConveyors)),
+    bus.subscribe('transit:slideConfigured', (e) => syncTransitMarkers([...knownSlides.filter((slide) => slide.id !== e.slide.id), e.slide], knownConveyors)),
     bus.subscribe('transit:conveyorBuilt', (e) => syncTransitMarkers(knownSlides, [...knownConveyors.filter((conveyor) => conveyor.id !== e.conveyor.id), { id: e.conveyor.id, tile: e.conveyor.tile }])),
     bus.subscribe('transit:artifactMoved', (e) => syncTransitMarkers(
       e.artifactKind === 'gardenSlide'
@@ -1438,7 +1621,13 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     // placement) — an unlocked-but-unplaced automation has nothing to mark
     // built yet.
     bus.subscribe('save:loaded', (e) => {
-      syncTransitMarkers(e.snapshot.slides, e.snapshot.conveyors);
+      syncTransitMarkers((e.snapshot.slides ?? []).map((slide) => ({
+        id: slide.id,
+        tile: slide.tile,
+        acceptedKind: slide.acceptedKind ?? 'any',
+        destination: slide.destination ?? 'sunflowerMeadow',
+        enabled: slide.enabled ?? true,
+      })), e.snapshot.conveyors);
       for (const instanceId of e.snapshot.fullHabitatInstances ?? []) fullHabitatInstances.add(instanceId);
       for (const instance of e.snapshot.habitatInstances ?? []) registerHabitatInstance(instance.habitatId, instance.id);
       const targets = e.snapshot.automationTargets ?? {};
@@ -1762,6 +1951,22 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     updatePreview(tile, status);
   };
 
+  const previewTransitConfiguration = (slideId: string, configuration: TransitSlidePreviewConfig | null): void => {
+    const state = knownSlides.find((slide) => slide.id === slideId);
+    const marker = transitMarkers.get(slideId);
+    if (!state || !marker) return;
+    for (const id of previewConfigs.keys()) {
+      if (id === slideId) continue;
+      previewConfigs.delete(id);
+      const oldMarker = transitMarkers.get(id);
+      const oldState = knownSlides.find((slide) => slide.id === id);
+      if (oldMarker && oldState) updateTransitPreview(oldMarker, oldState);
+    }
+    if (configuration) previewConfigs.set(slideId, configuration);
+    else previewConfigs.delete(slideId);
+    updateTransitPreview(marker, state);
+  };
+
   const nearestBuiltWithin = (world: { x: number; z: number }, marginTiles: number): AutomationId | null => {
     let best: AutomationId | null = null;
     let bestDist = Infinity;
@@ -1808,10 +2013,24 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     return colourGateDestination(gateLanes, sproutType) !== null;
   };
 
+  if (typeof MutationObserver === 'function' && typeof document !== 'undefined' && document.documentElement) {
+    contrastObserver = new MutationObserver(() => {
+      for (const state of knownSlides) {
+        const marker = transitMarkers.get(state.id);
+        if (marker?.label) {
+          marker.label.drawn = '';
+          updateTransitLabel(marker, state);
+        }
+      }
+    });
+    contrastObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-contrast'] });
+  }
+
   const dispose = (): void => {
     for (const unsubscribe of unsubscribers) unsubscribe();
     scene.onBeforeRenderObservable.remove(activityObserver);
     stopReducedMotionWatch();
+    contrastObserver?.disconnect();
     clearPreview();
     for (const lamp of Object.values(laneLamps)) lamp.material.dispose(); // meshes are children of the Gate, disposed below
     deckMaterial.dispose();
@@ -1826,6 +2045,10 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       site.waitMaterial.dispose();
     }
     for (const marker of transitMarkers.values()) {
+      marker.previewLine?.dispose();
+      marker.label?.mesh.dispose();
+      marker.label?.material.dispose();
+      marker.label?.texture.dispose();
       marker.mesh.dispose();
       if (marker.ownsBodyMaterial) marker.bodyMaterial.dispose();
       marker.capMaterial?.dispose();
@@ -1840,9 +2063,10 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     slideMaterials.inset.dispose();
     slideMaterials.frame.dispose();
     slideMaterials.support.dispose();
+    previewRouteMaterial.dispose();
   };
 
-  return { previewAt, previewTransitAt, clearPreview, nearestBuiltWithin, nearestTransitWithin, matchesSprout, dispose };
+  return { previewAt, previewTransitAt, previewTransitConfiguration, clearPreview, nearestBuiltWithin, nearestTransitWithin, matchesSprout, dispose };
 }
 
 /** Whether a tile is free for an automation build (inside grid, not on the reserved nursery/habitat/path/other-site layout). Exposed for input's ghost-preview validity check. */

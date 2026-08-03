@@ -2187,7 +2187,7 @@ steps:
 
   - phase: "7.12"
     title: Build accessible transit configuration surfaces
-    status: planned
+    status: completed
     why: >
       GameRules §9.14 requires every rule to be readable at a glance in-world
       AND through an accessible panel, with colour plus icon plus text — never
@@ -2238,7 +2238,7 @@ steps:
     save_compat: Configuration changes persist immediately.
     risk: Medium. Rollback per file.
     commit: "feat(ui): accessible configuration for Slides and Conveyors"
-    verification: Keyboard-only configuration e2e; desaturated and high-contrast checks; both viewports.
+    verification: Focused transitConfig.dev.spec.ts passed with keyboard selection/Apply, saved destination assertion, live preview mesh assertion, desaturated/high-contrast screenshots, and 390px evidence; exact project gate passed.
     depends_on: ["7.8", "7.10"]
 
   - phase: "7.13"

@@ -27,6 +27,7 @@ import { createNav } from './components/nav';
 import { createOnboarding } from './components/onboarding';
 import { createReturnDialog } from './components/returnDialog';
 import { createSettingsPanel } from './components/settings';
+import { createTransitConfigPanel, type TransitConfigHooks } from './components/transitConfig';
 import { createUpgradesPanel } from './components/upgrades';
 import { el } from './dom';
 import { icons } from './icons';
@@ -44,6 +45,8 @@ export interface MountUIOptions extends BuildMenuHooks {
   onSetColourGateLane?: (lane: ColourGateLane, sproutType: SproutTypeId | null) => void;
   /** Sets the Mood Bell's single rule. */
   onSetMoodBellRule?: (mood: MoodId) => void;
+  onConfigureSlide?: TransitConfigHooks['onConfigureSlide'];
+  onPreviewSlide?: TransitConfigHooks['onPreviewSlide'];
   /** Dev-only debug controls — only rendered when isDev is true AND this is provided. */
   debug?: DebugPanelHooks;
 }
@@ -92,6 +95,10 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
     onEnterTransitBuildMode: options.onEnterTransitBuildMode,
     onTransitConfigChanged: options.onTransitConfigChanged,
     onExitBuildMode: options.onExitBuildMode,
+  });
+  const transitConfigPanel = createTransitConfigPanel(store, {
+    onConfigureSlide: options.onConfigureSlide,
+    onPreviewSlide: options.onPreviewSlide,
   });
   const toastRegion = createAchievementToastRegion(bus);
 
@@ -175,6 +182,7 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
     nurseryNote.element,
     onboarding.element,
     buildMenu.element,
+    transitConfigPanel.element,
     nav.element,
     toastRegion.element,
     journalPanel.overlay,
@@ -196,6 +204,7 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
       onboarding.dispose();
       hud.dispose();
       buildMenu.dispose();
+      transitConfigPanel.dispose();
       toastRegion.dispose();
       journalPanel.dispose();
       upgradesPanel.dispose();

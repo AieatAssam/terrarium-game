@@ -77,6 +77,10 @@ const ui = mountUI(document.body, bus, {
   onEnterHabitatBuildMode: (habitatId) => inputHandle?.enterHabitatBuildMode(habitatId),
   onEnterTransitBuildMode: (kind) => inputHandle?.enterTransitBuildMode(kind),
   onTransitConfigChanged: (config) => inputHandle?.setTransitConfig(config),
+  onConfigureSlide: (slideId, configuration) => {
+    void simRuntimePromise.then((sim) => sim.configureSlide(slideId, configuration));
+  },
+  onPreviewSlide: (slideId, configuration) => inputHandle?.previewTransitConfiguration(slideId, configuration),
   onExitBuildMode: () => inputHandle?.exitBuildMode(),
   debug: {
     spawnSprout: (sproutType) => {

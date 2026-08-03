@@ -20,6 +20,15 @@ export interface ColourGateLaneState {
   east: SproutTypeId | null;
 }
 
+/** The placed Slide rule the configuration panel is allowed to edit. */
+export interface TransitSlideUiState {
+  id: string;
+  tile: { x: number; z: number };
+  acceptedKind: SproutTypeId | 'any';
+  destination: HabitatId;
+  enabled: boolean;
+}
+
 export interface UiState {
   dewdropTotal: number;
   unlockedAutomations: Set<AutomationId>;
@@ -33,6 +42,8 @@ export interface UiState {
   placedAutomations: Set<AutomationId>;
   /** Counts of paid Transit artifacts currently owned, used by the build menu. */
   transitCounts: Record<PricedTransitKind, number>;
+  /** Placed Garden Slides, mirrored from sim-originated transit events. */
+  transitSlides: TransitSlideUiState[];
   upgradeLevels: Partial<Record<UpgradeId, number>>;
   unlockedAchievements: Set<AchievementId>;
   journalDiscovered: Set<SproutTypeId>;
@@ -80,6 +91,7 @@ function createInitialState(): UiState {
     unlockedAutomations: new Set(),
     placedAutomations: new Set(),
     transitCounts: { gardenSlide: 0, sproutConveyor: 0 },
+    transitSlides: [],
     upgradeLevels: {},
     unlockedAchievements: new Set(),
     journalDiscovered: new Set(),
@@ -97,6 +109,16 @@ function createInitialState(): UiState {
     habitatFullKinds: new Set(),
     nurseryRhythm: 'lively',
     waitingSproutCount: 0,
+  };
+}
+
+function slideUiStateOf(slide: TransitSlideUiState): TransitSlideUiState {
+  return {
+    id: slide.id,
+    tile: { ...slide.tile },
+    acceptedKind: slide.acceptedKind,
+    destination: slide.destination,
+    enabled: slide.enabled,
   };
 }
 
@@ -129,22 +151,38 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
       lastBuiltAutomation: event.automationId,
       placedAutomations: new Set(prev.placedAutomations).add(event.automationId),
     })),
-    on('transit:slideBuilt', (prev) => ({
+    on('transit:slideBuilt', (prev, event) => ({
       ...prev,
       lastBuiltAutomation: 'gardenSlide',
       placedAutomations: new Set(prev.placedAutomations).add('gardenSlide'),
       transitCounts: { ...prev.transitCounts, gardenSlide: prev.transitCounts.gardenSlide + 1 },
+      transitSlides: [...prev.transitSlides.filter((slide) => slide.id !== event.slide.id), slideUiStateOf(event.slide)],
+    })),
+    on('transit:slideConfigured', (prev, event) => ({
+      ...prev,
+      transitSlides: [...prev.transitSlides.filter((slide) => slide.id !== event.slide.id), slideUiStateOf(event.slide)],
     })),
     on('transit:conveyorBuilt', (prev) => ({
       ...prev,
       transitCounts: { ...prev.transitCounts, sproutConveyor: prev.transitCounts.sproutConveyor + 1 },
     })),
+    on('transit:artifactMoved', (prev, event) => event.artifactKind !== 'gardenSlide'
+      ? prev
+      : {
+          ...prev,
+          transitSlides: prev.transitSlides.map((slide) =>
+            slide.id === event.artifactId ? { ...slide, tile: { ...event.tile } } : slide,
+          ),
+        }),
     on('transit:artifactRemoved', (prev, event) => ({
       ...prev,
       transitCounts: {
         ...prev.transitCounts,
         [event.artifactKind]: Math.max(0, prev.transitCounts[event.artifactKind] - 1),
       },
+      transitSlides: event.artifactKind === 'gardenSlide'
+        ? prev.transitSlides.filter((slide) => slide.id !== event.artifactId)
+        : prev.transitSlides,
     })),
     on('upgrade:purchased', (prev, event) => ({
       ...prev,
@@ -209,6 +247,13 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
         gardenSlide: event.snapshot.slides?.length ?? 0,
         sproutConveyor: event.snapshot.conveyors?.length ?? 0,
       },
+      transitSlides: (event.snapshot.slides ?? []).map((slide) => slideUiStateOf({
+        id: slide.id,
+        tile: slide.tile,
+        acceptedKind: slide.acceptedKind ?? 'any',
+        destination: slide.destination ?? 'sunflowerMeadow',
+        enabled: slide.enabled ?? true,
+      })),
       upgradeLevels: { ...event.snapshot.upgradeLevels },
       unlockedAchievements: new Set(event.snapshot.unlockedAchievements),
       journalDiscovered: new Set(event.snapshot.journalDiscovered),

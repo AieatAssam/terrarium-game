@@ -2336,6 +2336,39 @@ decisions:
       intentionally topology-derived until later route-state/configuration
       phases add richer in-world status labels.
 
+  - owner: codex session 2026-08-03 (Phase 7.12 intent)
+    files:
+      [
+        src/ui/components/transitConfig.ts,
+        src/ui/uiState.ts,
+        src/ui/index.ts,
+        src/ui/styles.ts,
+        src/main.ts,
+        src/input/index.ts,
+        src/render/automation.ts,
+        tests/unit/ui.uiState.test.ts,
+        tests/e2e/transitConfig.dev.spec.ts,
+        plan.yaml,
+        docs/ARCHITECTURE.md,
+        docs/visual-qa/improvement-log.md,
+        work_progress.yaml,
+      ]
+    task: >
+      Add an accessible per-Slide configuration panel with keyboard-safe
+      controls, plain-language status, immediate save through SimRuntime, and
+      a temporary in-world destination preview. Keep manual carry, Garden
+      Slide, Sprout Conveyor, and Colour Gate roles explicit.
+    status: >
+      DONE, 2026-08-03: added the keyboard-reachable transit rules panel with
+      native kind/destination controls, enabled state, status/recovery copy,
+      focus restoration, and immediate SimRuntime persistence. Placed Slides
+      now mirror their rule in-world with icon/species/direction/status text;
+      draft destinations show a dashed world trace and preview label before
+      Apply. Focused transitConfig.dev.spec.ts passed at desktop and 390px,
+      including desaturated and high-contrast captures, with no console/page
+      errors. Exact gate passed: typecheck, lint, 367 unit tests, and build.
+      Route-state safety and mid-ride edit protection remain Phase 7.13+.
+
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?
   - Should SPROUT_PICK_RADIUS/HOVER_MARGIN_TILES scale with viewport width
