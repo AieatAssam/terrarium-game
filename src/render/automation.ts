@@ -93,6 +93,17 @@ import type { AutomationId, HabitatId, MoodId, SproutTypeId } from '../core/ids'
 // real drop, rather than a second, potentially-diverging guess.
 import { colourGateDestination, moodBellDestination } from '../sim/systems';
 import { findConveyorRoute } from '../sim/layout';
+import {
+  getColourGatePorts,
+  getConveyorPorts,
+  getHabitatPorts,
+  getNurseryPorts,
+  getSlidePorts,
+  portsJoined,
+  TRANSIT_PORT_FACINGS,
+  type Port,
+  type TransitPortFacing,
+} from '../sim/ports';
 
 const SITE_FALLBACK_COLOR: Record<AutomationId, Color3> = {
   gardenSlide: new Color3(0.55, 0.45, 0.7),
@@ -351,6 +362,12 @@ interface ConveyorVisualLayout {
   connected: boolean;
 }
 
+interface ConveyorVisualBuild {
+  mesh: Mesh;
+  arrows: Mesh[];
+  flowDirection: ConveyorDirection | null;
+}
+
 interface ConveyorMaterials {
   bedding: PBRMetallicRoughnessMaterial;
   channel: PBRMetallicRoughnessMaterial;
@@ -422,7 +439,7 @@ function buildConveyorVisual(
   name: string,
   layout: ConveyorVisualLayout,
   materials: ConveyorMaterials,
-): Mesh {
+): ConveyorVisualBuild {
   // ponytail: one channel mesh per arm keeps the 30-segment cap responsive;
   // restore inset/rim detail after repeated transit geometry is batched.
   const root = buildAutomationMesh(scene, name, SPROUT_CONVEYOR_BODY);
@@ -464,15 +481,19 @@ function buildConveyorVisual(
 
   }
 
+  const arrows: Mesh[] = [];
   if (layout.flowDirection !== null && layout.connected) {
-    const arrow = buildConveyorArrow(scene, `${name}.direction`, materials.marker);
-    arrow.parent = root;
-    arrow.position.set(
-      directionVector(layout.flowDirection).x * SPROUT_CONVEYOR.arrowOffset,
-      SPROUT_CONVEYOR.arrowY,
-      directionVector(layout.flowDirection).z * SPROUT_CONVEYOR.arrowOffset,
-    );
-    arrow.rotation.y = conveyorDirectionRotation(layout.flowDirection);
+    // Three staggered markers make the route read as moving even when no
+    // Sprout is currently aboard. Their positions are advanced per frame by
+    // the manager below; the mesh remains a tiny garden-grown leaf, not an
+    // industrial belt indicator.
+    for (let index = 0; index < 3; index += 1) {
+      const arrow = buildConveyorArrow(scene, `${name}.direction.${index}`, materials.marker);
+      arrow.parent = root;
+      arrow.position.set(0, SPROUT_CONVEYOR.arrowY, 0);
+      arrow.rotation.y = conveyorDirectionRotation(layout.flowDirection);
+      arrows.push(arrow);
+    }
   } else {
     // A loose segment is deliberately capped with a visible planted bud: it
     // reads as waiting for a neighbour, not as a broken industrial machine.
@@ -487,7 +508,7 @@ function buildConveyorVisual(
     bud.isPickable = false;
   }
 
-  return root;
+  return { mesh: root, arrows, flowDirection: layout.flowDirection };
 }
 
 interface GardenSlideMaterials {
@@ -831,6 +852,8 @@ interface TransitMarker {
   contactPad: Mesh;
   label: TransitLabelVisual | null;
   previewLine: Mesh | null;
+  directionArrows: Mesh[];
+  directionArrowFlow: ConveyorDirection | null;
 }
 
 interface TransitSlideVisualState {
@@ -1120,6 +1143,53 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     return 0;
   };
 
+  const facingToDirection = (facing: TransitPortFacing): ConveyorDirection => {
+    if (facing === 'east') return 1;
+    if (facing === 'south') return 2;
+    if (facing === 'west') return 3;
+    return 0;
+  };
+
+  const transitNeighbourPorts = (movingId?: string): Port[] => {
+    const ports: Port[] = [getNurseryPorts().outboundDock];
+    for (const habitatId of Object.keys(HABITAT_TILES) as HabitatId[]) {
+      ports.push(getHabitatPorts(`${habitatId}-1`, habitatId).approachDock);
+    }
+    for (const slide of knownSlides) {
+      if (slide.id === movingId) continue;
+      for (const facing of TRANSIT_PORT_FACINGS) {
+        const derived = getSlidePorts(slide, facing);
+        ports.push(derived.entryPort, derived.exitPort);
+      }
+    }
+    for (const conveyor of knownConveyors) {
+      if (conveyor.id === movingId) continue;
+      for (const facing of TRANSIT_PORT_FACINGS) {
+        const derived = getConveyorPorts(conveyor, facing);
+        ports.push(derived.entryPort, derived.exitPort);
+      }
+    }
+    const gate = sites.colourGate;
+    if (gate?.built && gate.siteTile) {
+      const derived = getColourGatePorts(gate.siteTile);
+      ports.push(derived.inboundPort, derived.lanePorts.west, derived.lanePorts.east);
+    }
+    return ports;
+  };
+
+  const localTransitFlow = (kind: PricedTransitKind, tile: TileCoord, movingId?: string): ConveyorDirection | null => {
+    const neighbours = transitNeighbourPorts(movingId);
+    for (const facing of TRANSIT_PORT_FACINGS) {
+      const candidate = kind === 'gardenSlide'
+        ? getSlidePorts({ id: 'render-preview', tile }, facing)
+        : getConveyorPorts({ id: 'render-preview', tile }, facing);
+      if (neighbours.some((port) => portsJoined(candidate.entryPort, port) || portsJoined(candidate.exitPort, port))) {
+        return facingToDirection(facing);
+      }
+    }
+    return null;
+  };
+
   const conveyorVisuals = (): { conveyors: Map<string, ConveyorVisualLayout>; slides: Map<string, ConveyorDirection> } => {
     const conveyors = new Map<string, ConveyorVisualLayout>();
     const slides = new Map<string, ConveyorDirection>();
@@ -1134,9 +1204,9 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
           .find((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
       const slideDirection = route
         ? directionBetween(route.tiles[0], route.tiles[1])
-        : sourceRoute && sourceRoute.tiles.length > 1
-          ? directionBetween(sourceRoute.tiles[sourceRoute.tiles.length - 2], sourceRoute.tiles[sourceRoute.tiles.length - 1])
-          : null;
+          : sourceRoute && sourceRoute.tiles.length > 1
+            ? directionBetween(sourceRoute.tiles[sourceRoute.tiles.length - 2], sourceRoute.tiles[sourceRoute.tiles.length - 1])
+          : localTransitFlow('gardenSlide', slide.tile, slide.id);
       if (slideDirection !== null) slides.set(slide.id, slideDirection);
       if (!route || route.segmentIds.length === 0) continue;
       for (let index = 0; index < route.segmentIds.length; index += 1) {
@@ -1155,6 +1225,17 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
         });
       }
     }
+    for (const conveyor of knownConveyors) {
+      if (conveyors.has(conveyor.id)) continue;
+      const flowDirection = localTransitFlow('sproutConveyor', conveyor.tile, conveyor.id);
+      if (flowDirection !== null) {
+        conveyors.set(conveyor.id, {
+          connections: [flowDirection],
+          flowDirection,
+          connected: true,
+        });
+      }
+    }
     return { conveyors, slides };
   };
 
@@ -1166,17 +1247,20 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
         continue;
       }
       const oldMesh = marker.mesh;
-      const mesh = buildConveyorVisual(
+      const built = buildConveyorVisual(
         scene,
         `terrarium.transit.${marker.kind}.${marker.id}`,
         visuals.conveyors.get(marker.id) ?? { connections: [], flowDirection: null, connected: false },
         conveyorMaterials,
       );
+      const mesh = built.mesh;
       const world = tileToWorld(marker.tile);
       mesh.position.set(world.x, SPROUT_CONVEYOR_BODY.centreY, world.z);
       mesh.metadata = { kind: 'transit', transitKind: marker.kind, artifactId: marker.id, tile: marker.tile };
       marker.mesh = mesh;
       marker.bodyMaterial = conveyorMaterials.bedding;
+      marker.directionArrows = built.arrows;
+      marker.directionArrowFlow = built.flowDirection;
       oldMesh.dispose(false, false);
     }
   };
@@ -1199,12 +1283,13 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       return;
     }
     if (kind === 'sproutConveyor') {
-      const mesh = buildConveyorVisual(
+      const built = buildConveyorVisual(
         scene,
         `terrarium.transit.${kind}.${id}`,
         conveyorVisuals().conveyors.get(id) ?? { connections: [], flowDirection: null, connected: false },
         conveyorMaterials,
       );
+      const mesh = built.mesh;
       const world = tileToWorld(tile);
       mesh.position.set(world.x, SPROUT_CONVEYOR_BODY.centreY, world.z);
       mesh.metadata = { kind: 'transit', transitKind: kind, artifactId: id, tile };
@@ -1232,6 +1317,8 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
         contactPad: grounding.contactPad,
         label: null,
         previewLine: null,
+        directionArrows: built.arrows,
+        directionArrowFlow: built.flowDirection,
       });
       return;
     }
@@ -1286,6 +1373,8 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       contactPad: grounding.contactPad,
       label: null,
       previewLine: null,
+      directionArrows: [],
+      directionArrowFlow: null,
     };
     transitMarkers.set(id, marker);
     if (slideState) updateTransitPreview(marker, slideState);
@@ -1776,6 +1865,20 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     const deltaMs = Math.min(120, Math.max(0, now - lastFrameMs));
     lastFrameMs = now;
 
+    // Conveyors are transit markers rather than automation sites, so they do
+    // not use the site's parcel procession below. Keep their directional
+    // arrows visibly flowing at a calm idle pace; reduced motion freezes them
+    // in a readable stagger instead of removing the route cue.
+    for (const marker of transitMarkers.values()) {
+      if (marker.kind !== 'sproutConveyor' || marker.directionArrowFlow === null) continue;
+      const vector = directionVector(marker.directionArrowFlow);
+      for (let index = 0; index < marker.directionArrows.length; index += 1) {
+        const phase = ambient > 0 ? (now * 0.00022 + index / marker.directionArrows.length) % 1 : (index + 0.5) / marker.directionArrows.length;
+        const distance = (phase - 0.5) * 0.34;
+        marker.directionArrows[index].position.set(vector.x * distance, SPROUT_CONVEYOR.arrowY, vector.z * distance);
+      }
+    }
+
     for (const id of Object.keys(sites) as AutomationId[]) {
       const site = sites[id];
       if (!site.built) continue;
@@ -1918,13 +2021,13 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       const materials = createConveyorMaterials(scene, 'terrarium.automation.preview.conveyor');
       previewConveyorMaterials = Object.values(materials);
       for (const material of previewConveyorMaterials) material.alpha = 0.55;
-      const mesh = buildConveyorVisual(
+      const built = buildConveyorVisual(
         scene,
         'terrarium.automation.preview.conveyor',
         { connections: [0, 1, 2, 3], flowDirection: 2, connected: true },
         materials,
       );
-      previewMesh = mesh;
+      previewMesh = built.mesh;
       previewBodyMaterial = materials.bedding;
       previewCentreY = SPROUT_CONVEYOR_BODY.centreY;
       previewKey = key;

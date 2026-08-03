@@ -128,6 +128,7 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
         return (
           m && {
             pos: m.getAbsolutePosition().asArray(),
+            rotationY: Number(m.rotation.y.toFixed(4)),
             scaling: m.scaling.asArray(),
             visibility: m.visibility,
             isVisible: m.isVisible,

@@ -113,6 +113,8 @@ export interface InputHandle {
    * previews via `habitats.previewAt` and commits via `onPlaceHabitat`. */
   enterHabitatBuildMode: (habitatId: HabitatId) => void;
   enterTransitBuildMode: (kind: PricedTransitKind) => void;
+  enterTransitMoveMode: (kind: PricedTransitKind, id: string) => void;
+  clearTransitSelection: () => void;
   setTransitConfig: (config: TransitBuildConfig) => void;
   previewTransitConfiguration: (slideId: string, config: TransitSlidePreviewConfig | null) => void;
   /** Exits build mode (if active) and clears the ghost preview. Safe to call when not in build mode. */
@@ -649,11 +651,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     }
     if (event.key.toLowerCase() === 'm' && selectedTransit) {
       event.preventDefault();
-      const moving = selectedTransit;
-      buildCursorTile = transitTiles.get(moving.id)?.tile ?? GARDEN_SLIDE_TILE;
-      buildMode = { kind: 'transit', id: moving.kind, movingId: moving.id };
-      setSelectedTransit(null);
-      previewTransit(moving.kind, buildCursorTile, moving.id);
+      beginTransitMove(selectedTransit);
     }
   };
 
@@ -730,6 +728,13 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     previewTransit(kind, buildCursorTile);
   };
 
+  const beginTransitMove = (moving: { id: string; kind: PricedTransitKind }): void => {
+    buildCursorTile = transitTiles.get(moving.id)?.tile ?? GARDEN_SLIDE_TILE;
+    buildMode = { kind: 'transit', id: moving.kind, movingId: moving.id };
+    setSelectedTransit(null);
+    previewTransit(moving.kind, buildCursorTile, moving.id);
+  };
+
   const setTransitConfig = (config: TransitBuildConfig): void => {
     if (buildMode?.kind !== 'transit' || buildMode.id !== 'gardenSlide') return;
     buildMode = { ...buildMode, config };
@@ -763,6 +768,8 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     enterBuildMode,
     enterHabitatBuildMode,
     enterTransitBuildMode,
+    enterTransitMoveMode: (kind, id) => beginTransitMove({ kind, id }),
+    clearTransitSelection: () => setSelectedTransit(null),
     setTransitConfig,
     previewTransitConfiguration: (slideId, config) => renderer.automation.previewTransitConfiguration(slideId, config),
     exitBuildMode,

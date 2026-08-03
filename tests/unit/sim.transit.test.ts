@@ -231,6 +231,22 @@ describe('Garden Transit domain model', () => {
     expect(conveyorMove.state.dewdrops).toBe(0);
   });
 
+  it('moves a Slide away and back to its original port site', () => {
+    let state = {
+      ...createInitialSimState(17),
+      correctPlacementCount: UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements,
+      dewdrops: 500,
+    };
+    state = unlockSystem(state).state;
+    state = placeSlide(state, { tile: GARDEN_SLIDE_TILE, destination: 'sunflowerMeadow' }).state;
+
+    const moved = moveSlide(state, 'slide-1', { x: 8, z: 12 });
+    expect(moved.state.slides[0]?.tile).toEqual({ x: 8, z: 12 });
+
+    const returned = moveSlide(moved.state, 'slide-1', GARDEN_SLIDE_TILE);
+    expect(returned.state.slides[0]?.tile).toEqual(GARDEN_SLIDE_TILE);
+  });
+
   it('composes a deterministic three-segment route and leaves a loose segment inert', () => {
     const segments = [
       { id: 'conveyor-8-6', tile: { x: 8, z: 6 }, builtAtTick: 0 },

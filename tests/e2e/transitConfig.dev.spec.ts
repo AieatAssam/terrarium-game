@@ -52,6 +52,24 @@ test('configures a Slide by keyboard with live preview, status copy, contrast, a
   await page.mouse.click(slidePoint.x, slidePoint.y);
 
   const rules = page.getByRole('region', { name: 'Transit rules' });
+  await expect(rules.getByRole('button', { name: 'Move Garden Slide 1' })).toBeVisible();
+  await expect(rules.getByRole('button', { name: 'Pause Garden Slide 1' })).toBeVisible();
+  await expect(rules.getByRole('button', { name: 'Delete Garden Slide 1' })).toBeVisible();
+  await rules.getByRole('button', { name: /Transit rules/ }).click();
+  await rules.getByLabel('Garden Slide 1 destination').selectOption('emberNook');
+  await rules.getByRole('button', { name: 'Apply changes' }).click();
+  await expect.poll(async () => (await readSaveEnvelope(page)).sim.slides[0]?.destination).toBe('emberNook');
+
+  await rules.getByRole('button', { name: 'Move Garden Slide 1' }).click();
+  for (let i = 0; i < 5; i += 1) await page.locator('body').press('ArrowDown');
+  await page.locator('body').press('Enter');
+  await expect.poll(async () => (await readSaveEnvelope(page)).sim.slides[0]?.tile).toEqual({ x: 8, z: 12 });
+  const rotatedSlide = await page.evaluate(() => (window.__debug as unknown as { meshInfo: (name: string) => { rotationY: number } | null }).meshInfo('terrarium.transit.gardenSlide.slide-1'));
+  expect(rotatedSlide?.rotationY).toBe(3.1416);
+
+  const movedSlidePoint = await projectToScreen(page, { x: 8, y: 0, z: 12 });
+  await page.mouse.click(movedSlidePoint.x, movedSlidePoint.y);
+
   await expect(rules.getByRole('button', { name: /Transit rules/ })).toBeVisible();
   await rules.getByRole('button', { name: /Transit rules/ }).press('Enter');
   const destination = rules.getByLabel('Garden Slide 1 destination');
@@ -76,8 +94,17 @@ test('configures a Slide by keyboard with live preview, status copy, contrast, a
   await page.evaluate(() => { document.documentElement.style.filter = ''; document.documentElement.dataset.contrast = 'high'; });
   await page.screenshot({ path: 'docs/visual-qa/transit/config-high-contrast.png' });
 
+  await page.locator('.tt-debug-panel').evaluate((element) => element.remove());
+  await page.locator('.tt-toast-region').evaluate((element) => element.remove());
+  await page.locator('.tt-nursery-note').evaluate((element) => element.remove());
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => { document.documentElement.style.filter = ''; document.documentElement.dataset.contrast = 'normal'; });
+  const mobileNavIcons = await page.locator('.tt-nav-btn:not([hidden]) .tt-nav-icon svg').evaluateAll((icons) => icons.map((icon) => {
+    const rect = icon.getBoundingClientRect();
+    return { width: rect.width, height: rect.height };
+  }));
+  expect(mobileNavIcons.length).toBeGreaterThan(0);
+  expect(mobileNavIcons.every(({ width, height }) => width > 0 && height > 0)).toBe(true);
   await rules.getByRole('button', { name: /Transit rules/ }).click();
   await expect(rules.getByLabel('Garden Slide 1 destination')).toBeVisible();
   await page.screenshot({ path: 'docs/visual-qa/transit/config-390.png' });

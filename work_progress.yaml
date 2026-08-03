@@ -19,7 +19,7 @@ meta:
   head: HEAD fix(render): restore crisp visual grounding
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
-  tests_passing: "378 unit tests / 36 files (re-verified 2026-08-03 via the exact required gate — all green)"
+  tests_passing: "379 unit tests / 36 files (re-verified 2026-08-03 via the exact required gate — all green)"
   check_command: npm run typecheck && npm run lint && npm test && npm run build
   note: >
     This meta block had gone stale twice (read a98b552/258 tests through
@@ -2570,6 +2570,49 @@ decisions:
       the build menu. Focused transitConfig and conveyorRoute browser tests
       passed with no console/page errors. Exact project gate passed: typecheck,
       lint, 378 unit tests, and production build. Changes remain uncommitted.
+
+  - owner: codex session 2026-08-03 (transit direction regression follow-up)
+    files:
+      [
+        src/sim/ports.ts,
+        src/sim/systems.ts,
+        src/input/index.ts,
+        src/render/automation.ts,
+        src/render/index.ts,
+        src/main.ts,
+        src/ui/index.ts,
+        src/ui/components/nav.ts,
+        src/ui/components/transitConfig.ts,
+        src/ui/styles.ts,
+        tests/unit/sim.ports.test.ts,
+        tests/unit/sim.transit.test.ts,
+        tests/e2e/conveyorRoute.dev.spec.ts,
+        tests/e2e/transitConfig.dev.spec.ts,
+        docs/visual-qa/improvement-log.md,
+        work_progress.yaml,
+      ]
+    task: >
+      Reproduce the remaining report that Slides do not rotate after placement
+      or movement and Conveyor direction animation is absent. Add visible
+      Move, toggle, and Delete controls for selected transit objects so mobile
+      players are not forced to use keyboard shortcuts. Trace the saved route
+      endpoints through simulation and rendering, restore one canonical
+      route-derived facing/flow signal, verify placement at the original
+      location plus visible directional movement, and repair mobile nav icon
+      visibility in a fresh browser session.
+    status: >
+      DONE, 2026-08-03: Slide rotation now falls back to the actual compatible
+      local port when a complete route is not composed; movement to the
+      Sunflower approach and back to the original Nursery port are covered by
+      browser and sim tests. Conveyors render three staggered directional
+      markers with live flow animation, while reduced motion freezes the cue.
+      Selected Slides and Conveyors expose touch-sized Move/Delete actions and
+      Slides expose Pause/Enable. Mobile nav icons were restored by hiding only
+      label spans; visible SVG bounds are asserted at 390px and upgrade icons
+      remain present. Focused transit browser scenarios passed, fresh-browser
+      checks found no console errors beyond the pre-existing Mood Bell
+      placeholder warning, and the exact project gate passed with 379 unit
+      tests and a successful production build. Changes remain uncommitted.
 
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?

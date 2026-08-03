@@ -31,7 +31,7 @@ export function createNav(items: NavItem[]): NavHandle {
   const element = el('nav', { className: 'tt-nav', 'aria-label': 'Garden menu' });
 
   const buttons = items.map((item) => {
-    const iconSpan = el('span', { 'aria-hidden': 'true', html: item.iconHtml() });
+    const iconSpan = el('span', { className: 'tt-nav-icon', 'aria-hidden': 'true', html: item.iconHtml() });
     const button = el(
       'button',
       {
@@ -41,7 +41,7 @@ export function createNav(items: NavItem[]): NavHandle {
         'aria-expanded': false,
         'aria-label': item.label,
       },
-      [iconSpan, el('span', {}, [item.label])],
+      [iconSpan, el('span', { className: 'tt-nav-label' }, [item.label])],
     );
     button.addEventListener('click', () => item.open(button));
     element.append(button);

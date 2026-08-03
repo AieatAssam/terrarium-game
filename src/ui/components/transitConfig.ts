@@ -1,6 +1,7 @@
 import type { HabitatId, SproutTypeId } from '../../core/ids';
 import { HABITATS } from '../../data/habitats';
 import { SPROUT_TYPES } from '../../data/sproutTypes';
+import type { PricedTransitKind } from '../../data/transit';
 import { el } from '../dom';
 import type { TransitBuildConfig } from './buildMenu';
 import type { TransitSlideUiState, UiStateStore } from '../uiState';
@@ -12,6 +13,9 @@ export interface TransitSlideConfiguration extends TransitBuildConfig {
 export interface TransitConfigHooks {
   onConfigureSlide?: (slideId: string, configuration: TransitSlideConfiguration) => void;
   onPreviewSlide?: (slideId: string, configuration: TransitSlideConfiguration | null) => void;
+  onMoveTransit?: (kind: PricedTransitKind, id: string) => void;
+  onRemoveTransit?: (kind: PricedTransitKind, id: string) => void;
+  onToggleTransit?: (kind: PricedTransitKind, id: string) => void;
 }
 
 export interface TransitConfigHandle {
@@ -49,6 +53,7 @@ export function createTransitConfigPanel(store: UiStateStore, hooks: TransitConf
   const drafts = new Map<string, TransitSlideConfiguration>();
   let open = false;
   let selectedTransitId: string | null = null;
+  let selectedTransitKind: PricedTransitKind | null = null;
   let lastFocusedControl: string | null = null;
   let lastSlidesSignature = '';
 
@@ -89,7 +94,7 @@ export function createTransitConfigPanel(store: UiStateStore, hooks: TransitConf
     if (!force && signature === lastSlidesSignature) return;
     lastSlidesSignature = signature;
     rememberFocus();
-    if (!selectedSlide && !recovery) {
+    if (!selectedTransitId && !recovery) {
       element.hidden = true;
       element.replaceChildren();
       return;
@@ -97,18 +102,61 @@ export function createTransitConfigPanel(store: UiStateStore, hooks: TransitConf
     element.hidden = false;
     element.replaceChildren();
 
-    const toggle = el('button', {
-      type: 'button',
-      className: 'tt-transit-panel-toggle',
-      'aria-expanded': String(open),
-      'aria-controls': 'tt-transit-rules',
-      'data-transit-focus': 'toggle',
-    }, [selectedSlide ? `Transit rules · ${slideName(selectedSlide.id)}` : 'Transit update']);
-    toggle.addEventListener('click', () => {
-      open = !open;
-      render(true);
-    });
-    element.append(toggle);
+    if (selectedSlide || recovery) {
+      const toggle = el('button', {
+        type: 'button',
+        className: 'tt-transit-panel-toggle',
+        'aria-expanded': String(open),
+        'aria-controls': 'tt-transit-rules',
+        'data-transit-focus': 'toggle',
+      }, [selectedSlide ? `Transit rules · ${slideName(selectedSlide.id)}` : 'Transit update']);
+      toggle.addEventListener('click', () => {
+        open = !open;
+        render(true);
+      });
+      element.append(toggle);
+    }
+
+    const selectedKind = selectedSlide ? 'gardenSlide' : selectedTransitKind;
+    if (selectedTransitId && selectedKind) {
+      const label = selectedKind === 'gardenSlide' ? slideName(selectedTransitId) : `Sprout Conveyor ${selectedTransitId.replace(/^conveyor-/, '')}`;
+      const actions = el('div', { className: 'tt-transit-actions', 'aria-label': `${label} controls` });
+      const move = el('button', {
+        type: 'button',
+        className: 'tt-transit-action',
+        'data-testid': 'transit-move',
+        'aria-label': `Move ${label}`,
+        'data-transit-focus': 'move',
+      }, ['Move']);
+      move.addEventListener('click', () => hooks.onMoveTransit?.(selectedKind, selectedTransitId!));
+      const remove = el('button', {
+        type: 'button',
+        className: 'tt-transit-action tt-transit-action-danger',
+        'data-testid': 'transit-delete',
+        'aria-label': `Delete ${label}`,
+        'data-transit-focus': 'delete',
+      }, ['Delete']);
+      remove.addEventListener('click', () => hooks.onRemoveTransit?.(selectedKind, selectedTransitId!));
+      actions.append(move);
+      if (selectedKind === 'gardenSlide' && selectedSlide) {
+        const toggle = el('button', {
+          type: 'button',
+          className: 'tt-transit-action',
+          'data-testid': 'transit-toggle',
+          'aria-label': `${selectedSlide.enabled ? 'Pause' : 'Enable'} ${label}`,
+          'data-transit-focus': 'toggle-transit',
+        }, [selectedSlide.enabled ? 'Pause' : 'Enable']);
+        toggle.addEventListener('click', () => hooks.onToggleTransit?.(selectedKind, selectedTransitId!));
+        actions.append(toggle);
+      }
+      actions.append(remove);
+      element.append(actions);
+      if (!selectedSlide) {
+        restoreFocus();
+        return;
+      }
+    }
+
     if (!open) {
       restoreFocus();
       return;
@@ -205,7 +253,8 @@ export function createTransitConfigPanel(store: UiStateStore, hooks: TransitConf
   const unsubscribe = store.subscribe(() => render());
   const handleSelection = (event: Event): void => {
     const detail = (event as CustomEvent<{ id: string; kind: string } | null>).detail;
-    selectedTransitId = detail?.kind === 'gardenSlide' ? detail.id : null;
+    selectedTransitId = detail?.id ?? null;
+    selectedTransitKind = detail?.kind === 'gardenSlide' || detail?.kind === 'sproutConveyor' ? detail.kind : null;
     open = false;
     render(true);
   };

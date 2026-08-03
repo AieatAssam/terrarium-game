@@ -92,6 +92,17 @@ test('composes, breaks, and repairs a saved Conveyor route', async ({ page }) =>
   const completeRoute = findConveyorRoute(GARDEN_SLIDE_TILE, HABITAT_TILES.emberNook, complete.sim.conveyors);
   expect(completeRoute?.segmentIds).toEqual(routeTiles.map((tile) => `conveyor-${tile.x}-${tile.z}`));
   await frameRoute(page);
+  const directionArrow = await page.evaluate(() => {
+    const names = (window.__debug as unknown as { meshNames: (filter: string) => string[] }).meshNames(
+      'terrarium.transit.sproutConveyor.conveyor-8-6.direction.',
+    );
+    return names[0] ?? null;
+  });
+  expect(directionArrow).not.toBeNull();
+  const arrowBefore = await page.evaluate((name) => (window.__debug as unknown as { meshInfo: (meshName: string) => { pos: number[] } | null }).meshInfo(name!), directionArrow);
+  await page.waitForTimeout(250);
+  const arrowAfter = await page.evaluate((name) => (window.__debug as unknown as { meshInfo: (meshName: string) => { pos: number[] } | null }).meshInfo(name!), directionArrow);
+  expect(arrowBefore?.pos).not.toEqual(arrowAfter?.pos);
   await page.locator('.tt-debug-panel').evaluate((element) => element.remove());
   await page.locator('.tt-toast-region').evaluate((element) => element.remove());
   await page.locator('.tt-nursery-note').evaluate((element) => element.remove());

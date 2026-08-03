@@ -47,6 +47,9 @@ export interface MountUIOptions extends BuildMenuHooks {
   onSetMoodBellRule?: (mood: MoodId) => void;
   onConfigureSlide?: TransitConfigHooks['onConfigureSlide'];
   onPreviewSlide?: TransitConfigHooks['onPreviewSlide'];
+  onMoveTransit?: TransitConfigHooks['onMoveTransit'];
+  onRemoveTransit?: TransitConfigHooks['onRemoveTransit'];
+  onToggleTransit?: TransitConfigHooks['onToggleTransit'];
   /** Dev-only debug controls — only rendered when isDev is true AND this is provided. */
   debug?: DebugPanelHooks;
 }
@@ -99,6 +102,9 @@ export function mountUI(root: HTMLElement, bus: EventBus, options: MountUIOption
   const transitConfigPanel = createTransitConfigPanel(store, {
     onConfigureSlide: options.onConfigureSlide,
     onPreviewSlide: options.onPreviewSlide,
+    onMoveTransit: options.onMoveTransit,
+    onRemoveTransit: options.onRemoveTransit,
+    onToggleTransit: options.onToggleTransit,
   });
   const toastRegion = createAchievementToastRegion(bus);
 

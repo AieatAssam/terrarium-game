@@ -612,3 +612,34 @@ Scores: interaction clarity 4/5; route readability 4/5; contextual UI 4/5;
 visual grounding 4/5. Remaining limitation: saved transit direction remains
 derived from the live graph rather than persisted, deliberately preserving the
 v8 save shape.
+
+## 2026-08-03 — Transit direction and touch controls follow-up
+
+Fixed the remaining placement/readability gap. Slide rotation now falls back to
+the actual compatible neighbouring port when a full destination route is not
+yet composed, so moving a Slide to a different approach rotates the physical
+channel immediately and returning to the original port remains valid. Conveyor
+segments now show three staggered route markers that continuously travel in
+the derived flow direction; reduced motion freezes the stagger rather than
+removing the cue. Selected Slides and Conveyors expose visible Move and Delete
+controls, with Slide Pause/Enable beside them, so touch players do not need
+keyboard shortcuts.
+
+Evidence: `transit/config-390.png` shows the mobile action bar and rules panel;
+`transit/conveyor-route-complete.png` shows the active staggered direction
+markers. Fresh local-browser verification found no console errors (only the
+pre-existing missing `structure.moodBell.base` asset warning). Focused route
+and transit configuration scenarios passed, including Slide rotation/move,
+return-to-route movement in sim tests, touch action controls, and directional
+marker motion between frames.
+
+Scores: automation readability 4/5; touch accessibility 4/5; directional
+feedback 4/5; selection/action clarity 4/5. Remaining limitation: direction is
+still derived from the live graph rather than persisted, preserving the v8
+save shape.
+
+The same mobile capture exposed a CSS selector regression: the responsive nav
+rule hid every button span, including the SVG icon wrapper. Nav buttons now
+separate `.tt-nav-icon` from `.tt-nav-label`; mobile hides labels only and
+keeps visible SVGs at 22×22px. The focused mobile scenario asserts non-zero
+icon bounds for every visible nav item; upgrade-panel icons remain 30×30px.

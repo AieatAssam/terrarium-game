@@ -101,6 +101,17 @@ const ui = mountUI(document.body, bus, {
     void simRuntimePromise.then((sim) => sim.configureSlide(slideId, configuration));
   },
   onPreviewSlide: (slideId, configuration) => inputHandle?.previewTransitConfiguration(slideId, configuration),
+  onMoveTransit: (kind, id) => inputHandle?.enterTransitMoveMode(kind, id),
+  onRemoveTransit: (kind, id) => {
+    inputHandle?.clearTransitSelection();
+    void simRuntimePromise.then((sim) => {
+      if (kind === 'gardenSlide') sim.removeSlide(id);
+      else sim.removeConveyor(id);
+    });
+  },
+  onToggleTransit: (kind, id) => {
+    if (kind === 'gardenSlide') void simRuntimePromise.then((sim) => sim.toggleSlide(id));
+  },
   onExitBuildMode: () => inputHandle?.exitBuildMode(),
   debug: {
     spawnSprout: (sproutType) => {

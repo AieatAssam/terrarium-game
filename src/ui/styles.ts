@@ -203,7 +203,15 @@ export const UI_CSS = /* css */ `
   height: 22px;
 }
 
-.tt-nav-btn span {
+.tt-nav-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+}
+
+.tt-nav-btn .tt-nav-label {
   font-size: 0.62rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -334,6 +342,33 @@ export const UI_CSS = /* css */ `
   padding: 8px 14px;
   text-align: left;
   font-weight: 700;
+}
+
+.tt-transit-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 2px solid var(--tt-border);
+  border-radius: var(--tt-radius-md);
+  background: var(--tt-panel);
+  box-shadow: 0 4px 14px var(--tt-shadow);
+}
+
+.tt-transit-action {
+  min-height: var(--tt-touch);
+  padding: 8px 10px;
+  border: 1px solid var(--tt-border);
+  border-radius: var(--tt-radius-sm);
+  background: var(--tt-panel-raised);
+  color: var(--tt-text);
+  font-weight: 800;
+}
+
+.tt-transit-action-danger {
+  border-color: var(--tt-accent-warm);
+  color: var(--tt-accent-warm);
 }
 
 .tt-transit-panel-body {
@@ -934,7 +969,7 @@ export const UI_CSS = /* css */ `
 }
 
 @media (max-width: 900px) {
-  .tt-nav-btn span {
+  .tt-nav-btn .tt-nav-label {
     display: none;
   }
   .tt-nav-btn {
