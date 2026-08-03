@@ -168,6 +168,18 @@ duplicate claims, and save repair; focused browser coverage passed for removal
 and disablement with no console/page errors. The full-destination and reload
 browser matrix remains part of the Phase 7.15 acceptance gate.
 
+### Incremental as-built note — Phase 7.14 (2026-08-03)
+
+Transit visuals now consume the existing Phase 6 wood, stone, painted-metal,
+and foliage PBR families. Every placed Slide and Conveyor gets a shared-family
+bevelled terrain bed plus a parentless contact-occlusion disc; both follow the
+artifact through moves and are disposed on removal. The ground/path receivers
+remain owned by `world.ts`, so dynamic transit does not add a second terrain
+system or scatter into gameplay tiles. The cap browser pass covered four
+Slides and thirty Conveyors at desktop/high and mobile/low, with no console or
+page errors; the full accessibility, persistence, and cross-tier matrix is
+still the Phase 7.15 gate.
+
 ## The two core shapes Phase 7 changes
 
 1. **`AutomationInstance` (src/sim/state.ts:50-70) is currently one-per-

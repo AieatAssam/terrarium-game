@@ -15,11 +15,11 @@
 #     truthful "blocked" entry is worth more than an optimistic "done".
 
 meta:
-  updated: 2026-08-02
-  head: latest Phase 7.8 multiple configured Slides commit (main; 52a0c98 = Phase 2 buildable habitats; 67bea9b = dependent-doc reconciliation, fecefe8 = Garden Transit rules+plan revision)
+  updated: 2026-08-03
+  head: 80b4a78 Phase 7.14 Garden Transit material and terrain integration (codex/phase-7.11; 52a0c98 = Phase 2 buildable habitats)
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
-  tests_passing: "365 unit tests / 35 files (re-verified 2026-08-02 via the exact required gate — all green)"
+  tests_passing: "375 unit tests / 36 files (re-verified 2026-08-03 via the exact required gate — all green)"
   check_command: npm run typecheck && npm run lint && npm test && npm run build
   note: >
     This meta block had gone stale twice (read a98b552/258 tests through
@@ -2402,6 +2402,36 @@ decisions:
       disablement evidence with no console/page errors. Full-destination and
       reload browser scenarios remain in Phase 7.15. Exact project gate
       passed: typecheck, lint, 375 unit tests, and production build.
+
+  - owner: codex session 2026-08-03 (Phase 7.14 intent)
+    files:
+      [
+        src/render/automation.ts,
+        src/render/propDims.ts,
+        src/render/index.ts,
+        src/main.ts,
+        tests/e2e/transitIntegration.dev.spec.ts,
+        docs/MATERIAL_LIBRARY.md,
+        plan.yaml,
+        docs/ARCHITECTURE.md,
+        docs/visual-qa/improvement-log.md,
+        work_progress.yaml,
+      ]
+    task: >
+      Integrate Garden Slides and Sprout Conveyors into the established
+      material, lighting, shadow, and terrain-bedding recipes without hiding
+      Sprouts, drop targets, or habitat occupancy. Validate at the Phase 1
+      caps and preserve the low-quality frame budget.
+    status: >
+      DONE, 2026-08-03: extended the existing Phase 6 foliage/wood/stone PBR
+      families to every placed Slide and Conveyor through a shared bevelled
+      terrain bed and a parentless contact-occlusion disc. Move, remove, and
+      dispose paths keep both grounding meshes in sync without adding world
+      scatter or a second terrain system. Focused transitIntegration.dev.spec.ts
+      passed with four Slides and thirty Conveyors, desktop/high and 390px/low
+      screenshots, a 60-frame p95 smoke sample below 100 ms in both tiers, and
+      no console/page errors. Exact project gate remains to be re-run after
+      these docs/test-hook changes; Phase 7.15 owns the full matrix.
 
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?

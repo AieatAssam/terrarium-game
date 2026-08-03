@@ -370,6 +370,20 @@ material's albedo, which is why they are kept inside a narrow ~0.78–1.28 range
   parented pad would sink through the ground on the down stroke and tilt with
   the machine, which is exactly the floating read it exists to prevent.
 
+### Transit terrain bedding (`src/render/automation.ts`, Phase 7.14)
+- Physical character: a low rooted turf/soil edge that belongs to the garden
+  rather than a second machine surface. It reuses the shared `foliage` family
+  already used by Conveyor channel bedding; Slides and Conveyors therefore
+  share one procedural material instead of adding a per-artifact texture set.
+- Geometry: one bevelled low slab per placed transit artifact, sized from the
+  artifact footprint plus `TRANSIT_GROUNDING.beddingMargin`. The slab receives
+  the normal shadow-map pass and moves/removes with the artifact, while the
+  separate contact pad remains parentless and stable on the terrain.
+- Cap/performance: 4 Slides + 30 Conveyors adds 34 small grounding slabs and
+  34 shared-material contact discs. The focused browser cap pass kept the
+  95th-percentile frame sample below 100 ms on both the high desktop and low
+  mobile evidence runs; Phase 7.15 remains the full multi-scenario budget gate.
+
 ### Scenery: instanced stone (`createSceneryStoneMaterial`, `src/render/world.ts`)
 
 Pebbles, boulders, kerb blocks and basin rim stones — every stone in the

@@ -267,6 +267,17 @@ export const SPROUT_CONVEYOR = {
   arrowOffset: 0.13,
 } as const;
 
+/** Shared low-profile grounding used by placed transit artifacts. The bed is
+ * deliberately only a little wider than the artifact footprint: it finishes
+ * the tile without becoming a new gameplay surface or hiding nearby paths. */
+export const TRANSIT_GROUNDING = {
+  beddingHeight: 0.035,
+  beddingBevel: 0.018,
+  beddingMargin: 0.06,
+  contactY: 0.012,
+  contactMargin: 0.26,
+} as const;
+
 export function habitatTopY(id: HabitatId): number {
   return topSurfaceY(HABITAT_BODIES[id]);
 }

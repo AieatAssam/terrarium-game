@@ -78,6 +78,7 @@ import {
   SPROUT_CONVEYOR,
   SPROUT_CONVEYOR_BODY,
   GARDEN_SLIDE,
+  TRANSIT_GROUNDING,
   type GardenSlidePathPoint,
   type PropBody,
 } from './propDims';
@@ -740,6 +741,35 @@ function buildContactPad(scene: Scene, name: string, radius: number, material: P
   return mesh;
 }
 
+function buildTransitGrounding(
+  scene: Scene,
+  name: string,
+  body: PropBody,
+  beddingMaterial: PBRMetallicRoughnessMaterial,
+  contactPadMaterial: PBRMetallicRoughnessMaterial,
+): { terrainBed: Mesh; contactPad: Mesh } {
+  const radius = footprintRadius(body) + TRANSIT_GROUNDING.beddingMargin;
+  const terrainBed = bevelledSlab(
+    scene,
+    `${name}.terrainBed`,
+    radius,
+    TRANSIT_GROUNDING.beddingHeight / 2,
+    radius,
+    TRANSIT_GROUNDING.beddingBevel,
+  );
+  terrainBed.material = beddingMaterial;
+  terrainBed.isPickable = false;
+  terrainBed.receiveShadows = true;
+
+  const contactPad = buildContactPad(
+    scene,
+    `${name}.contact`,
+    footprintRadius(body) + TRANSIT_GROUNDING.contactMargin,
+    contactPadMaterial,
+  );
+  return { terrainBed, contactPad };
+}
+
 /** Each completed delivery adds this much "recently busy", which then decays. */
 const THROUGHPUT_PER_DELIVERY = 0.34;
 /** Time constant (ms) of the throughput decay — a Slide left alone cools off over a few seconds. */
@@ -834,6 +864,8 @@ interface TransitMarker {
   capMaterial: PBRMetallicRoughnessMaterial | null;
   tile: TileCoord;
   ownsBodyMaterial: boolean;
+  terrainBed: Mesh;
+  contactPad: Mesh;
   label: TransitLabelVisual | null;
   previewLine: Mesh | null;
 }
@@ -1193,6 +1225,8 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       existing.tile = tile;
       const world = tileToWorld(tile);
       existing.mesh.position.set(world.x, kind === 'sproutConveyor' ? SPROUT_CONVEYOR_BODY.centreY : AUTOMATION_BODIES.gardenSlide.centreY, world.z);
+      existing.terrainBed.position.set(world.x, TRANSIT_GROUNDING.beddingHeight / 2, world.z);
+      existing.contactPad.position.set(world.x, TRANSIT_GROUNDING.contactY, world.z);
       existing.mesh.metadata = { kind: 'transit', transitKind: kind, artifactId: id, tile };
       if (slideState) updateTransitPreview(existing, slideState);
       return;
@@ -1207,7 +1241,17 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       const world = tileToWorld(tile);
       mesh.position.set(world.x, SPROUT_CONVEYOR_BODY.centreY, world.z);
       mesh.metadata = { kind: 'transit', transitKind: kind, artifactId: id, tile };
+      const grounding = buildTransitGrounding(
+        scene,
+        `terrarium.transit.${kind}.${id}`,
+        SPROUT_CONVEYOR_BODY,
+        conveyorMaterials.bedding,
+        contactPadMaterial,
+      );
+      grounding.terrainBed.position.set(world.x, TRANSIT_GROUNDING.beddingHeight / 2, world.z);
+      grounding.contactPad.position.set(world.x, TRANSIT_GROUNDING.contactY, world.z);
       shadowGenerator.addShadowCaster(mesh);
+      shadowGenerator.addShadowCaster(grounding.terrainBed);
       transitMarkers.set(id, {
         id,
         kind,
@@ -1216,6 +1260,8 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
         capMaterial: null,
         tile,
         ownsBodyMaterial: false,
+        terrainBed: grounding.terrainBed,
+        contactPad: grounding.contactPad,
         label: null,
         previewLine: null,
       });
@@ -1249,7 +1295,17 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     const world = tileToWorld(tile);
     mesh.position.set(world.x, body.centreY, world.z);
     mesh.metadata = { kind: 'transit', transitKind: kind, artifactId: id, tile };
+    const grounding = buildTransitGrounding(
+      scene,
+      `terrarium.transit.${kind}.${id}`,
+      body,
+      conveyorMaterials.bedding,
+      contactPadMaterial,
+    );
+    grounding.terrainBed.position.set(world.x, TRANSIT_GROUNDING.beddingHeight / 2, world.z);
+    grounding.contactPad.position.set(world.x, TRANSIT_GROUNDING.contactY, world.z);
     shadowGenerator.addShadowCaster(mesh);
+    shadowGenerator.addShadowCaster(grounding.terrainBed);
     const marker: TransitMarker = {
       id,
       kind,
@@ -1258,6 +1314,8 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       capMaterial,
       tile,
       ownsBodyMaterial: true,
+      terrainBed: grounding.terrainBed,
+      contactPad: grounding.contactPad,
       label: null,
       previewLine: null,
     };
@@ -1272,6 +1330,8 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     marker.label?.mesh.dispose();
     marker.label?.material.dispose();
     marker.label?.texture.dispose();
+    marker.terrainBed.dispose();
+    marker.contactPad.dispose();
     marker.mesh.dispose();
     if (marker.ownsBodyMaterial) marker.bodyMaterial.dispose();
     marker.capMaterial?.dispose();
@@ -1371,7 +1431,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     const contactPad = buildContactPad(
       scene,
       `terrarium.automation.${id}.contact`,
-      footprintRadius(body) + 0.26,
+      footprintRadius(body) + TRANSIT_GROUNDING.contactMargin,
       contactPadMaterial,
     );
 
@@ -1582,7 +1642,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     // bobs and rocks — a parented pad would sink through the ground on the down
     // stroke and tilt with the machine, which is exactly the "floating" read it
     // exists to prevent.
-    site.contactPad.position.set(world.x, 0.012, world.z);
+    site.contactPad.position.set(world.x, TRANSIT_GROUNDING.contactY, world.z);
     site.contactPad.setEnabled(true);
     site.built = true;
     shadowGenerator.addShadowCaster(site.mesh); // includes the belt rig's descendants
@@ -2049,6 +2109,8 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
       marker.label?.mesh.dispose();
       marker.label?.material.dispose();
       marker.label?.texture.dispose();
+      marker.terrainBed.dispose();
+      marker.contactPad.dispose();
       marker.mesh.dispose();
       if (marker.ownsBodyMaterial) marker.bodyMaterial.dispose();
       marker.capMaterial?.dispose();

@@ -1,4 +1,6 @@
 import { bootstrap } from './core/bootstrap';
+import { isDev } from './core/env';
+import type { HabitatId, SproutTypeId } from './core/ids';
 import { EventBus } from './events';
 import { initInput } from './input/index';
 import { initRenderer } from './render/index';
@@ -34,6 +36,24 @@ const rendererSubscribed = new Promise<void>((resolve) => {
 });
 
 const simRuntimePromise = startSimRuntime(bus, Date.now(), rendererSubscribed);
+
+if (isDev) {
+  (window as unknown as {
+    __terrariumDebug?: {
+      placeSlide: (placement: {
+        tile: { x: number; z: number };
+        destination: HabitatId;
+        acceptedKind: SproutTypeId | 'any';
+      }) => Promise<void>;
+      placeConveyor: (tile: { x: number; z: number }) => Promise<void>;
+      grantDewdrops: (amount: number) => Promise<void>;
+    };
+  }).__terrariumDebug = {
+    placeSlide: (placement) => simRuntimePromise.then((sim) => sim.placeSlide(placement)),
+    placeConveyor: (tile) => simRuntimePromise.then((sim) => sim.placeConveyor(tile)),
+    grantDewdrops: (amount) => simRuntimePromise.then((sim) => sim.debug.grantDewdrops(amount)),
+  };
+}
 
 // Synchronous handle to the same runtime, for the one UI hook that must answer
 // *during* a render pass rather than in a promise callback

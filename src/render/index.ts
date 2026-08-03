@@ -19,7 +19,7 @@ import { createHabitatManager, type HabitatManager } from './habitats';
 import { createGardenLighting, type GardenLighting } from './lighting';
 import { getMotionConfig, prefersReducedMotion, watchReducedMotion } from './motion';
 import { createDewdropMote } from './particles';
-import { getQualityLevel, onQualityChange } from './quality';
+import { getQualityLevel, onQualityChange, setQualityLevel } from './quality';
 import { createSproutManager, type SproutManager } from './sprouts';
 import { installVisibilityThrottle } from './visibility';
 import { buildGardenWorld, type GardenWorld } from './world';
@@ -264,6 +264,10 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
           radius: camera.camera.radius,
           target: camera.camera.target.asArray(),
         };
+      },
+      setQuality: (level: 'high' | 'low') => {
+        setQualityLevel(level);
+        return getQualityLevel();
       },
     };
   }

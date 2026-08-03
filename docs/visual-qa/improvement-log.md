@@ -2,6 +2,29 @@
 
 ---
 
+## 2026-08-03 — Garden Transit material and terrain integration
+
+Phase 7.14 binds placed Slides and Conveyors to the established Phase 6
+material families and adds a small bevelled foliage-family terrain bed plus a
+parentless contact-occlusion disc for every artifact. The bed follows moves
+and is removed with the artifact, so the channel reads as rooted in the garden
+without adding scatter props to drop targets or habitat footprints. The
+high-tier cap frame shows four Slides and thirty Conveyors; the low-tier mobile
+frame carries the same cap. A 60-frame sample stayed below the 100 ms p95
+smoke threshold in both tiers, and the focused browser run reported no
+console/page errors.
+
+Evidence: `docs/visual-qa/transit/integration-empty.png`,
+`integration-mid.png`, `integration-at-cap.png`, and
+`integration-low-tier.png`.
+
+Scores: material richness 4/5, garden integration 4/5, cap readability 4/5,
+desaturated/state clarity 4/5, low-tier/mobile framing 4/5. Remaining debt:
+the full accessibility, persistence, and cross-tier scenario matrix belongs to
+Phase 7.15; no generic bloom or decorative prop pass was added here.
+
+---
+
 ## 2026-08-03 — Garden Transit safety recovery
 
 Phase 7.13 now returns Sprouts to a hand-reachable entry tile when a Slide is
