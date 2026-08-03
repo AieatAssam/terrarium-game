@@ -405,13 +405,16 @@ export async function placeTransitViaBuildMenu(
   page: Page,
   kind: PricedTransitKind,
   tile: { x: number; z: number },
-  config?: { acceptedKind?: string; destination?: string },
+  config?: { acceptedKind?: string; destination?: string; keepArmed?: boolean },
 ): Promise<void> {
   const toolbar = page.getByRole('toolbar', { name: 'Build menu' });
   const button = toolbar.getByRole('button', { name: new RegExp(`^${TRANSIT_MENU_LABEL[kind]}`) });
   await expect(button, `build menu should offer "${TRANSIT_MENU_LABEL[kind]}"`).toBeVisible();
   const before = (await getUiState(page)).transitCounts[kind];
-  await button.click();
+  // Transit build mode stays armed after each successful node so a route can
+  // be laid continuously. Switch tools only when this one is not already
+  // selected; clicking an already-selected tool is the deliberate cancel.
+  if (await button.getAttribute('aria-pressed') !== 'true') await button.click();
   await expect(button).toHaveAttribute('aria-pressed', 'true');
   if (kind === 'gardenSlide' && config?.acceptedKind) {
     await toolbar.getByLabel('Accepted Sprout kind').selectOption(config.acceptedKind);
@@ -423,6 +426,7 @@ export async function placeTransitViaBuildMenu(
   await page.mouse.move(screen.x, screen.y);
   await page.mouse.click(screen.x, screen.y);
   await expect.poll(async () => (await getUiState(page)).transitCounts[kind], { timeout: 10_000 }).toBe(before + 1);
+  if (!config?.keepArmed) await page.keyboard.press('Escape');
 }
 
 /**

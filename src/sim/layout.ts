@@ -281,10 +281,11 @@ export interface ConveyorRoute {
 }
 
 /**
- * Finds the shortest deterministic route through placed Conveyor tiles. The
- * fixed painted path is deliberately not part of this graph: a route only
- * becomes active when its endpoints are joined by owned segments. Neighbor
- * order is stable so identical saved state always produces identical routing.
+ * Finds the shortest deterministic route through the garden route layer. The
+ * authored path and owned Conveyor tiles are one graph: old gardens keep their
+ * painted route, while player-built Conveyors extend it into new space.
+ * Neighbor order is stable so identical saved state always produces identical
+ * routing.
  */
 export function findConveyorRoute(
   from: TileCoord,
@@ -301,7 +302,7 @@ export function findConveyorRoute(
   const fromKey = tileKeyOf(from);
   const toKey = tileKeyOf(to);
   if (fromKey === toKey) return { tiles: [from], segmentIds: [], length: 0 };
-  const allowed = new Set(byKey.keys());
+  const allowed = new Set([...GARDEN_PATH_TILES.map(tileKeyOf), ...byKey.keys()]);
   allowed.add(fromKey);
   allowed.add(toKey);
   const cameFrom = new Map<string, string | null>([[fromKey, null]]);
@@ -356,11 +357,17 @@ export function findConveyorRoute(
  * between saves/replays would be a real, confusing bug (see plan.yaml
  * Phase 1.2's own note on this).
  */
-export function nearestReachableHabitat(siteTile: TileCoord, occupiedSiteTiles: ReadonlyArray<TileCoord>): HabitatId | null {
+export function nearestReachableHabitat(
+  siteTile: TileCoord,
+  occupiedSiteTiles: ReadonlyArray<TileCoord>,
+  routeSegments: readonly ConveyorRouteSegment[] = [],
+): HabitatId | null {
   const avoid = new Set(occupiedSiteTiles.filter((t) => !sameTile(t, siteTile)).map(tileKeyOf));
   const candidates = (Object.keys(HABITAT_TILES) as HabitatId[])
     .map((id) => {
-      const route = findPathRoute(siteTile, HABITAT_TILES[id], avoid);
+      const route = routeSegments.length
+        ? findConveyorRoute(siteTile, HABITAT_TILES[id], routeSegments)?.tiles ?? null
+        : findPathRoute(siteTile, HABITAT_TILES[id], avoid);
       return route ? { id, length: route.length } : null;
     })
     .filter((c): c is { id: HabitatId; length: number } => c !== null)
@@ -394,8 +401,14 @@ export function isJunctionTile(tile: TileCoord): boolean {
  * Colour Gate specifically — a genuine junction (§9.8: "a Colour Gate cannot
  * be placed on a plain straight route; it needs a fork to govern").
  */
-export function isValidAutomationSite(automationId: AutomationId, tile: TileCoord, occupiedSiteTiles: ReadonlyArray<TileCoord>): boolean {
-  if (!PATH_TILE_KEY_SET.has(tileKeyOf(tile))) return false;
+export function isValidAutomationSite(
+  automationId: AutomationId,
+  tile: TileCoord,
+  occupiedSiteTiles: ReadonlyArray<TileCoord>,
+  routeSegments: readonly ConveyorRouteSegment[] = [],
+): boolean {
+  const onRoute = PATH_TILE_KEY_SET.has(tileKeyOf(tile)) || routeSegments.some((segment) => tileDistance(segment.tile, tile) === 1);
+  if (!onRoute) return false;
   if (sameTile(tile, NURSERY_TILE)) return false;
   if (habitatAtTile(tile)) return false;
   if (occupiedSiteTiles.some((t) => sameTile(t, tile))) return false;
@@ -413,8 +426,13 @@ export function isValidAutomationSite(automationId: AutomationId, tile: TileCoor
  * about player-built instances itself, since the network it tests is the
  * static original one.
  */
-export function isValidHabitatSite(tile: TileCoord, occupiedTiles: ReadonlyArray<TileCoord>): boolean {
-  if (!PATH_TILE_KEY_SET.has(tileKeyOf(tile))) return false;
+export function isValidHabitatSite(
+  tile: TileCoord,
+  occupiedTiles: ReadonlyArray<TileCoord>,
+  routeSegments: readonly ConveyorRouteSegment[] = [],
+): boolean {
+  const onRoute = PATH_TILE_KEY_SET.has(tileKeyOf(tile)) || routeSegments.some((segment) => tileDistance(segment.tile, tile) === 1);
+  if (!onRoute) return false;
   if (sameTile(tile, NURSERY_TILE)) return false;
   return !occupiedTiles.some((t) => sameTile(t, tile));
 }

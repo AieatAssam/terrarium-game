@@ -67,7 +67,7 @@ import {
   isReservedTile,
 } from './layout';
 import { prefersReducedMotion, watchReducedMotion } from './motion';
-import { createFoliageBodyMaterial, createPaintedMetalMaterial, createStoneBodyMaterial, createWoodBodyMaterial } from './pbrMaterials';
+import { createFoliageBodyMaterial, createPaintedMetalMaterial, createPathMaterial, createStoneBodyMaterial, createWoodBodyMaterial } from './pbrMaterials';
 import {
   bodyRings,
   footprintRadius,
@@ -425,8 +425,12 @@ function buildConveyorArrow(scene: Scene, name: string, material: PBRMetallicRou
 }
 
 function createConveyorMaterials(scene: Scene, prefix: string): ConveyorMaterials {
+  // The raised channel is a buildable continuation of the garden path, not a
+  // separate route language. Reuse the path's authored tread and PBR detail
+  // on the travel surface while the moss bedding and raised rims keep the
+  // Conveyor tactile and visibly distinct from the fixed path.
   const bedding = createFoliageBodyMaterial(scene, `${prefix}.bedding`, new Color3(0.22, 0.3, 0.18));
-  const channel = createWoodBodyMaterial(scene, `${prefix}.channel`, new Color3(0.42, 0.28, 0.16));
+  const channel = createPathMaterial(scene, `${prefix}.channel`, 'path.segment.straight', new Color3(0.62, 0.55, 0.42));
   const inset = createFoliageBodyMaterial(scene, `${prefix}.inset`, new Color3(0.16, 0.32, 0.18));
   const rim = createStoneBodyMaterial(scene, `${prefix}.rim`, new Color3(0.62, 0.53, 0.37));
   const marker = createWoodBodyMaterial(scene, `${prefix}.marker`, new Color3(0.9, 0.74, 0.4));
@@ -440,7 +444,7 @@ function buildConveyorVisual(
   layout: ConveyorVisualLayout,
   materials: ConveyorMaterials,
 ): ConveyorVisualBuild {
-  // ponytail: one channel mesh per arm keeps the 30-segment cap responsive;
+  // ponytail: one channel mesh per arm keeps long routes responsive;
   // restore inset/rim detail after repeated transit geometry is batched.
   const root = buildAutomationMesh(scene, name, SPROUT_CONVEYOR_BODY);
   root.material = materials.bedding;

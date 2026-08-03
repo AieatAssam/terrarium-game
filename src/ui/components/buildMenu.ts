@@ -34,6 +34,7 @@ import type { UiStateStore } from '../uiState';
 
 export const BUILD_MODE_EVENT = 'terrarium:buildMode';
 export const PLACEMENT_PREVIEW_EVENT = 'terrarium:placementPreview';
+const BUILD_MODE_CANCELLED_EVENT = 'terrarium:buildModeCancelled';
 
 export interface BuildModeEventDetail {
   automationId: AutomationId | null;
@@ -103,7 +104,7 @@ const TRANSIT_LABEL: Record<PricedTransitKind, string> = {
 
 const TRANSIT_ICON: Record<PricedTransitKind, keyof typeof icons> = {
   gardenSlide: 'gardenSlide',
-  sproutConveyor: 'gardenSlide',
+  sproutConveyor: 'sproutConveyor',
 };
 
 type Selection =
@@ -114,6 +115,11 @@ type Selection =
 
 export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: BuildMenuHooks = {}): BuildMenuHandle {
   const element = el('div', { className: 'tt-buildmenu', role: 'toolbar', 'aria-label': 'Build menu' });
+  const heading = el('div', { className: 'tt-buildmenu-heading' }, [
+    el('strong', {}, ['Garden tools']),
+    el('span', {}, ['Tap a tile to place']),
+  ]);
+  const toolGrid = el('div', { className: 'tt-buildmenu-grid' });
 
   let selected: Selection = null;
   let transitConfig: TransitBuildConfig = { acceptedKind: 'any', destination: 'sunflowerMeadow' };
@@ -193,13 +199,17 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
 
   function toggleTransit(id: PricedTransitKind): void {
     const state = store.getState();
+    if (selected?.kind === 'transit' && selected.id === id) {
+      setSelected(null);
+      return;
+    }
     const slideCount = state.transitCounts.gardenSlide;
     const affordable = id === 'gardenSlide'
       ? state.dewdropTotal >= nextGardenSlidePrice(slideCount)
       : state.dewdropTotal >= SPROUT_CONVEYOR_COST;
     const unlocked = id === 'gardenSlide' ? state.unlockedAutomations.has('gardenSlide') : slideCount > 0;
     if (!unlocked || !affordable || state.transitCounts[id] >= TRANSIT_CAPS[id]) return;
-    setSelected(selected?.kind === 'transit' && selected.id === id ? null : { kind: 'transit', id });
+    setSelected({ kind: 'transit', id });
   }
 
   function render(): void {
@@ -243,6 +253,7 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
       const button = desiredAutomations[i];
       const isSelected = selected?.kind === 'automation' && selected.id === automationId;
       button.setAttribute('aria-pressed', String(isSelected));
+      button.dataset.buildState = isSelected ? 'selected' : 'available';
       button.setAttribute(
         'aria-label',
         `${AUTOMATION_LABEL[automationId]}${isSelected ? ' (selected — click to cancel placement)' : ''}`,
@@ -250,14 +261,22 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
       // Rebuild inner icon+label only when the button was freshly created.
       if (button.childElementCount === 0) {
         button.append(
-          el('span', {
+          el('span', { className: 'tt-buildmenu-icon',
             'aria-hidden': 'true',
             html: iconHtml(AUTOMATION_MANIFEST_KEY[automationId], icons[AUTOMATION_ICON[automationId]]),
           }),
-          el('span', {}, [AUTOMATION_LABEL[automationId]]),
+          el('span', { className: 'tt-buildmenu-copy' }, [
+            el('strong', { className: 'tt-buildmenu-title' }, [AUTOMATION_LABEL[automationId]]),
+            el('span', { className: 'tt-buildmenu-purpose' }, [
+              automationId === 'colourGate' ? 'Sort Sprouts at the fork' : 'Welcome a new garden helper',
+            ]),
+            el('span', { className: 'tt-buildmenu-meta' }, ['Ready to place']),
+          ]),
         );
         button.addEventListener('click', () => toggleAutomation(automationId));
       }
+      const icon = button.querySelector<HTMLElement>('.tt-buildmenu-icon');
+      if (icon) icon.innerHTML = iconHtml(AUTOMATION_MANIFEST_KEY[automationId], icons[AUTOMATION_ICON[automationId]]);
     }
 
     const desiredHabitats = keep(habitatButtons, buildableHabitats);
@@ -268,6 +287,7 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
       const cost = habitatBuildCost(state.habitatInstanceCounts[habitatId] ?? 1);
       const affordable = state.dewdropTotal >= cost;
       button.disabled = !affordable;
+      button.dataset.buildState = isSelected ? 'selected' : affordable ? 'available' : 'unaffordable';
       button.setAttribute('aria-pressed', String(isSelected));
       button.setAttribute(
         'aria-label',
@@ -275,11 +295,15 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
       );
       if (button.childElementCount === 0) {
         button.append(
-          el('span', {
+          el('span', { className: 'tt-buildmenu-icon',
             'aria-hidden': 'true',
             html: iconHtml(`ui.icon.${habitatId}`, icons[HABITAT_ICON[habitatId]]),
           }),
-          el('span', {}, [`${HABITATS[habitatId].displayName} · ${cost}`]),
+          el('span', { className: 'tt-buildmenu-copy' }, [
+            el('strong', { className: 'tt-buildmenu-title' }, [HABITATS[habitatId].displayName]),
+            el('span', { className: 'tt-buildmenu-purpose' }, ['Add room for more Sprouts']),
+            el('span', { className: 'tt-buildmenu-meta tt-buildmenu-cost' }, [`${cost} Dewdrops`]),
+          ]),
         );
         button.addEventListener('click', () => {
           // Re-check affordability at click time, not creation time: the button
@@ -289,13 +313,17 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
           // `disabled` attribute already blocks clicks on unaffordable buttons;
           // this guard makes the same guarantee for keyboard/AT activation.
           const fresh = store.getState();
-          if (fresh.dewdropTotal >= habitatBuildCost(fresh.habitatInstanceCounts[habitatId] ?? 1)) toggleHabitat(habitatId);
+          if ((selected?.kind === 'habitat' && selected.id === habitatId) || fresh.dewdropTotal >= habitatBuildCost(fresh.habitatInstanceCounts[habitatId] ?? 1)) {
+            toggleHabitat(habitatId);
+          }
         });
       } else {
         // Cost can change between renders (a habitat was built) — keep the
         // visible label's number fresh without recreating the node.
-        const label = button.querySelector('span:last-child');
-        if (label) label.textContent = `${HABITATS[habitatId].displayName} · ${cost}`;
+        const title = button.querySelector('.tt-buildmenu-title');
+        if (title) title.textContent = HABITATS[habitatId].displayName;
+        const costLabel = button.querySelector('.tt-buildmenu-cost');
+        if (costLabel) costLabel.textContent = `${cost} Dewdrops`;
       }
     }
 
@@ -321,24 +349,54 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
           : conveyorUnlockMessage()
         : capped ? transitCapMessage(id) : !affordable ? `You need ${price} Dewdrops.` : '';
       const isSelected = selected?.kind === 'transit' && selected.id === id;
-      button.disabled = Boolean(locked || capped || !affordable);
+      // A selected tool stays clickable so a mobile player can cancel after
+      // spending the last Dewdrop; only a new selection is gated.
+      button.disabled = !isSelected && Boolean(locked || capped || !affordable);
+      button.dataset.buildState = isSelected
+        ? 'selected'
+        : locked ? 'locked'
+          : capped ? 'capped'
+            : !affordable ? 'unaffordable' : 'available';
       button.setAttribute('aria-pressed', String(isSelected));
       button.setAttribute(
         'aria-label',
-        `${TRANSIT_LABEL[id]} — ${price} Dewdrops, ${count} of ${cap}${id === 'gardenSlide' && locked ? `, ${state.correctPlacementCount}/${UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements} correct Sprouts` : ''}${reason ? ` (${reason})` : ''}${isSelected ? ' (selected — click to cancel placement)' : ''}`,
+        `${TRANSIT_LABEL[id]} — ${price} Dewdrops, ${count}/${Number.isFinite(cap) ? cap : 'open route'}${id === 'gardenSlide' && locked ? `, ${state.correctPlacementCount}/${UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements} correct Sprouts` : ''}${reason ? ` (${reason})` : ''}${isSelected ? ' (selected — click to cancel placement)' : ''}`,
       );
       if (button.childElementCount === 0) {
         button.append(
-          el('span', {
+          el('span', { className: 'tt-buildmenu-icon',
             'aria-hidden': 'true',
             html: iconHtml(`ui.icon.${id}`, icons[TRANSIT_ICON[id]]),
           }),
-          el('span', {}, [`${TRANSIT_LABEL[id]} · ${price} · ${count}/${cap}${id === 'gardenSlide' && locked ? ` · ${state.correctPlacementCount}/${UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements}` : ''}`]),
+          el('span', { className: 'tt-buildmenu-copy' }, [
+            el('strong', { className: 'tt-buildmenu-title' }, [TRANSIT_LABEL[id]]),
+            el('span', { className: 'tt-buildmenu-purpose' }, [
+              id === 'gardenSlide' ? 'Carry matching Sprouts to a home' : 'Extend the garden route',
+            ]),
+            el('span', { className: 'tt-buildmenu-meta tt-buildmenu-cost' }, [`${price} Dewdrops · ${count}/${Number.isFinite(cap) ? cap : 'open route'}`]),
+            el('span', {
+              className: 'tt-buildmenu-progress',
+              hidden: !(id === 'gardenSlide' && locked) && !reason,
+            }, [id === 'gardenSlide' && locked
+              ? `${state.correctPlacementCount}/${UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements} correct placements`
+              : reason]),
+          ]),
         );
         button.addEventListener('click', () => toggleTransit(id));
       } else {
-        const label = button.querySelector('span:last-child');
-        if (label) label.textContent = `${TRANSIT_LABEL[id]} · ${price} · ${count}/${cap}${id === 'gardenSlide' && locked ? ` · ${state.correctPlacementCount}/${UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements}` : ''}`;
+        const icon = button.querySelector<HTMLElement>('.tt-buildmenu-icon');
+        if (icon) icon.innerHTML = iconHtml(`ui.icon.${id}`, icons[TRANSIT_ICON[id]]);
+        const title = button.querySelector('.tt-buildmenu-title');
+        if (title) title.textContent = TRANSIT_LABEL[id];
+        const costLabel = button.querySelector('.tt-buildmenu-cost');
+        if (costLabel) costLabel.textContent = `${price} Dewdrops · ${count}/${Number.isFinite(cap) ? cap : 'open route'}`;
+        const progress = button.querySelector<HTMLElement>('.tt-buildmenu-progress');
+        if (progress) {
+          progress.textContent = id === 'gardenSlide' && locked
+            ? `${state.correctPlacementCount}/${UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements} correct placements`
+            : reason;
+          progress.hidden = !(id === 'gardenSlide' && locked) && !reason;
+        }
       }
     }
 
@@ -369,7 +427,8 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
       acceptedKindSelect!.value = transitConfig.acceptedKind;
       destinationSelect!.value = transitConfig.destination;
     }
-    element.replaceChildren(...desiredAutomations, ...desiredTransit, ...desiredHabitats, transitConfigPanel, placementStatus);
+    toolGrid.replaceChildren(...desiredAutomations, ...desiredTransit, ...desiredHabitats);
+    element.replaceChildren(heading, toolGrid, transitConfigPanel, placementStatus);
   }
 
   preloadManifestIcons(Object.values(AUTOMATION_MANIFEST_KEY));
@@ -384,18 +443,20 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
   const unsubscribeHabitatBuilt = bus.subscribe('habitat:built', () => {
     if (selected?.kind === 'habitat') setSelected(null);
   });
-  const unsubscribeTransitBuilt = bus.subscribe('transit:slideBuilt', () => {
-    if (selected?.kind === 'transit') setSelected(null);
-  });
-  const unsubscribeConveyorBuilt = bus.subscribe('transit:conveyorBuilt', () => {
-    if (selected?.kind === 'transit') setSelected(null);
-  });
+  // Transit placement stays armed after a successful build so a player can
+  // lay a route node-by-node. Escape or clicking the selected tool cancels it.
+  const unsubscribeTransitBuilt = bus.subscribe('transit:slideBuilt', render);
+  const unsubscribeConveyorBuilt = bus.subscribe('transit:conveyorBuilt', render);
   const handlePlacementPreview = (event: Event): void => {
     const detail = (event as CustomEvent<PlacementPreviewEventDetail>).detail;
     if (!detail) return;
     setPlacementStatus(detail.state, `${detail.state === 'valid' ? '✓ Ready' : detail.state === 'blocked' ? '⛔ Blocked' : '! Invalid'} — ${detail.message}`);
   };
+  const handleBuildModeCancelled = (): void => {
+    if (selected) setSelected(null);
+  };
   window.addEventListener(PLACEMENT_PREVIEW_EVENT, handlePlacementPreview);
+  window.addEventListener(BUILD_MODE_CANCELLED_EVENT, handleBuildModeCancelled);
 
   return {
     element,
@@ -407,6 +468,7 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
       unsubscribeTransitBuilt();
       unsubscribeConveyorBuilt();
       window.removeEventListener(PLACEMENT_PREVIEW_EVENT, handlePlacementPreview);
+      window.removeEventListener(BUILD_MODE_CANCELLED_EVENT, handleBuildModeCancelled);
     },
   };
 }

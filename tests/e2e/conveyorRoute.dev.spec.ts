@@ -84,7 +84,8 @@ test('composes, breaks, and repairs a saved Conveyor route', async ({ page }) =>
     { x: 5, z: 5 },
     { x: 5, z: 4 },
   ];
-  for (const tile of routeTiles) await placeTransitViaBuildMenu(page, 'sproutConveyor', tile);
+  for (const tile of routeTiles) await placeTransitViaBuildMenu(page, 'sproutConveyor', tile, { keepArmed: true });
+  await page.keyboard.press('Escape');
   await waitForSavedConveyorCount(page, routeTiles.length);
   const passengerId = await debugSpawnAndGetId(page, 'ember');
 

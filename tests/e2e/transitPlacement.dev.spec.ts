@@ -85,9 +85,11 @@ test.describe('Garden Transit placement', () => {
     await placeTransitViaBuildMenu(page, 'sproutConveyor', { x: 8, z: 11 });
     await placeTransitViaBuildMenu(page, 'gardenSlide', { x: 8, z: 10 });
     await placeTransitViaBuildMenu(page, 'gardenSlide', { x: 8, z: 9 });
-    for (const tile of [{ x: 7, z: 10 }, { x: 6, z: 10 }, { x: 7, z: 11 }]) {
-      await placeTransitViaBuildMenu(page, 'sproutConveyor', tile);
+    await placeTransitViaBuildMenu(page, 'sproutConveyor', { x: 7, z: 10 }, { keepArmed: true });
+    for (const tile of [{ x: 6, z: 10 }, { x: 7, z: 11 }]) {
+      await placeTransitViaBuildMenu(page, 'sproutConveyor', tile, { keepArmed: true });
     }
+    await page.keyboard.press('Escape');
 
     const toolbar = page.getByRole('toolbar', { name: 'Build menu' });
     const status = toolbar.getByRole('status');
@@ -109,9 +111,7 @@ test.describe('Garden Transit placement', () => {
     expect(invalidEvents.some((event) => event.type === 'currency:dewdropsChanged' && event.delta < 0)).toBe(false);
     await page.keyboard.press('Escape');
 
-    // Escape cancels the canvas mode; the menu selection is still available
-    // for a deliberate retry, so toggle it off and back on.
-    await conveyorButton.click();
+    // Escape cancels the canvas mode and clears the toolbox selection.
     await conveyorButton.click();
     await movePointerToTile(page, GARDEN_SLIDE_TILE);
     await expect(status).toContainText('already holding');
@@ -228,6 +228,7 @@ test.describe('Garden Transit placement', () => {
     await waitForDevHooks(page);
     await installBusRecorder(page, ['sprout:transportStarted', 'transit:slideConfigured', 'save:written']);
     await expect.poll(async () => (await getUiState(page)).transitCounts.gardenSlide).toBe(2);
+    await expect.poll(async () => await page.evaluate(() => Boolean((window.__debug as unknown as { meshInfo: (name: string) => unknown }).meshInfo('terrarium.transit.gardenSlide.slide-2')))).toBe(true);
     await frameGardenSlide(page, 8.5, { x: 8, y: 0, z: 6 });
     const savedSlides = await readSaveEnvelope(page);
     const slideTwoState = savedSlides.sim.slides.find((slide) => slide.id === 'slide-2');
@@ -243,7 +244,7 @@ test.describe('Garden Transit placement', () => {
     await page.waitForTimeout(3_000);
     expect((await getRecordedEvents(page)).some((event) => event.type === 'sprout:transportStarted' && event.instanceId === 'slide-2')).toBe(false);
     await page.mouse.click(slideTwo.x, slideTwo.y);
-    await expect(page.getByRole('toolbar', { name: 'Build menu' }).getByRole('status')).toContainText('Press M to move, D to enable');
+    await expect(page.getByRole('region', { name: 'Transit rules' }).getByRole('button', { name: 'Enable Garden Slide 2' })).toBeVisible();
     await page.locator('.tt-debug-panel').evaluate((element) => element.remove());
     await page.screenshot({ path: 'docs/visual-qa/transit/two-slides-after-reload.png' });
     saved = await readSaveEnvelope(page);

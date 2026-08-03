@@ -175,7 +175,7 @@ bevelled terrain bed plus a parentless contact-occlusion disc; both follow the
 artifact through moves and are disposed on removal. The ground/path receivers
 remain owned by `world.ts`, so dynamic transit does not add a second terrain
 system or scatter into gameplay tiles. The cap browser pass covered four
-Slides and thirty Conveyors at desktop/high and mobile/low, with no console or
+Slides and an open-ended Conveyor route at desktop/high and mobile/low, with no console or
 page errors; the full accessibility, persistence, and cross-tier matrix was
 closed by the Phase 7.15 gate.
 

@@ -1581,7 +1581,7 @@ steps:
 #   Refund        : full, both families; a Slide refunds the price of slide N
 #                   where N is the count owned AT REMOVAL (no per-instance
 #                   price stored in the save)
-#   Phase 1 caps  : 4 Slides, 30 Conveyor segments
+#   Structure cap : 4 Slides; Conveyors are open-ended route nodes
 #   Income for sanity: 0.008 * settledSprouts * multiplier per 100ms tick,
 #                   i.e. 4.8 Dewdrops/minute per settled Sprout (verified
 #                   against src/sim/systems.ts dewdropSystem, 2026-08-02).
@@ -1760,7 +1760,7 @@ steps:
     depends_on: ["7.1", "7.2"]
 
   - phase: "7.4"
-    title: Implement transit pricing, refunds, caps and unlock sequencing
+  title: Implement transit pricing, refunds, structure limits and unlock sequencing
     status: completed
     why: >
       GameRules §9.12 makes cost visible, escalation bounded, and refunds
@@ -1781,7 +1781,8 @@ steps:
       land as an event with a visible result, not a silent counter decrement.
     do: >
       Implement the §9.12 table: Slide N = round5(150 * 1.8^(N-1)) capped at
-      2400; Conveyor = 15 flat; caps of 4 Slides and 30 segments; full refund
+      2400; Conveyor = 15 flat; a cap of 4 Slides and no arbitrary Conveyor
+      segment limit; full refund
       on removal, with a Slide refunding the price of slide N at the CURRENT
       owned count. Keep the existing 20-correct-placement milestone as the
       permission gate for the first Slide (data.spawning.test.ts pins session
@@ -1793,7 +1794,8 @@ steps:
       §14 forbids it. Do not change existing upgrade costs.
     acceptance: >
       Unit tests prove: the cost sequence is exactly 150/270/485/875/1575/2400
-      and never exceeds 2400; buying deducts exactly the shown price;
+      and never exceeds 2400; Conveyors remain placeable beyond the old 30-node
+      target; buying deducts exactly the shown price;
       currency can never go negative; removal refunds exactly the current-count
       price and buy→sell→buy at a fixed count is currency-neutral; caps are
       enforced with a plain-language reason; costs and balances survive
@@ -1903,8 +1905,9 @@ steps:
       No freeform drawing (GameRules §9.9). No new visual identity for the
       artifacts (7.7, 7.11). No routing behaviour (7.13).
     acceptance: >
-      A player can place four Slides and thirty Conveyor segments in one
-      session without a failed snap, a clipped artifact, or an unexplained
+      A player can place four Slides and continue placing Conveyor segments
+      beyond the old thirty-node target in one session without a failed snap,
+      a clipped artifact, or an unexplained
       refusal. Invalid placement is refused before any Dewdrop is spent and
       names its reason. Valid/invalid/blocked are each identifiable in a
       desaturated screenshot. Placement works at 1440x900 and 390x844.
@@ -2327,8 +2330,8 @@ steps:
       Bind Slides and Conveyors to Phase 6's material recipes, add contact
       shadows and terrain bedding at every support, and dress the immediate
       surroundings of a placed artifact so it reads as built into its zone.
-      Verify the garden looks more finished, not more cluttered, at the Phase 1
-      caps of four Slides and thirty segments.
+      Verify the garden looks more finished, not more cluttered, with four
+      Slides and a dense open-ended Conveyor route.
     non_goals: >
       No generic polish. No bloom-led effects. Do not obscure Sprouts, drop
       targets or habitat occupancy with dressing.
@@ -2338,14 +2341,14 @@ steps:
       reading as more finished. Every artifact has contact shadows and terrain
       bedding. Frame time p95 within the Phase 6 6.1 budget +15%.
     validation: npm run typecheck && npm run lint && npm test && npm run build
-    browser_scenarios: A garden at the caps, at both viewports, high and low quality tiers.
+    browser_scenarios: A dense garden route at both viewports, high and low quality tiers.
     evidence: docs/visual-qa/transit/integration-{empty,mid,at-cap,low-tier}.png
     accessibility: Dressing must never reduce contrast for Sprouts or transit state signals.
-    performance: Measured at the caps on the low tier.
+    performance: Measured on a dense route on the low tier.
     save_compat: Visual only.
-    risk: Medium — clutter risk at the caps. The caps are the mitigation and are already in GameRules §9.12.
+    risk: Medium — clutter risk on open-ended routes. Space and readability remain the practical mitigation.
     commit: "feat(render): integrate Garden Transit into the garden's materials and lighting"
-    verification: Focused browser cap matrix passed with four Slides and thirty Conveyors, desktop/high plus 390px/low evidence, a 60-frame p95 smoke sample below 100 ms in both tiers, and no console/page errors; before/after finish evidence is recorded in the improvement log.
+    verification: Focused browser route matrix passed with four Slides and beyond-thirty Conveyors, desktop/high plus 390px/low evidence, a 60-frame p95 smoke sample below 100 ms in both tiers, and no console/page errors; before/after finish evidence is recorded in the improvement log.
     depends_on: ["7.9", "7.11", "6.8"]
 
   - phase: "7.15"
@@ -2388,7 +2391,7 @@ steps:
       placement; blocked route; full habitat; disable; removal and refund;
       save/load including mid-transit; 390px viewport; reduced motion; high
       contrast; muted audio; keyboard; pointer; touch. Record a measured
-      performance budget at the Phase 1 caps with a quality-tier strategy.
+      performance budget on a dense open-ended route with a quality-tier strategy.
       Score the result against REFERENCE_BOARD's rubric and record scores,
       evidence and remaining defects in the improvement log.
     non_goals: >
@@ -2406,7 +2409,7 @@ steps:
     browser_scenarios: The full matrix above, from a clean save.
     evidence: docs/visual-qa/transit/gate-{single,multi,conveyor,invalid,blocked,full,reload,390,reduced-motion,high-contrast}.png
     accessibility: This task is the accessibility gate for the phase.
-    performance: Final measurement at the Phase 1 caps on both tiers.
+    performance: Final measurement on a dense open-ended route on both tiers.
     save_compat: Includes the migration re-verification from 7.2 against a real pre-phase save.
     risk: Low technically; high process risk if skipped.
     commit: "chore(qa): Garden Transit acceptance gate"

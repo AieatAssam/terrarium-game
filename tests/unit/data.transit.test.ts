@@ -25,10 +25,11 @@ describe('Garden Transit pricing', () => {
     expect(gardenSlideRefund(5)).toBe(1575);
   });
 
-  it('keeps the complexity caps and names them plainly', () => {
-    expect(TRANSIT_CAPS).toEqual({ gardenSlide: 4, sproutConveyor: 30 });
+  it('keeps the Slide cap while leaving the route open-ended', () => {
+    expect(TRANSIT_CAPS.gardenSlide).toBe(4);
+    expect(TRANSIT_CAPS.sproutConveyor).toBe(Number.POSITIVE_INFINITY);
     expect(transitCapMessage('gardenSlide')).toContain('four Garden Slides');
-    expect(transitCapMessage('sproutConveyor')).toContain('thirty Sprout Conveyor segments');
+    expect(transitCapMessage('sproutConveyor')).toContain('keep growing');
   });
 });
 

@@ -225,37 +225,124 @@ export const UI_CSS = /* css */ `
   bottom: 14px;
   right: 14px;
   z-index: 20;
+  width: min(340px, calc(100vw - 28px));
+  max-height: min(46vh, 430px);
+  overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  align-items: flex-end;
+  padding: 10px;
+  border: 2px solid var(--tt-border);
+  border-radius: var(--tt-radius-lg);
+  background: color-mix(in srgb, var(--tt-panel) 94%, var(--tt-bg));
+  box-shadow: 0 8px 24px var(--tt-shadow);
+}
+
+.tt-buildmenu-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 4px 0;
+}
+
+.tt-buildmenu-heading strong {
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+}
+
+.tt-buildmenu-heading span {
+  color: var(--tt-text-muted);
+  font-size: 0.68rem;
+}
+
+.tt-buildmenu-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .tt-buildmenu-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: var(--tt-touch);
-  padding: 6px 14px 6px 8px;
-  border-radius: var(--tt-radius-lg);
-  border: 2px solid var(--tt-border);
-  background: var(--tt-panel);
-  box-shadow: 0 4px 14px var(--tt-shadow);
+  min-width: 0;
+  min-height: 68px;
+  padding: 7px;
+  border-radius: var(--tt-radius-md);
+  border: 2px solid transparent;
+  background: var(--tt-panel-raised);
+  text-align: left;
+  box-shadow: 0 3px 9px var(--tt-shadow);
 }
 
-.tt-buildmenu-item[aria-pressed='true'] {
+.tt-buildmenu-item[data-build-state='available'] {
+  border-color: var(--tt-border);
+}
+
+.tt-buildmenu-item[data-build-state='selected'] {
   border-color: var(--tt-accent);
-  background: color-mix(in srgb, var(--tt-panel) 60%, var(--tt-accent) 40%);
+  background: color-mix(in srgb, var(--tt-panel-raised) 72%, var(--tt-accent) 28%);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tt-accent) 34%, transparent), 0 4px 14px var(--tt-shadow);
+}
+
+.tt-buildmenu-item[data-build-state='locked'] {
+  border-color: var(--tt-border);
+  background: var(--tt-panel);
 }
 
 .tt-buildmenu-item:disabled {
-  opacity: 0.45;
+  opacity: 0.78;
   cursor: not-allowed;
 }
 
-.tt-buildmenu-item svg {
-  width: 24px;
-  height: 24px;
+.tt-buildmenu-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  place-items: center;
+  border: 2px solid color-mix(in srgb, var(--tt-accent) 72%, var(--tt-border));
+  border-radius: 50%;
+  background: #f8e8c7;
+  color: #6b4d2f;
+}
+
+.tt-buildmenu-icon svg {
+  width: 30px;
+  height: 30px;
+}
+
+.tt-buildmenu-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.tt-buildmenu-title,
+.tt-buildmenu-purpose,
+.tt-buildmenu-meta,
+.tt-buildmenu-progress {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tt-buildmenu-title {
+  font-size: 0.76rem;
+}
+
+.tt-buildmenu-purpose,
+.tt-buildmenu-progress {
+  color: var(--tt-text-muted);
+  font-size: 0.62rem;
+  line-height: 1.2;
+}
+
+.tt-buildmenu-meta {
+  color: var(--tt-accent);
+  font-size: 0.68rem;
+  font-weight: 800;
 }
 
 .tt-transit-config {
@@ -317,10 +404,10 @@ export const UI_CSS = /* css */ `
 
 .tt-transit-panel {
   position: fixed;
-  right: 400px;
-  bottom: 98px;
+  inset: 50% auto auto 50%;
   z-index: 21;
   width: min(360px, calc(100vw - 28px));
+  transform: translate(-50%, -50%);
   color: var(--tt-text);
 }
 
@@ -983,10 +1070,13 @@ export const UI_CSS = /* css */ `
      the nav instead of beside it rather than shrinking either further. */
   .tt-buildmenu {
     bottom: 86px;
+    right: 12px;
+    width: calc(100vw - 24px);
+    max-height: 38vh;
   }
   .tt-transit-panel {
-    right: 14px;
-    bottom: 170px;
+    inset: auto 14px 170px auto;
+    transform: none;
   }
 }
 

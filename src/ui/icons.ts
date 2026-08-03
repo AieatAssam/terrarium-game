@@ -46,6 +46,9 @@ export const icons = {
   gardenSlide: decorative(
     '<path d="M4 20 16 4h4l-9 12h5l-9 4-2-4H4z" fill="currentColor"/>',
   ),
+  sproutConveyor: decorative(
+    '<path d="M3 7h18v4H3zM3 14h18v4H3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="m8 9 3 0-1.5-1.5M15 16h-3l1.5 1.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  ),
   colourGate: decorative(
     '<path d="M4 21V6a2 2 0 0 1 2-2h2v17H4zm6 0V4h4v17h-4zm6 0V4h2a2 2 0 0 1 2 2v15h-4z" fill="currentColor"/>',
   ),

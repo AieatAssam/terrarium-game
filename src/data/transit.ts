@@ -4,7 +4,9 @@ export type PricedTransitKind = Extract<TransitArtifactKind, 'gardenSlide' | 'sp
 
 export const TRANSIT_CAPS: Record<PricedTransitKind, number> = {
   gardenSlide: 4,
-  sproutConveyor: 30,
+  // Conveyors are the buildable garden route itself. Keep the economy flat,
+  // but do not make the player's route hit an arbitrary node ceiling.
+  sproutConveyor: Number.POSITIVE_INFINITY,
 };
 
 export const SPROUT_CONVEYOR_COST = 15;
@@ -36,7 +38,7 @@ export function gardenSlideRefund(ownedSlideCount: number): number {
 export function transitCapMessage(kind: PricedTransitKind): string {
   return kind === 'gardenSlide'
     ? 'Your garden has room for four Garden Slides for now.'
-    : 'Your garden has room for thirty Sprout Conveyor segments for now.';
+    : 'Your garden route can keep growing as long as there is room to place it.';
 }
 
 export function conveyorUnlockMessage(): string {

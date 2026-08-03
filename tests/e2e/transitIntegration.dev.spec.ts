@@ -86,7 +86,7 @@ async function placeTransitForVisualCap(
   }, { slides, conveyors });
 }
 
-test('captures transit integration at empty, mid, cap, and low-quality states', async ({ page }) => {
+test('captures transit integration at empty, mid, open-ended route, and low-quality states', async ({ page }) => {
   test.setTimeout(240_000);
   const console_ = collectConsoleErrors(page);
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -130,12 +130,12 @@ test('captures transit integration at empty, mid, cap, and low-quality states', 
   }
   await placeTransitForVisualCap(page, [], extraTiles);
   await expect.poll(async () => (await getUiState(page)).transitCounts.gardenSlide).toBe(4);
-  await expect.poll(async () => (await getUiState(page)).transitCounts.sproutConveyor).toBe(30);
+  await expect.poll(async () => (await getUiState(page)).transitCounts.sproutConveyor).toBeGreaterThanOrEqual(30);
   await page.waitForTimeout(2_000);
   expect(await page.evaluate(() => {
     const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
     return { width: canvas.width, height: canvas.height };
-  })).toEqual({ width: 360, height: 225 });
+  })).toEqual({ width: 1440, height: 900 });
   const highFrameP95 = await sampleFrameP95(page);
   expect(highFrameP95).toBeLessThan(100);
   await frame(page, { x: 7, z: 8 }, 9.2);
@@ -148,6 +148,10 @@ test('captures transit integration at empty, mid, cap, and low-quality states', 
     hooks.setQuality('low');
   });
   await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => {
+    const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
+    return { width: canvas.width, height: canvas.height };
+  })).toEqual({ width: 390, height: 844 });
   await frame(page, { x: 7, z: 8 }, 8.8);
   const lowFrameP95 = await sampleFrameP95(page);
   expect(lowFrameP95).toBeLessThan(100);

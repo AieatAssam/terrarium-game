@@ -9,7 +9,7 @@ duplicated.
 
 > **GARDEN TRANSIT SHIPPED AND VERIFIED, 2026-08-03.** GameRules' 2026-08-02
 > revision replaces the single Garden Slide with **Garden Transit**: up to four
-> paid, configured Slides with per-Slide Sprout-kind filters, plus up to thirty
+> paid, configured Slides with per-Slide Sprout-kind filters, plus open-ended
 > buildable Sprout Conveyor segments (GameRules §9.3, §9.12–§9.17). The old
 > single-Slide model is explicitly rejected, not merely superseded — see
 > GameRules §9.17. Passages below that describe the old model are labelled as
@@ -299,8 +299,8 @@ progression the way the earlier values were.
 
 The Colour Gate needs somewhere to *be* a gate. The authored garden therefore
 keeps a shared trunk and a real fork, while Garden Transit adds a player-owned
-route layer on top: up to thirty Conveyor tiles compose the route for Slides
-once any are built. With no owned Conveyors, the painted path below remains the
+route layer on top: Conveyor tiles extend the same route substrate without a
+fixed node limit. With no owned Conveyors, the painted path below remains the
 compatibility route for a fresh or migrated garden. Slide sites are player
 chosen and their ports are validated; no Slide has a fixed automatic site.
 

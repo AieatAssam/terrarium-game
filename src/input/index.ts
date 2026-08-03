@@ -67,6 +67,7 @@ const WHEEL_ZOOM_SENSITIVITY = 0.01;
 const PINCH_ZOOM_SENSITIVITY = 1;
 const PLACEMENT_PREVIEW_EVENT = 'terrarium:placementPreview';
 const TRANSIT_SELECTION_EVENT = 'terrarium:transitSelection';
+const BUILD_MODE_CANCELLED_EVENT = 'terrarium:buildModeCancelled';
 
 export interface InputHooks {
   /**
@@ -181,6 +182,11 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     ...Array.from(transitTiles.values(), (entry) => entry.tile),
   ];
 
+  const routeSegments = (): Array<{ id: string; tile: TileCoord }> =>
+    Array.from(transitTiles.entries())
+      .filter(([, entry]) => entry.kind === 'sproutConveyor')
+      .map(([id, entry]) => ({ id, tile: entry.tile }));
+
   const sameTile = (a: TileCoord, b: TileCoord): boolean => a.x === b.x && a.z === b.z;
   const occupiedForTransit = (movingId?: string): TileCoord[] => [
     NURSERY_TILE,
@@ -255,7 +261,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     if (occupied.some((occupiedTile) => sameTile(occupiedTile, tile))) {
       return { state: 'blocked', message: 'That tile is already holding something.' };
     }
-    if (kind === 'gardenSlide' && !isValidAutomationSite('gardenSlide', tile, occupied)) {
+    if (kind === 'gardenSlide' && !isValidAutomationSite('gardenSlide', tile, occupied, routeSegments())) {
       return { state: 'invalid', message: 'Garden Slides need a path tile with room to join.' };
     }
     if (!candidatePorts(kind, tile).some((candidate) => portsForTransit(movingId).some((port) => portsJoined(candidate, port)))) {
@@ -290,13 +296,16 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
       if (feedback.state !== 'valid') return;
       if (buildMode.movingId) hooks.onMoveTransit?.(buildMode.id, buildMode.movingId, snapped.tile);
       else hooks.onPlaceTransit?.(buildMode.id, snapped.tile, buildMode.config);
-      exitBuildMode();
+      // A route is built one node at a time. Keep a new Conveyor/Slide tool
+      // armed so the next tap can extend the same garden route; Escape or a
+      // second click on the selected toolbox item cancels it.
+      if (buildMode.movingId) exitBuildMode();
       return;
     }
     const valid =
       buildMode.kind === 'automation'
-        ? isValidAutomationSite(buildMode.id, tile, Array.from(occupiedSiteTiles.values()))
-        : isValidHabitatSite(tile, allOccupiedTiles());
+        ? isValidAutomationSite(buildMode.id, tile, Array.from(occupiedSiteTiles.values()), routeSegments())
+        : isValidHabitatSite(tile, allOccupiedTiles(), routeSegments());
     if (!valid) return;
     if (buildMode.kind === 'automation') hooks.onPlaceAutomation?.(buildMode.id, tile);
     else hooks.onPlaceHabitat?.(buildMode.id, tile);
@@ -602,7 +611,8 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   };
 
   const handleKeyDown = (event: KeyboardEvent): void => {
-    if (event.target instanceof HTMLButtonElement && !(selectedTransit && (event.key === 'Delete' || event.key === 'Backspace'))) return;
+    const transitShortcut = selectedTransit && ['Delete', 'Backspace', 'd', 'D', 'm', 'M'].includes(event.key);
+    if (!buildMode && event.target instanceof HTMLButtonElement && !transitShortcut && event.key !== 'Escape') return;
     if (buildMode) {
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -669,7 +679,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   };
 
   const previewAutomation = (automationId: AutomationId, tile: TileCoord): void => {
-    const valid = isValidAutomationSite(automationId, tile, Array.from(occupiedSiteTiles.values()));
+    const valid = isValidAutomationSite(automationId, tile, Array.from(occupiedSiteTiles.values()), routeSegments());
     automation.previewAt(automationId, tile, valid);
     window.dispatchEvent(
       new CustomEvent(PLACEMENT_PREVIEW_EVENT, {
@@ -679,7 +689,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   };
 
   const previewHabitat = (habitatId: HabitatId, tile: TileCoord): void => {
-    const valid = isValidHabitatSite(tile, allOccupiedTiles());
+    const valid = isValidHabitatSite(tile, allOccupiedTiles(), routeSegments());
     habitats.previewAt(habitatId, tile, valid);
     window.dispatchEvent(
       new CustomEvent(PLACEMENT_PREVIEW_EVENT, {
@@ -750,6 +760,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     buildCursorTile = null;
     automation.clearPreview();
     habitats.clearPreview();
+    window.dispatchEvent(new CustomEvent(BUILD_MODE_CANCELLED_EVENT));
   };
 
   const dispose = (): void => {

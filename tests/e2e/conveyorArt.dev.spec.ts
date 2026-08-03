@@ -73,7 +73,8 @@ test.skip('renders a ten-segment grown Conveyor route with readable joins', asyn
     { x: 7, z: 3 },
     { x: 7, z: 4 },
   ];
-  for (const tile of routeTiles) await placeTransitViaBuildMenu(page, 'sproutConveyor', tile);
+  for (const tile of routeTiles) await placeTransitViaBuildMenu(page, 'sproutConveyor', tile, { keepArmed: true });
+  await page.keyboard.press('Escape');
   await expect.poll(async () => (await readSaveEnvelope(page)).sim.conveyors.length, { timeout: 15_000 }).toBe(10);
   await hideDebugChrome(page);
 

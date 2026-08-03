@@ -44,9 +44,10 @@ Nursery, habitats, paths, slides, gates all place via `TileCoord`. Automation ro
 backdrop topology: a shared trunk and Colour Gate fork, a southern run to
 Sunflower Meadow, and the Mood Bell spur. The painted path remains the
 compatibility route for a garden with no owned Conveyor segments. Once a save
-contains player-built Conveyors, `findConveyorRoute` uses only those occupied
-tiles plus the requested endpoints, with deterministic adjacency BFS. Players
-can own up to four Slides and thirty Conveyor segments; Slide placement and
+contains player-built Conveyors, `findConveyorRoute` composes those occupied
+tiles with the authored path plus the requested endpoints, with deterministic
+adjacency BFS. Players can own up to four Slides and an open-ended number of
+Conveyor segments; Slide placement and
 configuration are separate from unlock permission.
 
 `COLOUR_GATE_LANE_HABITATS` maps each lane to the home it leads to; that mapping

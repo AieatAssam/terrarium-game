@@ -45,7 +45,6 @@ import {
   type ConveyorRoute,
   defaultColourGateLanes,
   findConveyorRoute,
-  findPathRoute,
   HABITAT_TILES,
   isValidAutomationSite,
   isValidHabitatSite,
@@ -175,7 +174,7 @@ export function nearestReachableHabitatInstance(
   const candidates = state.habitats
     .filter((h) => h.habitatId === habitatId && !instanceIsFull(state, h))
     .map((h) => {
-      const route = findPathRoute(fromTile, h.tile);
+      const route = findConveyorRoute(fromTile, h.tile, state.conveyors)?.tiles ?? null;
       return route ? { instance: h, length: route.length } : null;
     })
     .filter((c): c is { instance: HabitatInstance; length: number } => c !== null)
@@ -189,9 +188,7 @@ export function nearestReachableHabitatInstance(
  * playable while a player is still laying the first route.
  */
 function slideRouteBetween(state: SimState, slide: SlideInstance, destination: HabitatInstance): ConveyorRoute | null {
-  if (state.conveyors.length > 0) return findConveyorRoute(slide.tile, destination.tile, state.conveyors);
-  const legacy = findPathRoute(slide.tile, destination.tile);
-  return legacy ? { tiles: legacy, segmentIds: [], length: legacy.length - 1 } : null;
+  return findConveyorRoute(slide.tile, destination.tile, state.conveyors);
 }
 
 interface SlideDestinationRoute {
@@ -382,10 +379,12 @@ export function placeAutomation(state: SimState, automationId: AutomationId, til
   if (!state.unlockedAutomations.includes(automationId)) return { state, events: [] };
   if (state.automations.some((a) => a.automationId === automationId)) return { state, events: [] }; // already placed — one instance per kind
   const occupied = state.automations.map((a) => a.siteTile);
-  if (!isValidAutomationSite(automationId, tile, occupied)) return { state, events: [] };
+  if (!isValidAutomationSite(automationId, tile, occupied, state.conveyors)) return { state, events: [] };
 
   const instanceId = `${automationId}-1`;
-  const targetHabitatId = automationId === 'gardenSlide' ? (nearestReachableHabitat(tile, occupied) ?? undefined) : undefined;
+  const targetHabitatId = automationId === 'gardenSlide'
+    ? (nearestReachableHabitat(tile, occupied, state.conveyors) ?? undefined)
+    : undefined;
   // gardenSlide needs a real destination to be worth placing at all — if
   // nothing is reachable (shouldn't happen on the current fixed network,
   // but a future dynamic one could momentarily disconnect a site), decline
@@ -551,7 +550,6 @@ export function transitPlacementLockReason(state: SimState, kind: PricedTransitK
   }
 
   if (!isConveyorUnlocked(state.slides.length)) return conveyorUnlockMessage();
-  if (state.conveyors.length >= TRANSIT_CAPS.sproutConveyor) return transitCapMessage('sproutConveyor');
   return state.dewdrops >= SPROUT_CONVEYOR_COST
     ? null
     : `You need ${SPROUT_CONVEYOR_COST} Dewdrops to place this Sprout Conveyor segment.`;
@@ -571,7 +569,7 @@ export function placeSlide(state: SimState, placement: SlidePlacement): TickResu
   }
 
   const occupied = occupiedTransitTiles(state);
-  if (!isValidAutomationSite('gardenSlide', placement.tile, occupied)) return { state, events: [] };
+  if (!isValidAutomationSite('gardenSlide', placement.tile, occupied, state.conveyors)) return { state, events: [] };
   const flowFacing = transitFlowFacingForPlacement(state, 'gardenSlide', placement.tile);
   if (!flowFacing) return { state, events: [] };
 
@@ -659,7 +657,7 @@ export function moveSlide(state: SimState, slideId: string, tile: TileCoord): Ti
   const slide = state.slides.find((item) => item.id === slideId);
   if (!slide || slide.carryingSproutId || sameTile(slide.tile, tile)) return { state, events: [] };
   const occupied = occupiedTransitTiles(state).filter((occupiedTile) => !sameTile(occupiedTile, slide.tile));
-  if (!isValidTileCoord(tile) || !isValidAutomationSite('gardenSlide', tile, occupied)) return { state, events: [] };
+  if (!isValidTileCoord(tile) || !isValidAutomationSite('gardenSlide', tile, occupied, state.conveyors)) return { state, events: [] };
   if (!slideHasCompatiblePort({ ...state, slides: state.slides.filter((item) => item.id !== slideId) }, tile, slideId)) return { state, events: [] };
   return {
     state: {
@@ -768,7 +766,7 @@ export function placeHabitat(state: SimState, habitatId: HabitatId, tile: TileCo
   if (state.dewdrops < cost) return { state, events: [] };
 
   const occupiedTiles = [...state.habitats.map((h) => h.tile), ...state.automations.map((a) => a.siteTile)];
-  if (!isValidHabitatSite(tile, occupiedTiles)) return { state, events: [] };
+  if (!isValidHabitatSite(tile, occupiedTiles, state.conveyors)) return { state, events: [] };
 
   const instanceId = `${habitatId}-${kindInstances.length + 1}`;
   const instance: HabitatInstance = {

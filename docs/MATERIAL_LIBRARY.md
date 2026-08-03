@@ -379,10 +379,11 @@ material's albedo, which is why they are kept inside a narrow ~0.78–1.28 range
   artifact footprint plus `TRANSIT_GROUNDING.beddingMargin`. The slab receives
   the normal shadow-map pass and moves/removes with the artifact, while the
   separate contact pad remains parentless and stable on the terrain.
-- Cap/performance: 4 Slides + 30 Conveyors adds 34 small grounding slabs and
-  34 shared-material contact discs. The focused browser cap pass kept the
-  95th-percentile frame sample below 100 ms on both the high desktop and low
-  mobile evidence runs; Phase 7.15 remains the full multi-scenario budget gate.
+- Performance: four Slides plus an open-ended Conveyor route adds one small
+  grounding slab and shared-material contact disc per placed artifact. The
+  focused browser route pass stays within the existing 95th-percentile frame
+  budget on high desktop and low mobile evidence runs; practical limits are
+  available space and readability, not an arbitrary node count.
 
 ### Scenery: instanced stone (`createSceneryStoneMaterial`, `src/render/world.ts`)
 

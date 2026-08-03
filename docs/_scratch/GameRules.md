@@ -495,13 +495,13 @@ If a Sprout is dispatched down a route whose junction sends it toward the wrong 
 - A stall never expires, decays, or costs the player anything — see the §2.5 revision note above. It is a visible invitation to fix a junction, not a penalty for having built one.
 - This is what makes §9.4's Colour Gate configuration matter in a way it previously didn't as strongly: a wrong lane choice now has a small, friendly, visible, always-fixable consequence in the world, rather than resolving invisibly through the fallback path.
 
-### 9.12 Transit cost, refund, and the Phase 1 complexity cap *(2026-08-02)*
+### 9.12 Transit cost, refund, and structure limits *(2026-08-02, revised 2026-08-03)*
 
 Dewdrops (§8.2) are the **sole** currency for Slides and Conveyors. No real-money purchase, ad, loot box, random price, punishing timer, or manufactured scarcity is permitted (§14).
 
 **Costs are always shown before purchase and before placement is confirmed.**
 
-**Phase 1 balance target — validate in browser playtest, do not treat as settled.** These numbers are proposed against the shipped economy: income is `0.008 Dewdrops × settled Sprouts × multiplier` per 100ms tick, i.e. **4.8 Dewdrops per minute per settled Sprout**, and existing one-off unlocks cost 700 (Colour Gate) and 1500 (Mood Bell).
+**Balance target — validate in browser playtest, do not treat as settled.** These numbers are proposed against the shipped economy: income is `0.008 Dewdrops × settled Sprouts × multiplier` per 100ms tick, i.e. **4.8 Dewdrops per minute per settled Sprout**, and existing one-off unlocks cost 700 (Colour Gate) and 1500 (Mood Bell).
 
 | Purchase | Cost | Notes |
 |---|---|---|
@@ -510,7 +510,7 @@ Dewdrops (§8.2) are the **sole** currency for Slides and Conveyors. No real-mon
 
 - **First Slide = 150 Dewdrops**, unlocked by the existing correct-placement milestone. The milestone grants *permission* to build; the 150 is the *price*. At ~20 settled Sprouts that is roughly a minute and a half of income — an early, achievable, clearly worthwhile first automation.
 - **Slide escalation is bounded**, not open-ended: the 1.8× growth stops at a stated maximum of 2400 so a large garden never faces an unreadable price, while early spam is still discouraged.
-- **Conveyors do not escalate.** Spam is prevented by the network cap below, not by making creative building expensive.
+- **Conveyors do not escalate or hit an arbitrary node cap.** Creative route building stays cheap; valid connected tiles, available garden space, and visual readability are the practical limits.
 
 **Refund and removal policy — generous by design (§10's "no punitive loss"):**
 
@@ -519,11 +519,7 @@ Dewdrops (§8.2) are the **sole** currency for Slides and Conveyors. No real-mon
 - **Slide refund rule (save-schema constraint):** removing a Slide refunds the price of slide **N** where N is the count owned *at the moment of removal* — i.e. removing your 5th Slide refunds 1575. This is self-consistent, requires no per-instance purchase price in the save, and cannot be arbitraged by buying and selling at different counts.
 - A refund is never partial, delayed, or taxed. Mistakes must be cheap so experimentation stays joyful.
 
-**Phase 1 complexity cap.** The player must understand their first useful network at a glance:
-
-- Maximum **4** Garden Slides.
-- Maximum **30** Sprout Conveyor segments.
-- Reaching a cap is stated plainly in garden language ("Your garden has room for four Slides for now"), never a disabled control with no explanation (§9.8).
+**Structure limit.** The player may own at most **4 Garden Slides** for now. Sprout Conveyors have no fixed count cap: they are the garden route substrate and can keep extending through valid connected tiles. The practical limits are available space and readable world density (§9.8).
 
 ### 9.13 Ports, anchors, and placement validity *(2026-08-02)*
 
@@ -726,7 +722,10 @@ If a feature makes the player feel like an operator of a cold production system 
 
 - **Materials and form are garden-grown.** Painted wood, glazed ceramic, carved root, polished stone — planted into the terrain with supports and contact shadows (§9.16). A rubber belt on steel rollers fails this line no matter what the UI calls it.
 - **No number is ever optimised.** There is no throughput figure, no ratio, no balancing, no efficiency score. A player reads a route by looking at it (§15 item 8).
-- **The network is capped and small.** Four Slides and thirty Conveyor segments in Phase 1 (§9.12) — a garden the player can hold in their head, not a factory floor that scales until it needs a plan.
+- **The network stays spatial and legible.** Four Slides are allowed; Conveyors
+  have no arbitrary node cap, with available space and route readability as the
+  practical limits (§9.12) — still a garden the player shapes, not a factory
+  floor that needs a plan.
 - **Nothing is lost, timed, or punished.** Full refunds, safe edits mid-transit, no trapped or deleted Sprouts (§9.12, §9.15).
 - **Manual care never becomes obsolete.** Hand-carrying stays fully available and valuable (§9.15).
 

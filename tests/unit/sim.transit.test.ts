@@ -161,17 +161,16 @@ describe('Garden Transit domain model', () => {
       'You need 15 Dewdrops to place this Sprout Conveyor segment.',
     );
 
-    const conveyorCap = {
+    const openRoute = {
       ...withSlide,
       dewdrops: 1000,
-      conveyors: Array.from({ length: 30 }, (_, index) => ({
+      conveyors: Array.from({ length: 300 }, (_, index) => ({
         id: `conveyor-${index}-0`,
         tile: { x: index % 16, z: Math.floor(index / 16) },
         builtAtTick: 0,
       })),
     };
-    expect(placeConveyor(conveyorCap, { x: 5, z: 5 }).state).toBe(conveyorCap);
-    expect(transitPlacementLockReason(conveyorCap, 'sproutConveyor')).toContain('thirty Sprout Conveyor segments');
+    expect(transitPlacementLockReason(openRoute, 'sproutConveyor')).toBeNull();
   });
 
   it('requires a Conveyor to touch a valid transit or habitat port', () => {
@@ -247,7 +246,7 @@ describe('Garden Transit domain model', () => {
     expect(returned.state.slides[0]?.tile).toEqual(GARDEN_SLIDE_TILE);
   });
 
-  it('composes a deterministic three-segment route and leaves a loose segment inert', () => {
+  it('composes the authored path with three owned segments and leaves a loose segment inert', () => {
     const segments = [
       { id: 'conveyor-8-6', tile: { x: 8, z: 6 }, builtAtTick: 0 },
       { id: 'conveyor-7-6', tile: { x: 7, z: 6 }, builtAtTick: 0 },
@@ -260,7 +259,9 @@ describe('Garden Transit domain model', () => {
       length: 4,
     });
     expect(findConveyorRoute({ x: 8, z: 7 }, { x: 6, z: 7 }, JSON.parse(JSON.stringify(segments)))).toEqual(route);
-    expect(findConveyorRoute({ x: 8, z: 7 }, HABITAT_TILES.emberNook, [...segments, { id: 'loose', tile: { x: 12, z: 12 } }])).toBeNull();
+    const authoredRoute = findConveyorRoute({ x: 8, z: 7 }, HABITAT_TILES.emberNook, [...segments, { id: 'loose', tile: { x: 12, z: 12 } }]);
+    expect(authoredRoute).not.toBeNull();
+    expect(authoredRoute?.segmentIds).toEqual(segments.map((segment) => segment.id));
 
     const slide = {
       id: 'slide-1',

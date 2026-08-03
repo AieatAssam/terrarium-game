@@ -2614,6 +2614,56 @@ decisions:
       placeholder warning, and the exact project gate passed with 379 unit
       tests and a successful production build. Changes remain uncommitted.
 
+  - owner: codex session 2026-08-03 (build toolbox and transit panel follow-up)
+    files:
+      [
+        src/ui/components/buildMenu.ts,
+        src/ui/components/transitConfig.ts,
+        src/ui/styles.ts,
+        tests/unit,
+        tests/e2e,
+        docs/visual-qa/improvement-log.md,
+        work_progress.yaml,
+      ]
+    task: >
+      Fix build-menu actions that appear available but do not build, give the
+      toolbox a clear icon-led buildable hierarchy with live prices and state,
+      and center the selected Garden Slide rules surface on desktop and mobile.
+      Review the current UI against the visual-director guidance and verify the
+      real pointer/touch flow before closing the issue.
+    status: >
+      DONE, 2026-08-03: Build actions now re-check live Dewdrop/unlock state,
+      show icon-led tool cards with purpose, price, progress, and open-route
+      state, and keep the selected route tool armed for consecutive clicks.
+      Escape clears both input mode and the toolbox selection; focused-button
+      keyboard shortcuts still reach selected transit controls. Desktop Slide
+      rules are centered and mobile-safe. Native canvas resolution is retained,
+      authored paths and owned Conveyors share one route graph, Conveyors have
+      no arbitrary node cap, and Conveyor bedding uses the path material.
+      Focused placement/config browser scenarios, including the reload-and-
+      re-enable flow, 379 unit tests, typecheck, lint, build, and git diff
+      checks passed.
+
+  - owner: codex session 2026-08-03 (crowded garden resolution + route coherence review)
+    files:
+      [src/render/index.ts, src/render/automation.ts, work_progress.yaml]
+    task: >
+      Review the reported extreme crowded-garden render-resolution fallback and
+      the visible relationship between the fixed garden path and placed Sprout
+      Conveyors. Keep scope render-only, preserve the concurrent UI work, and
+      make the smallest evidence-backed fix if the live scene confirms a gap.
+    status: DONE
+    findings: >
+      Removed the 4x hardware-scaling switch so transit count cannot shrink the
+      canvas to 1/16 pixel area. The Conveyor travel channel now reuses the
+      fixed path's PBR material and tread language; moss bedding and raised rims
+      preserve the tactile buildable silhouette. After a clean Vite restart,
+      browser evidence held 1280x720 canvas pixels at a 1280x720 desktop
+      viewport with 1 Garden Slide and 27 Conveyors, and 390x844 pixels at a
+      390x844 mobile viewport. There were no browser console errors; the only
+      warning was the pre-existing Mood Bell placeholder manifest entry.
+      Typecheck, lint, all 379 unit tests, and the production build pass.
+
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?
   - Should SPROUT_PICK_RADIUS/HOVER_MARGIN_TILES scale with viewport width

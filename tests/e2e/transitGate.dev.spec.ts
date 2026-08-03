@@ -160,7 +160,8 @@ test.describe('Garden Transit acceptance gate', () => {
       { x: 5, z: 5 },
       { x: 5, z: 4 },
     ];
-    for (const tile of routeTiles) await placeTransitViaBuildMenu(page, 'sproutConveyor', tile);
+    for (const tile of routeTiles) await placeTransitViaBuildMenu(page, 'sproutConveyor', tile, { keepArmed: true });
+    await page.keyboard.press('Escape');
     await expect.poll(async () => (await getUiState(page)).transitCounts.sproutConveyor).toBe(routeTiles.length);
     await frame(page, { x: 6, z: 5 }, 7.5);
     await page.screenshot({ path: `${CAPTURE_DIR}/gate-conveyor.png` });

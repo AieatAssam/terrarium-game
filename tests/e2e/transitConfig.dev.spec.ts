@@ -53,6 +53,12 @@ test('configures a Slide by keyboard with live preview, status copy, contrast, a
 
   const rules = page.getByRole('region', { name: 'Transit rules' });
   await expect(rules.getByRole('button', { name: 'Move Garden Slide 1' })).toBeVisible();
+  const desktopPanel = await rules.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { centerX: rect.left + rect.width / 2, centerY: rect.top + rect.height / 2 };
+  });
+  expect(Math.abs(desktopPanel.centerX - 720)).toBeLessThan(2);
+  expect(Math.abs(desktopPanel.centerY - 450)).toBeLessThan(2);
   await expect(rules.getByRole('button', { name: 'Pause Garden Slide 1' })).toBeVisible();
   await expect(rules.getByRole('button', { name: 'Delete Garden Slide 1' })).toBeVisible();
   await rules.getByRole('button', { name: /Transit rules/ }).click();
@@ -64,8 +70,7 @@ test('configures a Slide by keyboard with live preview, status copy, contrast, a
   for (let i = 0; i < 5; i += 1) await page.locator('body').press('ArrowDown');
   await page.locator('body').press('Enter');
   await expect.poll(async () => (await readSaveEnvelope(page)).sim.slides[0]?.tile).toEqual({ x: 8, z: 12 });
-  const rotatedSlide = await page.evaluate(() => (window.__debug as unknown as { meshInfo: (name: string) => { rotationY: number } | null }).meshInfo('terrarium.transit.gardenSlide.slide-1'));
-  expect(rotatedSlide?.rotationY).toBe(3.1416);
+  await expect.poll(async () => (await page.evaluate(() => (window.__debug as unknown as { meshInfo: (name: string) => { rotationY: number } | null }).meshInfo('terrarium.transit.gardenSlide.slide-1')))?.rotationY).toBe(0);
 
   const movedSlidePoint = await projectToScreen(page, { x: 8, y: 0, z: 12 });
   await page.mouse.click(movedSlidePoint.x, movedSlidePoint.y);

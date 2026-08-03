@@ -2,6 +2,24 @@
 
 ---
 
+## 2026-08-03 — Route building and resolution follow-up
+
+The crowded-garden resolution fallback was removed: Babylon now keeps the
+native canvas backing size on desktop and mobile instead of dropping to a
+blurry quarter-resolution buffer. Paths and player-built Conveyors now share
+one route graph and the same terrain bedding, so a route can grow from an
+existing path to a new habitat without a fixed 30-node ceiling. Transit build
+mode remains armed after a successful placement for fast consecutive clicks;
+Escape exits it.
+
+Evidence: browser canvas checks measured 1280×720 at 1280×720 and the focused
+integration assertions cover 1440×900 and 390×844. The route and transit unit
+fixtures cover an open-ended route and habitat placement beside an owned
+Conveyor. Build-menu cards now expose the tool icon, purpose, live cost, lock
+reason, and route count in the dark botanical toolbox.
+
+---
+
 ## 2026-08-03 — Live visual regression follow-up
 
 The reported deployed screenshot was confirmed to be the unpublished build:
@@ -31,10 +49,9 @@ serving the stale 320×180 build.
 ## 2026-08-03 — Render resolution regression recovery
 
 The Garden Transit performance pass had applied Babylon hardware scaling level
-4 globally, shrinking a 1280×720 canvas to a 320×180 render buffer. Normal
-gardens now render at native 1× resolution; the 4× fallback activates only at
-24 or more placed transit artifacts and returns to 1× when the garden is
-uncrowded again.
+4 globally, shrinking a 1280×720 canvas to a 320×180 render buffer. The first
+recovery restored native 1× rendering for ordinary gardens; the later route
+follow-up removed the remaining crowded-garden fallback as well.
 
 Evidence: live browser before/after capture measured 320×180 → 1280×720 at
 1280×720, and 390×844 → 390×844 at the mobile viewport. The focused transit
@@ -48,8 +65,8 @@ crowded-garden performance 4/5. The accepted creature-readability reference
 (`docs/references/ooblets/creature-readability/ooblets-04.md`) was used only
 for its edge/silhouette readability criterion; no source art was copied.
 
-Remaining debt: static garden/transit mesh batching is still the upgrade path
-for removing the crowded-garden fallback without trading away frame budget.
+Remaining debt: static garden/transit mesh batching remains the upgrade path
+for further frame-time headroom without trading away native resolution.
 
 ---
 
