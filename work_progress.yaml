@@ -2369,6 +2369,40 @@ decisions:
       errors. Exact gate passed: typecheck, lint, 367 unit tests, and build.
       Route-state safety and mid-ride edit protection remain Phase 7.13+.
 
+  - owner: codex session 2026-08-03 (Phase 7.13 intent)
+    files:
+      [
+        src/sim/systems.ts,
+        src/sim/runtime.ts,
+        src/sim/state.ts,
+        src/events/types.ts,
+        src/ui/uiState.ts,
+        src/ui/components/transitConfig.ts,
+        tests/unit/sim.transitSafety.test.ts,
+        tests/e2e/transitSafety.dev.spec.ts,
+        plan.yaml,
+        docs/ARCHITECTURE.md,
+        docs/visual-qa/improvement-log.md,
+        work_progress.yaml,
+      ]
+    task: >
+      Audit Garden Transit ride transitions and guarantee every active Sprout
+      has one owner, route edits do not duplicate or silently reroute it, and
+      disconnected or removed segments resolve to a recoverable waiting state.
+      Add focused deterministic safety tests; preserve no-loss and manual
+      carry recovery semantics.
+    status: >
+      DONE, 2026-08-03: guarded active Slide edits so only future rides use
+      new rules; removal/disablement/full/stale-target completions return a
+      passenger safely and emit typed recovery events. Save-load repair keeps
+      the first valid claim in stable order and clears stale/duplicate claims
+      without changing Sprout count. Added deterministic safety tests for
+      conservation, stable priority, route edits, full/stale targets,
+      duplicate claims, and save repair, plus focused browser removal and
+      disablement evidence with no console/page errors. Full-destination and
+      reload browser scenarios remain in Phase 7.15. Exact project gate
+      passed: typecheck, lint, 375 unit tests, and production build.
+
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?
   - Should SPROUT_PICK_RADIUS/HOVER_MARGIN_TILES scale with viewport width

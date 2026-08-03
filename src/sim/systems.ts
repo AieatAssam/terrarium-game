@@ -436,6 +436,33 @@ export interface SlideConfiguration {
   enabled: boolean;
 }
 
+type TransitReturnReason = 'removed' | 'disabled' | 'destinationFull' | 'invalidTarget' | 'saveRepair';
+
+function clearSlideRide(slide: SlideInstance): SlideInstance {
+  return { ...slide, carryingSproutId: null, completesAtTick: null };
+}
+
+function returnSlidePassenger(state: SimState, slide: SlideInstance, reason: TransitReturnReason): TickResult {
+  if (!slide.carryingSproutId) return { state, events: [] };
+  const sprout = state.sprouts.find((item) => item.id === slide.carryingSproutId);
+  const tile = slide.fromTile ?? slide.tile;
+  const returned = Boolean(sprout && sprout.state !== 'settled');
+  return {
+    state: {
+      ...state,
+      slides: state.slides.map((item) => (item.id === slide.id ? clearSlideRide(item) : item)),
+      sprouts: returned
+        ? state.sprouts.map((item) =>
+            item.id === slide.carryingSproutId ? { ...item, state: 'idle' as const, tile } : item,
+          )
+        : state.sprouts,
+    },
+    events: returned
+      ? [{ type: 'sprout:transportReturned', sproutId: sprout!.id, automationId: 'gardenSlide', instanceId: slide.id, tile, reason }]
+      : [],
+  };
+}
+
 function occupiedTransitTiles(state: SimState): TileCoord[] {
   return [
     ...state.habitats.map((habitat) => habitat.tile),
@@ -567,15 +594,12 @@ export function removeSlide(state: SimState, slideId: string): TickResult {
   const slide = state.slides.find((item) => item.id === slideId);
   if (!slide) return { state, events: [] };
   const refund = gardenSlideRefund(state.slides.length);
-  const dewdrops = state.dewdrops + refund;
-  const sprouts = slide.carryingSproutId
-    ? state.sprouts.map((sprout) =>
-        sprout.id === slide.carryingSproutId ? { ...sprout, state: 'idle' as const, tile: slide.tile } : sprout,
-      )
-    : state.sprouts;
+  const returned = returnSlidePassenger(state, slide, 'removed');
+  const dewdrops = returned.state.dewdrops + refund;
   return {
-    state: { ...state, slides: state.slides.filter((item) => item.id !== slideId), sprouts, dewdrops },
+    state: { ...returned.state, slides: returned.state.slides.filter((item) => item.id !== slideId), dewdrops },
     events: [
+      ...returned.events,
       { type: 'transit:artifactRemoved', artifactId: slideId, artifactKind: 'gardenSlide', refund },
       { type: 'currency:dewdropsChanged', total: dewdrops, delta: refund },
     ],
@@ -616,23 +640,35 @@ export function moveSlide(state: SimState, slideId: string, tile: TileCoord): Ti
 /** Changes a Slide's pictorial rule without changing ownership or price. */
 export function configureSlide(state: SimState, slideId: string, configuration: SlideConfiguration): TickResult {
   const slide = state.slides.find((item) => item.id === slideId);
-  if (!slide || (slide.carryingSproutId && !configuration.enabled)) return { state, events: [] };
+  if (!slide) return { state, events: [] };
   if (
     (configuration.acceptedKind !== 'any' && !Object.prototype.hasOwnProperty.call(SPROUT_TYPES, configuration.acceptedKind)) ||
     !Object.prototype.hasOwnProperty.call(HABITATS, configuration.destination)
   ) {
     return { state, events: [] };
   }
-  const next = { ...slide, ...configuration, toTile: HABITAT_TILES[configuration.destination] };
+
+  const returned = slide.carryingSproutId && !configuration.enabled
+    ? returnSlidePassenger(state, slide, 'disabled')
+    : { state, events: [] as GameEvent[] };
+  const current = returned.state.slides.find((item) => item.id === slideId) ?? slide;
+  const next = {
+    ...current,
+    ...configuration,
+    // An active ride keeps its authored endpoint. Editing a rule changes the
+    // next ride; it never silently reroutes the Sprout already aboard.
+    toTile: slide.carryingSproutId && configuration.enabled ? current.toTile : HABITAT_TILES[configuration.destination],
+  };
   if (
-    next.acceptedKind === slide.acceptedKind &&
-    next.destination === slide.destination &&
-    next.enabled === slide.enabled
+    next.acceptedKind === current.acceptedKind &&
+    next.destination === current.destination &&
+    next.enabled === current.enabled &&
+    next.carryingSproutId === current.carryingSproutId
   ) return { state, events: [] };
   const ports = getSlidePorts(next);
   return {
-    state: { ...state, slides: state.slides.map((item) => (item.id === slideId ? next : item)) },
-    events: [{ type: 'transit:slideConfigured', slide: next, ...ports }],
+    state: { ...returned.state, slides: returned.state.slides.map((item) => (item.id === slideId ? next : item)) },
+    events: [...returned.events, { type: 'transit:slideConfigured', slide: next, ...ports }],
   };
 }
 
@@ -1014,7 +1050,7 @@ function transportDurationForKind(
 function settleSprout(state: SimState, sproutId: string, habitatInstanceId: string): TickResult {
   const sprout = state.sprouts.find((s) => s.id === sproutId);
   const instance = state.habitats.find((h) => h.id === habitatInstanceId);
-  if (!sprout || !instance) return { state, events: [] };
+  if (!sprout || sprout.state === 'settled' || !instance) return { state, events: [] };
 
   const events: GameEvent[] = [];
   const sprouts = state.sprouts.map((s) => (s.id === sproutId ? { ...s, tile: instance.tile, state: 'settled' as const } : s));
@@ -1143,7 +1179,7 @@ export function slideAutomationSystem(state: SimState): TickResult {
       continue;
     }
     const sprout = working.sprouts.find((item) => item.id === slide.carryingSproutId);
-    if (sprout) {
+    if (sprout && sprout.state === 'transporting') {
       events.push({ type: 'sprout:transportCompleted', sproutId: sprout.id, automationId: 'gardenSlide', instanceId: slide.id });
       const arrived = slide.toTile ? habitatInstanceAtTile(working.habitats, slide.toTile) : null;
       if (arrived && !instanceIsFull(working, arrived)) {
@@ -1153,12 +1189,10 @@ export function slideAutomationSystem(state: SimState): TickResult {
       } else {
         // A destination can fill while a ride is underway. Return the Sprout
         // to the Slide's entry tile; it remains idle and hand-pickable.
-        working = {
-          ...working,
-          sprouts: working.sprouts.map((item) =>
-            item.id === sprout.id ? { ...item, state: 'idle' as const, tile: slide.fromTile ?? slide.tile } : item,
-          ),
-        };
+        const returnReason = arrived ? 'destinationFull' : 'invalidTarget';
+        const returned = returnSlidePassenger(working, slide, returnReason);
+        working = returned.state;
+        events.push(...returned.events);
       }
     }
     completed.add(slide.id);
@@ -1218,6 +1252,68 @@ export function slideAutomationSystem(state: SimState): TickResult {
   }
 
   return { state: { ...working, slides: nextSlides, sprouts }, events };
+}
+
+/**
+ * Repairs malformed or duplicated saved Slide rides before the first tick.
+ * Slides are inspected in save order: the first valid claim owns a Sprout,
+ * while every later or stale claim is cleared and its passenger is returned
+ * to the Slide entry tile.
+ */
+export function repairTransitRides(state: SimState): TickResult {
+  const claimed = new Set<string>();
+  const repaired = new Set<string>();
+  let working = state;
+  const events: GameEvent[] = [];
+
+  for (const slide of state.slides) {
+    const current = working.slides.find((item) => item.id === slide.id);
+    if (!current?.carryingSproutId) continue;
+    const sprout = working.sprouts.find((item) => item.id === current.carryingSproutId);
+    const valid = Boolean(
+      sprout &&
+        sprout.state === 'transporting' &&
+        !claimed.has(sprout.id) &&
+        current.fromTile &&
+        current.toTile &&
+        isValidTileCoord(current.fromTile) &&
+        isValidTileCoord(current.toTile) &&
+        habitatInstanceAtTile(working.habitats, current.toTile) &&
+        current.completesAtTick !== null &&
+        current.completesAtTick !== undefined &&
+        Number.isFinite(current.completesAtTick),
+    );
+    if (valid && sprout) {
+      claimed.add(sprout.id);
+      continue;
+    }
+
+    const duplicateClaim = Boolean(sprout && claimed.has(sprout.id));
+    if (sprout && sprout.state !== 'settled' && !duplicateClaim && !repaired.has(sprout.id)) {
+      const tile = current.fromTile ?? current.tile;
+      working = {
+        ...working,
+        sprouts: working.sprouts.map((item) =>
+          item.id === sprout.id ? { ...item, state: 'idle' as const, tile } : item,
+        ),
+      };
+      repaired.add(sprout.id);
+      events.push({
+        type: 'sprout:transportReturned',
+        sproutId: sprout.id,
+        automationId: 'gardenSlide',
+        instanceId: current.id,
+        tile,
+        reason: 'saveRepair',
+      });
+    }
+    working = {
+      ...working,
+      slides: working.slides.map((item) => (item.id === current.id ? clearSlideRide(item) : item)),
+    };
+  }
+
+  return { state: working, events };
 }
 
 /**

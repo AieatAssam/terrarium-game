@@ -84,6 +84,20 @@ describe('uiState store', () => {
     expect(store.getState().transitCounts).toEqual({ gardenSlide: 2, sproutConveyor: 1 });
   });
 
+  it('keeps the latest transit recovery visible to the configuration panel', () => {
+    const bus = new EventBus();
+    const store = createUiStateStore(bus);
+    bus.emit({
+      type: 'sprout:transportReturned',
+      sproutId: 'ember-1',
+      automationId: 'gardenSlide',
+      instanceId: 'slide-1',
+      tile: { x: 8, z: 8 },
+      reason: 'disabled',
+    });
+    expect(store.getState().lastTransitRecovery).toEqual({ sproutId: 'ember-1', tile: { x: 8, z: 8 }, reason: 'disabled' });
+  });
+
   it('starts with the three original habitat instances and no full kind', () => {
     const store = createUiStateStore(new EventBus());
     const state = store.getState();

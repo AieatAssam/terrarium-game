@@ -2,6 +2,23 @@
 
 ---
 
+## 2026-08-03 — Garden Transit safety recovery
+
+Phase 7.13 now returns Sprouts to a hand-reachable entry tile when a Slide is
+removed or disabled mid-ride, preserves the original endpoint across rule
+edits, and reports full/stale destinations and save repairs through typed
+recovery events. The accessible transit panel exposes the latest recovery as
+plain-language, screen-reader reachable status copy.
+
+Evidence: `docs/visual-qa/transit/safety-mid-ride-removal.png` and
+`safety-disabled.png`; focused browser checks passed with no console/page
+errors. Unit coverage also exercises full destinations, stale targets,
+duplicate claims, deterministic priority, and save repair. Full-destination
+and reload browser captures remain deferred to the Phase 7.15 acceptance
+matrix.
+
+---
+
 ## 2026-08-03 — Accessible Garden Transit configuration
 
 Phase 7.12 adds a compact Garden transit rules panel for every placed Slide.

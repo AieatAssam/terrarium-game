@@ -33,6 +33,16 @@ function sameConfig(a: TransitSlideConfiguration, b: TransitSlideConfiguration):
   return a.acceptedKind === b.acceptedKind && a.destination === b.destination && a.enabled === b.enabled;
 }
 
+function recoveryCopy(reason: NonNullable<ReturnType<UiStateStore['getState']>['lastTransitRecovery']>['reason']): string {
+  switch (reason) {
+    case 'removed': return 'A Sprout was safely returned to its starting spot because its Garden Slide was removed.';
+    case 'disabled': return 'A Sprout was safely returned to its starting spot because its Garden Slide was paused.';
+    case 'destinationFull': return 'A Sprout was safely returned to its starting spot because its destination was full.';
+    case 'invalidTarget': return 'A Sprout was safely returned to its starting spot because the route no longer had a valid home.';
+    case 'saveRepair': return 'A Sprout was safely returned to its starting spot while the garden save was repaired.';
+  }
+}
+
 export function createTransitConfigPanel(store: UiStateStore, hooks: TransitConfigHooks = {}): TransitConfigHandle {
   const element = el('section', { className: 'tt-transit-panel', 'aria-label': 'Transit rules' });
   const drafts = new Map<string, TransitSlideConfiguration>();
@@ -68,12 +78,15 @@ export function createTransitConfigPanel(store: UiStateStore, hooks: TransitConf
   };
 
   function render(force = false): void {
-    const slides = store.getState().transitSlides;
+    const ui = store.getState();
+    const slides = ui.transitSlides;
+    const recovery = ui.lastTransitRecovery;
     const slidesSignature = slides.map((slide) => `${slide.id}/${slide.tile.x},${slide.tile.z}/${slide.acceptedKind}/${slide.destination}/${slide.enabled}`).join('|');
-    if (!force && slidesSignature === lastSlidesSignature) return;
-    lastSlidesSignature = slidesSignature;
+    const signature = `${slidesSignature}|recovery:${recovery?.reason ?? ''}/${recovery?.sproutId ?? ''}`;
+    if (!force && signature === lastSlidesSignature) return;
+    lastSlidesSignature = signature;
     rememberFocus();
-    if (slides.length === 0) {
+    if (slides.length === 0 && !recovery) {
       element.hidden = true;
       element.replaceChildren();
       return;
@@ -105,6 +118,9 @@ export function createTransitConfigPanel(store: UiStateStore, hooks: TransitConf
         'Manual carry is always available. Garden Slides carry matching Sprouts to a home; Sprout Conveyors join Slides into a route; the Colour Gate makes the sorting decision.',
       ]),
     );
+    if (recovery) {
+      panel.append(el('p', { className: 'tt-transit-recovery', role: 'status', 'aria-live': 'polite' }, [recoveryCopy(recovery.reason)]));
+    }
 
     for (const slide of slides) {
       const draft = drafts.get(slide.id) ?? copyConfig(slide);

@@ -14,6 +14,12 @@ export interface OfflineReturnInfo {
   offlineDewdrops: number;
 }
 
+export interface TransitRecoveryInfo {
+  sproutId: string;
+  tile: { x: number; z: number };
+  reason: 'removed' | 'disabled' | 'destinationFull' | 'invalidTarget' | 'saveRepair';
+}
+
 /** Mirrors SimState.colourGateLanes — which Sprout kind each Gate lane invites. */
 export interface ColourGateLaneState {
   west: SproutTypeId | null;
@@ -50,6 +56,7 @@ export interface UiState {
   lastOfflineReturn: OfflineReturnInfo | undefined;
   lastAchievementUnlocked: AchievementId | undefined;
   lastBuiltAutomation: AutomationId | undefined;
+  lastTransitRecovery: TransitRecoveryInfo | undefined;
   /** The Colour Gate's active rule (GameRules §9.4: it must visibly show it). */
   colourGateLanes: ColourGateLaneState;
   /** The Mood Bell's active rule — which mood it currently welcomes. */
@@ -98,6 +105,7 @@ function createInitialState(): UiState {
     lastOfflineReturn: undefined,
     lastAchievementUnlocked: undefined,
     lastBuiltAutomation: undefined,
+    lastTransitRecovery: undefined,
     // Matches the Gate's own safe default (src/sim/layout.ts) so the panel
     // never flashes an empty rule between mount and the first event.
     colourGateLanes: { west: 'ember', east: 'dew' },
@@ -183,6 +191,10 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
       transitSlides: event.artifactKind === 'gardenSlide'
         ? prev.transitSlides.filter((slide) => slide.id !== event.artifactId)
         : prev.transitSlides,
+    })),
+    on('sprout:transportReturned', (prev, event) => ({
+      ...prev,
+      lastTransitRecovery: { sproutId: event.sproutId, tile: { ...event.tile }, reason: event.reason },
     })),
     on('upgrade:purchased', (prev, event) => ({
       ...prev,

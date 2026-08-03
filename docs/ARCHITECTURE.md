@@ -44,7 +44,7 @@ Inbound player intent (a drop, a purchase) also flows over this same bus/direct-
 
 The Colour Gate's fork physically cannot reach Sunflower Meadow (its two lanes leave from the northern fork; the Meadow sits on the separate southern run) — this made the 2026-07-31 Garden Slide "always target Sunflower Meadow" rule the only way to reach it via automation. **Superseded 2026-08-01 (manual placement, GameRules §9.8, plan.yaml Phase 1):** every automation is now player-PLACED rather than auto-built the instant it unlocks, via the new `placeAutomation` (`src/sim/systems.ts`), constrained to a legal site by `isValidAutomationSite` (`src/sim/layout.ts`: on the path network, not the Nursery/a habitat/another automation's site, and — for the Colour Gate only — a genuine junction, `isJunctionTile`). A placed automation's destination is no longer hardcoded: `nearestReachableHabitat` computes it from the site tile itself — the nearest habitat reachable over the real path network without routing through another automation's site — so wherever the player puts the Garden Slide is what it actually serves. This is also what fixes the structure-vs-route visual incoherence a player reported (the Slide's structure standing north of the Nursery while its forced-Meadow ride went south, never touching it): the player now chooses where it stands, and its destination always matches. `GARDEN_PATH_TILES` and the path-search BFS moved from `src/render/layout.ts` to `src/sim/layout.ts` (as `findPathRoute`) so sim can run this computation without importing render — `src/render/sprouts.ts`'s `gardenRouteBetween` now calls the shared function instead of keeping its own copy. Sunflower Meadow remains reachable by hand-drag exactly as before, independent of where any automation is placed.
 
-**Partially superseded in design 2026-08-02 (Garden Transit, GameRules §9.3/§9.12–§9.17, `plan.yaml` Phase 7).** Phases 7.2–7.12 now provide N-instance configured Slides, deterministic owned-Conveyor composition, explicit derived ports, per-Slide filters/destinations/enabled state, v7→v8 save hydration, grown-garden Conveyor art, and an accessible configuration panel with in-world rule cards and destination previews. Ride-state safety and mid-ride save/restore remain later 7.13–7.16 work. The audit below still records the pre-phase assumptions for traceability until 7.16 performs the final document reconciliation.
+**Partially superseded in design 2026-08-02 (Garden Transit, GameRules §9.3/§9.12–§9.17, `plan.yaml` Phase 7).** Phases 7.2–7.13 now provide N-instance configured Slides, deterministic owned-Conveyor composition, explicit derived ports, per-Slide filters/destinations/enabled state, v7→v8 save hydration, grown-garden Conveyor art, an accessible configuration panel with in-world rule cards and destination previews, and loss-free ride recovery across route edits, removal, disablement, full destinations, stale targets, duplicate claims, and save repair. The audit below still records the pre-phase assumptions for traceability until 7.16 performs the final document reconciliation.
 
 ## Rendering notes
 
@@ -152,7 +152,21 @@ dashed destination trace while a draft is being previewed. High-contrast and
 desaturated captures retain the text and silhouette signals. Manual carry,
 Slide routes, Conveyor joins, and Colour Gate decisions are named explicitly
 in the panel copy; route-state safety and mid-ride edit protection remain 7.13+
-scope.
+scope (implemented in the following 7.13 note).
+
+### Incremental as-built note — Phase 7.13 (2026-08-03)
+
+`src/sim/systems.ts` now keeps active Slide endpoints stable when a rule is
+edited, returns passengers to a hand-reachable entry tile when a Slide is
+removed or disabled, and explains full or stale destinations with typed
+`sprout:transportReturned` events. `repairTransitRides` runs before the first
+post-load tick, keeping the first valid claim in save order and clearing stale
+or duplicate claims without changing the Sprout count. The UI mirrors the
+last recovery in a screen-reader reachable status message. Deterministic unit
+coverage covers conservation, stable priority, safe completion, route edits,
+duplicate claims, and save repair; focused browser coverage passed for removal
+and disablement with no console/page errors. The full-destination and reload
+browser matrix remains part of the Phase 7.15 acceptance gate.
 
 ## The two core shapes Phase 7 changes
 

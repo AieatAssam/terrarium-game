@@ -160,7 +160,14 @@ type GameEvent =
   | { type: 'currency:dewdropsChanged'; total: number; delta: number }
   | { type: 'sprout:transportStarted'; sproutId: string; automationId: AutomationId; instanceId: string; fromTile: TileCoord; toTile: TileCoord; durationMs: number }
   | { type: 'sprout:transportCompleted'; sproutId: string; automationId: AutomationId; instanceId: string }
+  | { type: 'sprout:transportReturned'; sproutId: string; automationId: AutomationId; instanceId: string; tile: TileCoord; reason: 'removed' | 'disabled' | 'destinationFull' | 'invalidTarget' | 'saveRepair' }
   | { type: 'automation:built'; automationId: AutomationId; instanceId: string; siteTile: TileCoord; targetHabitatId?: HabitatId }
+  | { type: 'transit:slideBuilt'; slide: SlideInstance; entryPort: Port; exitPort: Port }
+  | { type: 'transit:slideConfigured'; slide: SlideInstance; entryPort: Port; exitPort: Port }
+  | { type: 'transit:conveyorBuilt'; conveyor: ConveyorSegment; entryPort: Port; exitPort: Port }
+  | { type: 'transit:artifactMoved'; artifactId: string; artifactKind: 'gardenSlide' | 'sproutConveyor'; tile: TileCoord }
+  | { type: 'transit:artifactRemoved'; artifactId: string; artifactKind: 'gardenSlide' | 'sproutConveyor'; refund: number }
+  | { type: 'transit:routeStateChanged'; artifactId: string; artifactKind: TransitArtifactKind; state: RouteState }
   | { type: 'automation:unlocked'; automationId: AutomationId }
   | { type: 'automation:colourGateRuleChanged'; lanes: { west: SproutTypeId | null; east: SproutTypeId | null } }
   | { type: 'automation:moodBellRuleChanged'; mood: MoodId }

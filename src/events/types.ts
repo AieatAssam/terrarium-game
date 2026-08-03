@@ -103,6 +103,15 @@ export type GameEvent =
       instanceId: string;
     }
   | {
+      /** A ride was ended safely and the Sprout was returned to a hand-reachable tile. */
+      type: 'sprout:transportReturned';
+      sproutId: string;
+      automationId: AutomationId;
+      instanceId: string;
+      tile: TileCoord;
+      reason: 'removed' | 'disabled' | 'destinationFull' | 'invalidTarget' | 'saveRepair';
+    }
+  | {
       type: 'automation:built';
       automationId: AutomationId;
       instanceId: string;

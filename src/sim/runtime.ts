@@ -35,6 +35,7 @@ import {
   placeHabitat as placeHabitatSystem,
   placeSlide as placeSlideSystem,
   purchaseUpgrade as purchaseUpgradeSystem,
+  repairTransitRides,
   removeConveyor as removeConveyorSystem,
   removeSlide as removeSlideSystem,
   moveConveyor as moveConveyorSystem,
@@ -203,7 +204,8 @@ export async function startSimRuntime(
     const closedAt = saved.meta.lastSavedAt;
     const elapsedRealMs = Math.max(0, Date.now() - closedAt);
     const offline = computeOfflineProgress(elapsedRealMs, saved.sim);
-    state = { ...saved.sim, dewdrops: saved.sim.dewdrops + offline.dewdropsEarned };
+    const repaired = repairTransitRides({ ...saved.sim, dewdrops: saved.sim.dewdrops + offline.dewdropsEarned });
+    state = repaired.state;
     // Always emit save:loaded (with the full snapshot) when a save exists,
     // even with zero offline gain — the UI store's hydration depends on
     // this event firing, not just on there being something to celebrate.
@@ -254,6 +256,7 @@ export async function startSimRuntime(
     if (offline.dewdropsEarned > 0) {
       loadedEvents.push({ type: 'currency:dewdropsChanged', total: state.dewdrops, delta: offline.dewdropsEarned });
     }
+    loadedEvents.push(...repaired.events);
     const announce = (): void => {
       for (const event of loadedEvents) bus.emit(event);
     };

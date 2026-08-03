@@ -2243,7 +2243,7 @@ steps:
 
   - phase: "7.13"
     title: Guarantee route safety — no Sprout lost, trapped, duplicated or silently rerouted
-    status: planned
+    status: completed
     why: >
       GameRules §9.15 states these as absolute guarantees. They are the
       difference between a cosy system the player trusts and one they are
@@ -2251,7 +2251,12 @@ steps:
     supersedes: []
     files:
       - src/sim/systems.ts
+      - src/sim/runtime.ts
+      - src/events/types.ts
+      - src/ui/uiState.ts
+      - src/ui/components/transitConfig.ts
       - tests/unit/sim.transitSafety.test.ts (new)
+      - tests/e2e/transitSafety.dev.spec.ts (new)
     references:
       - docs/references/slime-rancher-2/reward-feedback/slime-rancher-2-05.jpg
       - docs/references/slime-rancher-2/reward-feedback/slime-rancher-2-05.md
@@ -2288,7 +2293,7 @@ steps:
       High — this is where silent data loss would live. Property tests before
       implementation, not after.
     commit: "feat(sim): guarantee Sprout safety across transit edits and failures"
-    verification: Randomised property tests for conservation; live mid-ride removal and reload.
+    verification: Deterministic safety tests cover conservation, stable priority, route edits, full/stale targets, duplicate claims, and save repair; focused browser removal and disablement scenarios passed with no console/page errors. Full-destination and reload browser scenarios remain in the Phase 7.15 acceptance matrix.
     depends_on: ["7.10", "7.12"]
 
   - phase: "7.14"

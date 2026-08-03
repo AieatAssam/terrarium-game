@@ -352,11 +352,17 @@ export const UI_CSS = /* css */ `
 
 .tt-transit-panel-copy,
 .tt-transit-card-status,
-.tt-transit-preview-copy {
+.tt-transit-preview-copy,
+.tt-transit-recovery {
   margin: 0;
   color: var(--tt-text-muted);
   font-size: 0.78rem;
   line-height: 1.35;
+}
+
+.tt-transit-recovery {
+  color: var(--tt-text);
+  font-weight: 700;
 }
 
 .tt-transit-card {
