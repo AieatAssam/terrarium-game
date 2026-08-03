@@ -8,6 +8,7 @@ export type TransitPortKind = (typeof TRANSIT_PORT_KINDS)[number];
 export type TransitPortFacing = 'north' | 'east' | 'south' | 'west';
 export type TransitPortDirection = TransitPortFacing;
 export type TransitPortCompatibility = 'transit' | 'nursery' | 'habitat' | 'junction';
+export const TRANSIT_PORT_FACINGS: readonly TransitPortFacing[] = ['north', 'east', 'south', 'west'];
 
 /** A derived attachment point. It is never part of a saved artifact. */
 export interface Port {
@@ -48,19 +49,25 @@ export function getNurseryPorts(tile: TileCoord = NURSERY_TILE): { outboundDock:
   return { outboundDock: makePort('nursery', 'dock', tile, 'north', 'nursery') };
 }
 
-/** Garden Slide ports are derived from its tile and fixed northbound flow. */
-export function getSlidePorts(slide: { id: string; tile: TileCoord }): { entryPort: Port; exitPort: Port } {
+/** Garden Slide ports are derived from its tile and the route's flow direction. */
+export function getSlidePorts(
+  slide: { id: string; tile: TileCoord },
+  flowFacing: TransitPortFacing = 'north',
+): { entryPort: Port; exitPort: Port } {
   return {
-    entryPort: makePort(slide.id, 'entry', slide.tile, 'south', 'transit'),
-    exitPort: makePort(slide.id, 'exit', slide.tile, 'north', 'transit'),
+    entryPort: makePort(slide.id, 'entry', slide.tile, oppositePortFacing(flowFacing), 'transit'),
+    exitPort: makePort(slide.id, 'exit', slide.tile, flowFacing, 'transit'),
   };
 }
 
 /** Conveyor ports use the same straight-through contract as a Slide. */
-export function getConveyorPorts(segment: { id: string; tile: TileCoord }): { entryPort: Port; exitPort: Port } {
+export function getConveyorPorts(
+  segment: { id: string; tile: TileCoord },
+  flowFacing: TransitPortFacing = 'north',
+): { entryPort: Port; exitPort: Port } {
   return {
-    entryPort: makePort(segment.id, 'entry', segment.tile, 'south', 'transit'),
-    exitPort: makePort(segment.id, 'exit', segment.tile, 'north', 'transit'),
+    entryPort: makePort(segment.id, 'entry', segment.tile, oppositePortFacing(flowFacing), 'transit'),
+    exitPort: makePort(segment.id, 'exit', segment.tile, flowFacing, 'transit'),
   };
 }
 
@@ -128,9 +135,19 @@ function tileDistance(a: TileCoord, b: TileCoord): number {
   return Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
 }
 
+function facingFromTo(from: TileCoord, to: TileCoord): TransitPortFacing | null {
+  if (to.x === from.x && to.z === from.z - 1) return 'north';
+  if (to.x === from.x + 1 && to.z === from.z) return 'east';
+  if (to.x === from.x && to.z === from.z + 1) return 'south';
+  if (to.x === from.x - 1 && to.z === from.z) return 'west';
+  return null;
+}
+
 /** True when compatible ports occupy neighbouring grid tiles and share a seam. */
 export function portsJoined(a: Port, b: Port): boolean {
-  return portsCompatible(a, b) && a.facing === OPPOSITE_FACING[b.facing] && tileDistance(a.tile, b.tile) === 1;
+  const aTowardB = facingFromTo(a.tile, b.tile);
+  const bTowardA = facingFromTo(b.tile, a.tile);
+  return portsCompatible(a, b) && tileDistance(a.tile, b.tile) === 1 && aTowardB !== null && bTowardA !== null && a.facing === aTowardB && b.facing === bTowardA;
 }
 
 /** Placement clearance is tile occupancy; physical radii are owned by propDims. */

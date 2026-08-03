@@ -42,6 +42,7 @@ import {
   getNurseryPorts,
   getSlidePorts,
   portsJoined,
+  TRANSIT_PORT_FACINGS,
   type Port,
 } from '../sim/ports';
 
@@ -65,6 +66,7 @@ const PAN_SPEED = 0.0026;
 const WHEEL_ZOOM_SENSITIVITY = 0.01;
 const PINCH_ZOOM_SENSITIVITY = 1;
 const PLACEMENT_PREVIEW_EVENT = 'terrarium:placementPreview';
+const TRANSIT_SELECTION_EVENT = 'terrarium:transitSelection';
 
 export interface InputHooks {
   /**
@@ -156,7 +158,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   bus.subscribe('transit:artifactMoved', (e) => transitTiles.set(e.artifactId, { kind: e.artifactKind, tile: e.tile }));
   bus.subscribe('transit:artifactRemoved', (e) => {
     transitTiles.delete(e.artifactId);
-    if (selectedTransit?.id === e.artifactId) selectedTransit = null;
+    if (selectedTransit?.id === e.artifactId) setSelectedTransit(null);
   });
   bus.subscribe('save:loaded', (e) => {
     for (const [id, tile] of Object.entries(e.snapshot.automationSites ?? {}) as [AutomationId, TileCoord][]) {
@@ -199,8 +201,10 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     for (const entry of habitats.entries()) ports.push(getHabitatPorts(entry.id, entry.habitatId, entry.tile).approachDock);
     for (const [id, entry] of transitTiles) {
       if (id === movingId) continue;
-      const derived = entry.kind === 'gardenSlide' ? getSlidePorts({ id, tile: entry.tile }) : getConveyorPorts({ id, tile: entry.tile });
-      ports.push(derived.entryPort, derived.exitPort);
+      for (const facing of TRANSIT_PORT_FACINGS) {
+        const derived = entry.kind === 'gardenSlide' ? getSlidePorts({ id, tile: entry.tile }, facing) : getConveyorPorts({ id, tile: entry.tile }, facing);
+        ports.push(derived.entryPort, derived.exitPort);
+      }
     }
     const gateTile = occupiedSiteTiles.get('colourGate');
     if (gateTile) {
@@ -211,8 +215,10 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
   };
 
   const candidatePorts = (kind: PricedTransitKind, tile: TileCoord): Port[] => {
-    const derived = kind === 'gardenSlide' ? getSlidePorts({ id: 'preview', tile }) : getConveyorPorts({ id: 'preview', tile });
-    return [derived.entryPort, derived.exitPort];
+    return TRANSIT_PORT_FACINGS.flatMap((facing) => {
+      const derived = kind === 'gardenSlide' ? getSlidePorts({ id: 'preview', tile }, facing) : getConveyorPorts({ id: 'preview', tile }, facing);
+      return [derived.entryPort, derived.exitPort];
+    });
   };
 
   const snapTransitTile = (
@@ -250,8 +256,8 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     if (kind === 'gardenSlide' && !isValidAutomationSite('gardenSlide', tile, occupied)) {
       return { state: 'invalid', message: 'Garden Slides need a path tile with room to join.' };
     }
-    if (kind === 'gardenSlide' && !candidatePorts(kind, tile).some((candidate) => portsForTransit(movingId).some((port) => portsJoined(candidate, port)))) {
-      return { state: 'invalid', message: 'Join the Slide to a compatible garden port.' };
+    if (!candidatePorts(kind, tile).some((candidate) => portsForTransit(movingId).some((port) => portsJoined(candidate, port)))) {
+      return { state: 'invalid', message: 'Place it beside a compatible Slide, habitat, Nursery, or Gate port.' };
     }
     return { state: 'valid', message: 'Ready to place on this tile.' };
   };
@@ -442,9 +448,23 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
 
     if (activePointers.size === 1) {
       const ground = groundPointAt(x, y, GROUND_PLANE);
+      const sproutId = pickSproutId(x, y);
+      if (sproutId) {
+        const visual = sprouts.get(sproutId);
+        if (visual && !visual.held && visual.state !== 'settled') {
+          setSelectedTransit(null);
+          dragSproutId = sproutId;
+          dragPointerId = event.pointerId;
+          visual.held = true;
+          bus.emit({ type: 'sprout:pickedUp', sproutId });
+          const ground = groundPointAt(x, y, DRAG_HEIGHT_PLANE);
+          if (ground) sprouts.setDragPosition(sproutId, ground.x, ground.z);
+          return;
+        }
+      }
       const transit = ground ? automation.nearestTransitWithin(ground, HOVER_MARGIN_TILES) : null;
       if (transit) {
-        selectedTransit = transit;
+        setSelectedTransit(transit);
         window.dispatchEvent(
           new CustomEvent(PLACEMENT_PREVIEW_EVENT, {
             detail: {
@@ -458,19 +478,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
         panPointerId = null;
         return;
       }
-      const sproutId = pickSproutId(x, y);
-      if (sproutId) {
-        const visual = sprouts.get(sproutId);
-        if (visual && !visual.held && visual.state !== 'settled') {
-          dragSproutId = sproutId;
-          dragPointerId = event.pointerId;
-          visual.held = true;
-          bus.emit({ type: 'sprout:pickedUp', sproutId });
-          const ground = groundPointAt(x, y, DRAG_HEIGHT_PLANE);
-          if (ground) sprouts.setDragPosition(sproutId, ground.x, ground.z);
-          return;
-        }
-      }
+      setSelectedTransit(null);
       panPointerId = event.pointerId;
     }
   };
@@ -626,7 +634,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
       event.preventDefault();
       const removed = selectedTransit;
       hooks.onRemoveTransit?.(removed.kind, removed.id);
-      selectedTransit = null;
+      setSelectedTransit(null);
       window.dispatchEvent(
         new CustomEvent(PLACEMENT_PREVIEW_EVENT, {
           detail: { state: 'valid', message: 'Removed. The Dewdrops have been returned.', kind: removed.kind, tile: null },
@@ -644,7 +652,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
       const moving = selectedTransit;
       buildCursorTile = transitTiles.get(moving.id)?.tile ?? GARDEN_SLIDE_TILE;
       buildMode = { kind: 'transit', id: moving.kind, movingId: moving.id };
-      selectedTransit = null;
+      setSelectedTransit(null);
       previewTransit(moving.kind, buildCursorTile, moving.id);
     }
   };
@@ -716,7 +724,7 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
       dragSproutId = null;
       dragPointerId = null;
     }
-    selectedTransit = null;
+    setSelectedTransit(null);
     buildCursorTile = kind === 'gardenSlide' ? GARDEN_SLIDE_TILE : { x: 8, z: 6 };
     buildMode = { kind: 'transit', id: kind };
     previewTransit(kind, buildCursorTile);
@@ -726,6 +734,11 @@ export function initInput(renderer: RendererHandle, bus: EventBus, hooks: InputH
     if (buildMode?.kind !== 'transit' || buildMode.id !== 'gardenSlide') return;
     buildMode = { ...buildMode, config };
   };
+
+  function setSelectedTransit(next: { id: string; kind: PricedTransitKind } | null): void {
+    selectedTransit = next;
+    window.dispatchEvent(new CustomEvent(TRANSIT_SELECTION_EVENT, { detail: next }));
+  }
 
   const exitBuildMode = (): void => {
     buildMode = null;

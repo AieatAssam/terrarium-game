@@ -16,6 +16,7 @@
 
 import type { AutomationId, HabitatId, SproutTypeId } from '../../core/ids';
 import { habitatBuildCost, HABITATS } from '../../data/habitats';
+import { UNLOCK_THRESHOLDS } from '../../data/unlocks';
 import { SPROUT_TYPES } from '../../data/sproutTypes';
 import {
   conveyorUnlockMessage,
@@ -299,7 +300,7 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
     }
 
     const transitKinds = (['gardenSlide', 'sproutConveyor'] as PricedTransitKind[]).filter((id) =>
-      id === 'gardenSlide' ? state.unlockedAutomations.has('gardenSlide') : state.unlockedAutomations.has('gardenSlide'),
+      id === 'gardenSlide' || state.unlockedAutomations.has('gardenSlide'),
     );
     const desiredTransit = keep(transitButtons, transitKinds);
     for (let i = 0; i < desiredTransit.length; i += 1) {
@@ -308,16 +309,23 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
       const count = state.transitCounts[id];
       const cap = TRANSIT_CAPS[id];
       const price = id === 'gardenSlide' ? nextGardenSlidePrice(state.transitCounts.gardenSlide) : SPROUT_CONVEYOR_COST;
-      const locked = id === 'sproutConveyor' && state.transitCounts.gardenSlide === 0;
+      const locked = id === 'gardenSlide'
+        ? !state.unlockedAutomations.has('gardenSlide')
+        : state.transitCounts.gardenSlide === 0;
       const capped = count >= cap;
       const affordable = state.dewdropTotal >= price;
-      const reason = locked ? conveyorUnlockMessage() : capped ? transitCapMessage(id) : !affordable ? `You need ${price} Dewdrops.` : '';
+      const slidePlacementsLeft = Math.max(0, UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements - state.correctPlacementCount);
+      const reason = locked
+        ? id === 'gardenSlide'
+          ? `Sort ${slidePlacementsLeft} more Sprouts correctly to unlock it.`
+          : conveyorUnlockMessage()
+        : capped ? transitCapMessage(id) : !affordable ? `You need ${price} Dewdrops.` : '';
       const isSelected = selected?.kind === 'transit' && selected.id === id;
       button.disabled = Boolean(locked || capped || !affordable);
       button.setAttribute('aria-pressed', String(isSelected));
       button.setAttribute(
         'aria-label',
-        `${TRANSIT_LABEL[id]} — ${price} Dewdrops, ${count} of ${cap}${reason ? ` (${reason})` : ''}${isSelected ? ' (selected — click to cancel placement)' : ''}`,
+        `${TRANSIT_LABEL[id]} — ${price} Dewdrops, ${count} of ${cap}${id === 'gardenSlide' && locked ? `, ${state.correctPlacementCount}/${UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements} correct Sprouts` : ''}${reason ? ` (${reason})` : ''}${isSelected ? ' (selected — click to cancel placement)' : ''}`,
       );
       if (button.childElementCount === 0) {
         button.append(
@@ -325,12 +333,12 @@ export function createBuildMenu(bus: EventBus, store: UiStateStore, hooks: Build
             'aria-hidden': 'true',
             html: iconHtml(`ui.icon.${id}`, icons[TRANSIT_ICON[id]]),
           }),
-          el('span', {}, [`${TRANSIT_LABEL[id]} · ${price} · ${count}/${cap}`]),
+          el('span', {}, [`${TRANSIT_LABEL[id]} · ${price} · ${count}/${cap}${id === 'gardenSlide' && locked ? ` · ${state.correctPlacementCount}/${UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements}` : ''}`]),
         );
         button.addEventListener('click', () => toggleTransit(id));
       } else {
         const label = button.querySelector('span:last-child');
-        if (label) label.textContent = `${TRANSIT_LABEL[id]} · ${price} · ${count}/${cap}`;
+        if (label) label.textContent = `${TRANSIT_LABEL[id]} · ${price} · ${count}/${cap}${id === 'gardenSlide' && locked ? ` · ${state.correctPlacementCount}/${UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements}` : ''}`;
       }
     }
 

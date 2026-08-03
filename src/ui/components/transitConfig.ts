@@ -20,6 +20,7 @@ export interface TransitConfigHandle {
 }
 
 const slideName = (id: string): string => `Garden Slide ${id.replace(/^slide-/, '')}`;
+const TRANSIT_SELECTION_EVENT = 'terrarium:transitSelection';
 
 function copyConfig(slide: TransitSlideUiState): TransitSlideConfiguration {
   return {
@@ -47,6 +48,7 @@ export function createTransitConfigPanel(store: UiStateStore, hooks: TransitConf
   const element = el('section', { className: 'tt-transit-panel', 'aria-label': 'Transit rules' });
   const drafts = new Map<string, TransitSlideConfiguration>();
   let open = false;
+  let selectedTransitId: string | null = null;
   let lastFocusedControl: string | null = null;
   let lastSlidesSignature = '';
 
@@ -80,13 +82,14 @@ export function createTransitConfigPanel(store: UiStateStore, hooks: TransitConf
   function render(force = false): void {
     const ui = store.getState();
     const slides = ui.transitSlides;
+    const selectedSlide = slides.find((slide) => slide.id === selectedTransitId) ?? null;
     const recovery = ui.lastTransitRecovery;
     const slidesSignature = slides.map((slide) => `${slide.id}/${slide.tile.x},${slide.tile.z}/${slide.acceptedKind}/${slide.destination}/${slide.enabled}`).join('|');
-    const signature = `${slidesSignature}|recovery:${recovery?.reason ?? ''}/${recovery?.sproutId ?? ''}`;
+    const signature = `${slidesSignature}|selected:${selectedTransitId ?? ''}|recovery:${recovery?.reason ?? ''}/${recovery?.sproutId ?? ''}`;
     if (!force && signature === lastSlidesSignature) return;
     lastSlidesSignature = signature;
     rememberFocus();
-    if (slides.length === 0 && !recovery) {
+    if (!selectedSlide && !recovery) {
       element.hidden = true;
       element.replaceChildren();
       return;
@@ -100,7 +103,7 @@ export function createTransitConfigPanel(store: UiStateStore, hooks: TransitConf
       'aria-expanded': String(open),
       'aria-controls': 'tt-transit-rules',
       'data-transit-focus': 'toggle',
-    }, [`Transit rules · ${slides.length}`]);
+    }, [selectedSlide ? `Transit rules · ${slideName(selectedSlide.id)}` : 'Transit update']);
     toggle.addEventListener('click', () => {
       open = !open;
       render(true);
@@ -122,7 +125,7 @@ export function createTransitConfigPanel(store: UiStateStore, hooks: TransitConf
       panel.append(el('p', { className: 'tt-transit-recovery', role: 'status', 'aria-live': 'polite' }, [recoveryCopy(recovery.reason)]));
     }
 
-    for (const slide of slides) {
+    for (const slide of selectedSlide ? [selectedSlide] : []) {
       const draft = drafts.get(slide.id) ?? copyConfig(slide);
       const unchanged = sameConfig(draft, copyConfig(slide));
       const acceptedName = draft.acceptedKind === 'any' ? 'Any Sprout' : SPROUT_TYPES[draft.acceptedKind].displayName;
@@ -200,11 +203,19 @@ export function createTransitConfigPanel(store: UiStateStore, hooks: TransitConf
 
   render(true);
   const unsubscribe = store.subscribe(() => render());
+  const handleSelection = (event: Event): void => {
+    const detail = (event as CustomEvent<{ id: string; kind: string } | null>).detail;
+    selectedTransitId = detail?.kind === 'gardenSlide' ? detail.id : null;
+    open = false;
+    render(true);
+  };
+  window.addEventListener(TRANSIT_SELECTION_EVENT, handleSelection);
 
   return {
     element,
     dispose: () => {
       unsubscribe();
+      window.removeEventListener(TRANSIT_SELECTION_EVENT, handleSelection);
       for (const slide of store.getState().transitSlides) hooks.onPreviewSlide?.(slide.id, null);
       element.remove();
     },

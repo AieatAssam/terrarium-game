@@ -37,6 +37,8 @@ export interface TransitSlideUiState {
 
 export interface UiState {
   dewdropTotal: number;
+  /** Correctly settled Sprouts, mirrored for unlock progress copy. */
+  correctPlacementCount: number;
   unlockedAutomations: Set<AutomationId>;
   /**
    * Automations that are actually PLACED (2026-08-01, manual placement —
@@ -95,6 +97,7 @@ export interface UiStateStore {
 function createInitialState(): UiState {
   return {
     dewdropTotal: 0,
+    correctPlacementCount: 0,
     unlockedAutomations: new Set(),
     placedAutomations: new Set(),
     transitCounts: { gardenSlide: 0, sproutConveyor: 0 },
@@ -150,6 +153,7 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
 
   const unsubscribers: Array<() => void> = [
     on('currency:dewdropsChanged', (prev, event) => ({ ...prev, dewdropTotal: event.total })),
+    on('sprout:placed:correct', (prev) => ({ ...prev, correctPlacementCount: prev.correctPlacementCount + 1 })),
     on('automation:unlocked', (prev, event) => ({
       ...prev,
       unlockedAutomations: new Set(prev.unlockedAutomations).add(event.automationId),
@@ -253,6 +257,7 @@ export function createUiStateStore(bus: EventBus): UiStateStore {
       // doesn't replay a toast/SFX on load (see the GameEvent doc comment
       // on save:loaded's snapshot field).
       dewdropTotal: event.snapshot.dewdrops,
+      correctPlacementCount: event.snapshot.habitatInstances?.reduce((total, instance) => total + instance.count, 0) ?? prev.correctPlacementCount,
       unlockedAutomations: new Set(event.snapshot.unlockedAutomations),
       placedAutomations: new Set(Object.keys(event.snapshot.automationSites ?? {}) as AutomationId[]),
       transitCounts: {

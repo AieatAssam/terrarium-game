@@ -117,7 +117,7 @@ describe('Garden Transit domain model', () => {
       ]),
     );
 
-    const conveyorResult = placeConveyor(slideResult.state, { x: 7, z: 8 });
+    const conveyorResult = placeConveyor(slideResult.state, { x: 8, z: 6 });
     expect(conveyorResult.state.dewdrops).toBe(0);
     expect(conveyorResult.state.conveyors).toHaveLength(1);
     expect(JSON.parse(JSON.stringify(conveyorResult.state))).toEqual(conveyorResult.state);
@@ -155,7 +155,7 @@ describe('Garden Transit domain model', () => {
 
     const withSlide = placeSlide({ ...unlocked, dewdrops: 150 }, { tile: GARDEN_SLIDE_TILE, destination: 'sunflowerMeadow' }).state;
     const poorState = { ...withSlide, dewdrops: 14 };
-    const poorConveyor = placeConveyor(poorState, { x: 7, z: 8 });
+    const poorConveyor = placeConveyor(poorState, { x: 8, z: 6 });
     expect(poorConveyor.state).toBe(poorState);
     expect(transitPlacementLockReason(poorState, 'sproutConveyor')).toBe(
       'You need 15 Dewdrops to place this Sprout Conveyor segment.',
@@ -172,6 +172,19 @@ describe('Garden Transit domain model', () => {
     };
     expect(placeConveyor(conveyorCap, { x: 5, z: 5 }).state).toBe(conveyorCap);
     expect(transitPlacementLockReason(conveyorCap, 'sproutConveyor')).toContain('thirty Sprout Conveyor segments');
+  });
+
+  it('requires a Conveyor to touch a valid transit or habitat port', () => {
+    let state = {
+      ...createInitialSimState(17),
+      correctPlacementCount: UNLOCK_THRESHOLDS.gardenSlide.requiredCorrectPlacements,
+      dewdrops: 500,
+    };
+    state = unlockSystem(state).state;
+    state = placeSlide(state, { tile: GARDEN_SLIDE_TILE, destination: 'sunflowerMeadow' }).state;
+    expect(placeConveyor(state, { x: 7, z: 8 }).state).toBe(state);
+    const habitatSide = placeConveyor(state, { x: 4, z: 5 });
+    expect(habitatSide.state.conveyors[0]?.tile).toEqual({ x: 4, z: 5 });
   });
 
   it('refunds removals at the current owned count and makes buy-sell-buy neutral', () => {
@@ -191,7 +204,7 @@ describe('Garden Transit domain model', () => {
     const rebought = placeSlide(sold.state, { tile: { x: 8, z: 6 }, destination: 'dewPond' });
     expect(rebought.state.dewdrops).toBe(580);
 
-    const conveyor = placeConveyor({ ...rebought.state, dewdrops: 15 }, { x: 7, z: 8 });
+    const conveyor = placeConveyor({ ...rebought.state, dewdrops: 15 }, { x: 7, z: 6 });
     expect(removeConveyor(conveyor.state, conveyor.state.conveyors[0].id).state.dewdrops).toBe(15);
   });
 
@@ -204,17 +217,17 @@ describe('Garden Transit domain model', () => {
     state = unlockSystem(state).state;
     state = placeSlide(state, { tile: GARDEN_SLIDE_TILE, destination: 'sunflowerMeadow' }).state;
     state = placeSlide(state, { tile: { x: 8, z: 6 }, destination: 'dewPond' }).state;
-    const route = placeConveyor({ ...state, dewdrops: 15 }, { x: 8, z: 10 });
+    const route = placeConveyor({ ...state, dewdrops: 15 }, { x: 7, z: 6 });
     state = route.state;
-    const moved = moveSlide(state, 'slide-1', { x: 8, z: 9 });
-    expect(moved.state.slides.find((slide) => slide.id === 'slide-1')?.tile).toEqual({ x: 8, z: 9 });
+    const moved = moveSlide(state, 'slide-1', { x: 9, z: 6 });
+    expect(moved.state.slides.find((slide) => slide.id === 'slide-1')?.tile).toEqual({ x: 9, z: 6 });
     expect(moved.state.dewdrops).toBe(state.dewdrops);
-    expect(moved.events).toEqual([{ type: 'transit:artifactMoved', artifactId: 'slide-1', artifactKind: 'gardenSlide', tile: { x: 8, z: 9 } }]);
+    expect(moved.events).toEqual([{ type: 'transit:artifactMoved', artifactId: 'slide-1', artifactKind: 'gardenSlide', tile: { x: 9, z: 6 } }]);
     expect(moveSlide(moved.state, 'slide-1', HABITAT_TILES.emberNook).state).toBe(moved.state);
 
-    const conveyor = placeConveyor({ ...moved.state, dewdrops: 15 }, { x: 7, z: 8 });
-    const conveyorMove = moveConveyor(conveyor.state, 'conveyor-7-8', { x: 7, z: 9 });
-    expect(conveyorMove.state.conveyors.find((segment) => segment.id === 'conveyor-7-8')?.tile).toEqual({ x: 7, z: 9 });
+    const conveyor = placeConveyor({ ...moved.state, dewdrops: 15 }, { x: 7, z: 5 });
+    const conveyorMove = moveConveyor(conveyor.state, 'conveyor-7-5', { x: 8, z: 5 });
+    expect(conveyorMove.state.conveyors.find((segment) => segment.id === 'conveyor-7-5')?.tile).toEqual({ x: 8, z: 5 });
     expect(conveyorMove.state.dewdrops).toBe(0);
   });
 

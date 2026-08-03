@@ -14,6 +14,7 @@ describe('uiState store', () => {
     const store = createUiStateStore(new EventBus());
     const state = store.getState();
     expect(state.dewdropTotal).toBe(0);
+    expect(state.correctPlacementCount).toBe(0);
     expect(state.unlockedAutomations.size).toBe(0);
     expect(state.unlockedAchievements.size).toBe(0);
     expect(state.journalDiscovered.size).toBe(0);
@@ -25,6 +26,14 @@ describe('uiState store', () => {
     const store = createUiStateStore(bus);
     bus.emit({ type: 'currency:dewdropsChanged', total: 42, delta: 42 });
     expect(store.getState().dewdropTotal).toBe(42);
+  });
+
+  it('tracks correct-placement progress for the Garden Slide unlock', () => {
+    const bus = new EventBus();
+    const store = createUiStateStore(bus);
+    bus.emit({ type: 'sprout:placed:correct', sproutId: 'sprout-1', habitatId: 'emberNook', habitatInstanceId: 'emberNook-1' });
+    bus.emit({ type: 'sprout:placed:correct', sproutId: 'sprout-2', habitatId: 'dewPond', habitatInstanceId: 'dewPond-1' });
+    expect(store.getState().correctPlacementCount).toBe(2);
   });
 
   it('accumulates unlockedAutomations, upgradeLevels, unlockedAchievements, and journalDiscovered', () => {

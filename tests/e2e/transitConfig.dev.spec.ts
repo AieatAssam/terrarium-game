@@ -5,6 +5,7 @@ import {
   getUiState,
   installBusRecorder,
   placeTransitViaBuildMenu,
+  projectToScreen,
   readSaveEnvelope,
   waitForDevHooks,
 } from './helpers';
@@ -47,13 +48,15 @@ test('configures a Slide by keyboard with live preview, status copy, contrast, a
   await installBusRecorder(page, ['transit:slideBuilt', 'transit:slideConfigured', 'save:written']);
   await unlockSlide(page);
   await placeTransitViaBuildMenu(page, 'gardenSlide', GARDEN_SLIDE_TILE);
+  const slidePoint = await projectToScreen(page, { x: GARDEN_SLIDE_TILE.x, y: 0, z: GARDEN_SLIDE_TILE.z });
+  await page.mouse.click(slidePoint.x, slidePoint.y);
 
   const rules = page.getByRole('region', { name: 'Transit rules' });
   await expect(rules.getByRole('button', { name: /Transit rules/ })).toBeVisible();
   await rules.getByRole('button', { name: /Transit rules/ }).press('Enter');
   const destination = rules.getByLabel('Garden Slide 1 destination');
   await destination.focus();
-  await destination.press('d');
+  await destination.selectOption('dewPond');
   await expect(rules.getByRole('status')).toContainText('Preview → Dew Pond');
   await page.screenshot({ path: 'docs/visual-qa/transit/config-keyboard-focus.png' });
 

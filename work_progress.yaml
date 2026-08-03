@@ -19,7 +19,7 @@ meta:
   head: HEAD fix(render): restore crisp visual grounding
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
-  tests_passing: "375 unit tests / 36 files (re-verified 2026-08-03 via the exact required gate — all green)"
+  tests_passing: "378 unit tests / 36 files (re-verified 2026-08-03 via the exact required gate — all green)"
   check_command: npm run typecheck && npm run lint && npm test && npm run build
   note: >
     This meta block had gone stale twice (read a98b552/258 tests through
@@ -2536,6 +2536,40 @@ decisions:
         83.5ms high / 37.5ms low and no new console/page errors. The exact
       project gate passed: typecheck, lint, 375 unit tests, and production
       build. Publishing is still pending explicit approval for the new commit.
+
+  - owner: codex session 2026-08-03 (transit interaction follow-up)
+    files:
+      [
+        src/sim/ports.ts,
+        src/sim/systems.ts,
+        src/input/index.ts,
+        src/render/automation.ts,
+        src/ui/uiState.ts,
+        src/ui/components/buildMenu.ts,
+        src/ui/components/transitConfig.ts,
+        tests/unit/sim.ports.test.ts,
+        tests/unit/sim.transit.test.ts,
+        docs/visual-qa/improvement-log.md,
+        work_progress.yaml,
+      ]
+    task: >
+      Fix the reported Garden Transit interaction defects: automatic Slide
+      rotation, Conveyor attachment and origin-directed arrows, valid-neighbor
+      placement, Sprout picking through Slides, visible unlock progress, and
+      contextual Transit rules. Keep direction derived from the live route,
+      preserve the v8 save shape, and verify the player-facing flow in a fresh
+      browser session.
+    status: >
+      DONE, 2026-08-03: route-derived facing is now used for ports, Slide
+      rotation, and Conveyor arrows; ports also verify that each facing points
+      at the actual neighbouring tile, so invalid/diagonal Conveyor and Slide
+      placements are rejected before charging while habitat docks remain valid
+      endpoints. Pointer selection checks Sprouts before transit objects;
+      selected-Slide rules and world labels are contextual; Garden Slide unlock
+      progress is mirrored into UiState and shown as correct-count progress in
+      the build menu. Focused transitConfig and conveyorRoute browser tests
+      passed with no console/page errors. Exact project gate passed: typecheck,
+      lint, 378 unit tests, and production build. Changes remain uncommitted.
 
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?

@@ -165,7 +165,7 @@ test.describe('Garden Transit acceptance gate', () => {
     await frame(page, { x: 6, z: 5 }, 7.5);
     await page.screenshot({ path: `${CAPTURE_DIR}/gate-conveyor.png` });
 
-    await placeTransitViaBuildMenu(page, 'gardenSlide', { x: 8, z: 9 }, {
+    await placeTransitViaBuildMenu(page, 'gardenSlide', { x: 9, z: 6 }, {
       acceptedKind: 'dew',
       destination: 'dewPond',
     });
@@ -211,6 +211,8 @@ test.describe('Garden Transit acceptance gate', () => {
     await spawnAndDropFast(page, target.sproutType, target.habitat, targetRoom.id, capacity + 2);
     await waitForTransport(page, passenger, 'sprout:transportReturned', 'destinationFull');
 
+    const firstSlidePoint = await projectToScreen(page, { x: GARDEN_SLIDE_TILE.x, y: 0, z: GARDEN_SLIDE_TILE.z });
+    await page.mouse.click(firstSlidePoint.x, firstSlidePoint.y);
     const rules = page.getByRole('region', { name: 'Transit rules' });
     await rules.getByRole('button', { name: /Transit rules/ }).click();
     await expect(rules).toContainText('destination was full');
@@ -233,6 +235,8 @@ test.describe('Garden Transit acceptance gate', () => {
     });
     const disabledPassenger = await debugSpawnAndGetId(page, 'star');
     await waitForTransport(page, disabledPassenger, 'sprout:transportStarted');
+    const secondSlidePoint = await projectToScreen(page, { x: GARDEN_SLIDE_TILE.x, y: 0, z: GARDEN_SLIDE_TILE.z });
+    await page.mouse.click(secondSlidePoint.x, secondSlidePoint.y);
     const reopenedRules = page.getByRole('region', { name: 'Transit rules' });
     await page.evaluate(() => {
       const panel = document.querySelector('.tt-transit-panel');
@@ -282,6 +286,8 @@ test.describe('Garden Transit acceptance gate', () => {
     await waitForDevHooks(page);
     await installBusRecorder(page, ['save:written']);
     await expect.poll(async () => (await getUiState(page)).transitCounts.gardenSlide).toBe(1);
+    const repairedSlidePoint = await projectToScreen(page, { x: GARDEN_SLIDE_TILE.x, y: 0, z: GARDEN_SLIDE_TILE.z });
+    await page.mouse.click(repairedSlidePoint.x, repairedSlidePoint.y);
     const rules = page.getByRole('region', { name: 'Transit rules' });
     await rules.getByRole('button', { name: /Transit rules/ }).click();
     await expect(rules).toContainText('while the garden save was repaired');
@@ -377,11 +383,12 @@ test.describe('Garden Transit touch and keyboard gate', () => {
     const slideButton = toolbar.getByRole('button', { name: /^Garden Slide/ });
     await slideButton.click();
     await expect(slideButton).toHaveAttribute('aria-pressed', 'true');
-    const point = await projectToScreen(page, { x: GARDEN_SLIDE_TILE.x + 1, y: 0, z: GARDEN_SLIDE_TILE.z });
+    const point = await projectToScreen(page, { x: GARDEN_SLIDE_TILE.x + 1, y: 0, z: GARDEN_SLIDE_TILE.z - 1 });
     await page.touchscreen.tap(point.x, point.y);
     await expect.poll(async () => (await getUiState(page)).transitCounts.gardenSlide).toBe(1);
 
     const rules = page.getByRole('region', { name: 'Transit rules' });
+    await page.mouse.click(point.x, point.y);
     const toggle = rules.getByRole('button', { name: /Transit rules/ });
     await toggle.focus();
     await page.keyboard.press('Enter');

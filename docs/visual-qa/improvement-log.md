@@ -588,3 +588,27 @@ reloaded pair with Slide 2 selected and the text action to enable it again.
 
 Scores: multi-instance legibility 4/5; configuration clarity 4/5; persistence
 confidence 4/5; accessibility/readability 3/5 pending the in-world labels.
+
+## 2026-08-03 — Transit interaction follow-up
+
+Fixed the reported transit interaction regressions at their shared seams:
+ports now validate the actual tile-facing relationship, Slide and Conveyor
+facings are derived from the connected route, Conveyors can join habitat docks,
+and loose/diagonal placements are rejected before charging. Pointer selection
+checks Sprouts before transit objects so a Slide cannot swallow a nearby pick.
+The Transit rules panel and in-world rule card now appear only for the selected
+Slide, while the build menu shows Garden Slide unlock progress (`0/20` on a
+fresh save) instead of hiding the condition.
+
+Evidence: `transit/config-panel.png` shows a selected Slide's contextual rule
+card; `transit/conveyor-route-complete.png` shows deterministic belt arrows and
+the rotated slide; a fresh in-app tab was captured at native 1280×720 before
+placement. Focused `transitConfig` and
+`conveyorRoute` browser scenarios passed with no console/page errors, and the
+unit suite covers directional seams, valid habitat neighbours, selection
+progress, and movement constraints.
+
+Scores: interaction clarity 4/5; route readability 4/5; contextual UI 4/5;
+visual grounding 4/5. Remaining limitation: saved transit direction remains
+derived from the live graph rather than persisted, deliberately preserving the
+v8 save shape.

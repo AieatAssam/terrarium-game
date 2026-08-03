@@ -50,4 +50,11 @@ describe('Garden Transit ports', () => {
     expect(portsCompatible(slide.entryPort, sameOwner.exitPort)).toBe(false);
     expect(portsJoined(slide.exitPort, sameFacing.exitPort)).toBe(false);
   });
+
+  it('supports route-derived facings and rejects a diagonal seam', () => {
+    const east = getConveyorPorts({ id: 'conveyor-east', tile: { x: 7, z: 6 } }, 'east');
+    const west = getConveyorPorts({ id: 'conveyor-east-2', tile: { x: 8, z: 6 } }, 'east');
+    expect(portsJoined(east.exitPort, west.entryPort)).toBe(true);
+    expect(portsJoined(east.exitPort, { ...west.entryPort, tile: { x: 8, z: 7 } })).toBe(false);
+  });
 });

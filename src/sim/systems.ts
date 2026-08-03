@@ -64,6 +64,8 @@ import {
   getNurseryPorts,
   getSlidePorts,
   portsJoined,
+  TRANSIT_PORT_FACINGS,
+  type TransitPortFacing,
   type Port,
 } from './ports';
 import type { TickResult } from './tick';
@@ -472,25 +474,55 @@ function occupiedTransitTiles(state: SimState): TileCoord[] {
   ];
 }
 
-/** A new Slide must actually join the existing transit graph, not merely sit on painted path. */
-function slideHasCompatiblePort(state: SimState, tile: TileCoord): boolean {
-  const candidate = getSlidePorts({ id: 'slide-preview', tile });
+/**
+ * A transit object may be oriented by whichever legal neighbour it joins.
+ * Existing transit objects are checked in every orientation because their
+ * facing is derived from the route, not stored in the save shape.
+ */
+function transitPortsForPlacement(state: SimState, movingId?: string): Port[] {
   const ports: Port[] = [getNurseryPorts().outboundDock];
   for (const habitat of state.habitats) ports.push(getHabitatPorts(habitat.id, habitat.habitatId, habitat.tile).approachDock);
   for (const slide of state.slides) {
-    const derived = getSlidePorts(slide);
-    ports.push(derived.entryPort, derived.exitPort);
+    if (slide.id === movingId) continue;
+    for (const facing of TRANSIT_PORT_FACINGS) {
+      const derived = getSlidePorts(slide, facing);
+      ports.push(derived.entryPort, derived.exitPort);
+    }
   }
   for (const conveyor of state.conveyors) {
-    const derived = getConveyorPorts(conveyor);
-    ports.push(derived.entryPort, derived.exitPort);
+    if (conveyor.id === movingId) continue;
+    for (const facing of TRANSIT_PORT_FACINGS) {
+      const derived = getConveyorPorts(conveyor, facing);
+      ports.push(derived.entryPort, derived.exitPort);
+    }
   }
   const gate = state.automations.find((automation) => automation.automationId === 'colourGate');
   if (gate) {
     const derived = getColourGatePorts(gate.siteTile);
     ports.push(derived.inboundPort, derived.lanePorts.west, derived.lanePorts.east);
   }
-  return [candidate.entryPort, candidate.exitPort].some((next) => ports.some((port) => portsJoined(next, port)));
+  return ports;
+}
+
+function transitFlowFacingForPlacement(
+  state: SimState,
+  kind: 'gardenSlide' | 'sproutConveyor',
+  tile: TileCoord,
+  movingId?: string,
+): TransitPortFacing | null {
+  const ports = transitPortsForPlacement(state, movingId);
+  for (const facing of TRANSIT_PORT_FACINGS) {
+    const candidate = kind === 'gardenSlide'
+      ? getSlidePorts({ id: 'transit-preview', tile }, facing)
+      : getConveyorPorts({ id: 'transit-preview', tile }, facing);
+    if (ports.some((port) => portsJoined(candidate.entryPort, port) || portsJoined(candidate.exitPort, port))) return facing;
+  }
+  return null;
+}
+
+/** A new Slide must actually join the existing transit graph, not merely sit on painted path. */
+function slideHasCompatiblePort(state: SimState, tile: TileCoord, movingId?: string): boolean {
+  return transitFlowFacingForPlacement(state, 'gardenSlide', tile, movingId) !== null;
 }
 
 function isValidTileCoord(tile: TileCoord): boolean {
@@ -540,7 +572,8 @@ export function placeSlide(state: SimState, placement: SlidePlacement): TickResu
 
   const occupied = occupiedTransitTiles(state);
   if (!isValidAutomationSite('gardenSlide', placement.tile, occupied)) return { state, events: [] };
-  if (!slideHasCompatiblePort(state, placement.tile)) return { state, events: [] };
+  const flowFacing = transitFlowFacingForPlacement(state, 'gardenSlide', placement.tile);
+  if (!flowFacing) return { state, events: [] };
 
   const cost = nextGardenSlidePrice(state.slides.length);
   const slide: SlideInstance = {
@@ -555,7 +588,7 @@ export function placeSlide(state: SimState, placement: SlidePlacement): TickResu
     toTile: HABITAT_TILES[placement.destination],
     completesAtTick: null,
   };
-  const ports = getSlidePorts(slide);
+  const ports = getSlidePorts(slide, flowFacing);
   const dewdrops = state.dewdrops - cost;
   return {
     state: { ...state, slides: [...state.slides, slide], dewdrops },
@@ -566,19 +599,21 @@ export function placeSlide(state: SimState, placement: SlidePlacement): TickResu
   };
 }
 
-/** Places and charges one Conveyor segment. Its connection/port validity is owned by 7.5/7.6. */
+/** Places and charges one Conveyor segment beside a legal transit neighbour. */
 export function placeConveyor(state: SimState, tile: TileCoord): TickResult {
   if (transitPlacementLockReason(state, 'sproutConveyor')) return { state, events: [] };
   if (!isValidTileCoord(tile) || sameTile(tile, NURSERY_TILE) || occupiedTransitTiles(state).some((occupied) => sameTile(occupied, tile))) {
     return { state, events: [] };
   }
+  const flowFacing = transitFlowFacingForPlacement(state, 'sproutConveyor', tile);
+  if (!flowFacing) return { state, events: [] };
 
   const conveyor: ConveyorSegment = {
     id: `conveyor-${tile.x}-${tile.z}`,
     tile,
     builtAtTick: state.tickCount,
   };
-  const ports = getConveyorPorts(conveyor);
+  const ports = getConveyorPorts(conveyor, flowFacing);
   const dewdrops = state.dewdrops - SPROUT_CONVEYOR_COST;
   return {
     state: { ...state, conveyors: [...state.conveyors, conveyor], dewdrops },
@@ -625,7 +660,7 @@ export function moveSlide(state: SimState, slideId: string, tile: TileCoord): Ti
   if (!slide || slide.carryingSproutId || sameTile(slide.tile, tile)) return { state, events: [] };
   const occupied = occupiedTransitTiles(state).filter((occupiedTile) => !sameTile(occupiedTile, slide.tile));
   if (!isValidTileCoord(tile) || !isValidAutomationSite('gardenSlide', tile, occupied)) return { state, events: [] };
-  if (!slideHasCompatiblePort({ ...state, slides: state.slides.filter((item) => item.id !== slideId) }, tile)) return { state, events: [] };
+  if (!slideHasCompatiblePort({ ...state, slides: state.slides.filter((item) => item.id !== slideId) }, tile, slideId)) return { state, events: [] };
   return {
     state: {
       ...state,
@@ -665,7 +700,8 @@ export function configureSlide(state: SimState, slideId: string, configuration: 
     next.enabled === current.enabled &&
     next.carryingSproutId === current.carryingSproutId
   ) return { state, events: [] };
-  const ports = getSlidePorts(next);
+  const flowFacing = transitFlowFacingForPlacement(returned.state, 'gardenSlide', next.tile, slideId) ?? 'north';
+  const ports = getSlidePorts(next, flowFacing);
   return {
     state: { ...returned.state, slides: returned.state.slides.map((item) => (item.id === slideId ? next : item)) },
     events: [...returned.events, { type: 'transit:slideConfigured', slide: next, ...ports }],
@@ -689,6 +725,9 @@ export function moveConveyor(state: SimState, conveyorId: string, tile: TileCoor
   if (!conveyor || sameTile(conveyor.tile, tile)) return { state, events: [] };
   const occupied = occupiedTransitTiles(state).filter((occupiedTile) => !sameTile(occupiedTile, conveyor.tile));
   if (!isValidTileCoord(tile) || sameTile(tile, NURSERY_TILE) || occupied.some((occupiedTile) => sameTile(occupiedTile, tile))) {
+    return { state, events: [] };
+  }
+  if (!transitFlowFacingForPlacement({ ...state, conveyors: state.conveyors.filter((item) => item.id !== conveyorId) }, 'sproutConveyor', tile, conveyorId)) {
     return { state, events: [] };
   }
   return {
