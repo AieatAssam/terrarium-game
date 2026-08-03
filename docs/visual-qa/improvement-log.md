@@ -2,6 +2,31 @@
 
 ---
 
+## 2026-08-03 — Render resolution regression recovery
+
+The Garden Transit performance pass had applied Babylon hardware scaling level
+4 globally, shrinking a 1280×720 canvas to a 320×180 render buffer. Normal
+gardens now render at native 1× resolution; the 4× fallback activates only at
+24 or more placed transit artifacts and returns to 1× when the garden is
+uncrowded again.
+
+Evidence: live browser before/after capture measured 320×180 → 1280×720 at
+1280×720, and 390×844 → 390×844 at the mobile viewport. The focused transit
+integration run passed with cap frame-time p95 of 70.5 ms high / 32.1 ms low,
+and refreshed `docs/visual-qa/transit/integration-{empty,mid,at-cap,low-tier}.png`.
+No new console/page errors appeared; the only browser warning remains the
+pre-existing missing `structure.moodBell.base` manifest placeholder.
+
+Scores: ordinary-garden render readability 5/5, mobile canvas clarity 5/5,
+crowded-garden performance 4/5. The accepted creature-readability reference
+(`docs/references/ooblets/creature-readability/ooblets-04.md`) was used only
+for its edge/silhouette readability criterion; no source art was copied.
+
+Remaining debt: static garden/transit mesh batching is still the upgrade path
+for removing the crowded-garden fallback without trading away frame budget.
+
+---
+
 ## 2026-08-03 — Garden Transit acceptance gate
 
 Phase 7.15 closes the Garden Transit browser gate across clean and migrated

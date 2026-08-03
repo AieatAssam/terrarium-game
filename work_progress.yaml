@@ -16,7 +16,7 @@
 
 meta:
   updated: 2026-08-03
-  head: HEAD docs: reconcile project documentation with the Garden Transit revision (codex/phase-7.11; 52a0c98 = Phase 2 buildable habitats)
+  head: HEAD fix(render): keep normal gardens at native resolution
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
   tests_passing: "375 unit tests / 36 files (re-verified 2026-08-03 via the exact required gate — all green)"
@@ -2480,6 +2480,32 @@ decisions:
       contracts, as-built architecture, and player-facing design notes against
       src/. Historical Phase 7.1 assumptions are explicitly labelled; the exact
       project gate passed with 375 unit tests and a successful production build.
+
+  - owner: codex session 2026-08-03 (render-resolution regression)
+    files:
+      [
+        src/render/index.ts,
+        tests/e2e/transitIntegration.dev.spec.ts,
+        docs/visual-qa/improvement-log.md,
+        docs/visual-qa/transit/integration-empty.png,
+        docs/visual-qa/transit/integration-mid.png,
+        docs/visual-qa/transit/integration-at-cap.png,
+        docs/visual-qa/transit/integration-low-tier.png,
+        work_progress.yaml,
+      ]
+    task: >
+      Restore native canvas render-buffer resolution after the Garden Transit
+      performance pass made the entire game visibly blurry. Reproduce the
+      browser symptom, verify the smallest fix at desktop and mobile sizes, and
+      rerun the required project gate before publishing.
+    status: >
+      DONE, 2026-08-03: reproduced the global 4x scaling regression, then made
+      native 1x resolution the default and retained the 4x fallback only at 24+
+      transit artifacts. Live browser checks measured 1280x720 -> 1280x720 and
+      390x844 -> 390x844 canvas buffers with crisp screenshots. Focused
+      transitIntegration.dev.spec.ts passed with cap p95 70.5 ms high / 32.1 ms
+      low and no new console/page errors. The exact project gate passed with
+      375 unit tests and a successful production build.
 
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?

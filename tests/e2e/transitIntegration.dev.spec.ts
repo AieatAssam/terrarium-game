@@ -96,6 +96,10 @@ test('captures transit integration at empty, mid, cap, and low-quality states', 
   await unlockTransit(page);
   await hideDebugChrome(page);
 
+  expect(await page.evaluate(() => {
+    const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
+    return { width: canvas.width, height: canvas.height, clientWidth: canvas.clientWidth, clientHeight: canvas.clientHeight };
+  })).toEqual({ width: 1440, height: 900, clientWidth: 1440, clientHeight: 900 });
   await page.screenshot({ path: 'docs/visual-qa/transit/integration-empty.png' });
 
   await placeTransitForVisualCap(page, [{ x: 8, z: 7, acceptedKind: 'ember', destination: 'emberNook' }], []);
@@ -128,6 +132,10 @@ test('captures transit integration at empty, mid, cap, and low-quality states', 
   await expect.poll(async () => (await getUiState(page)).transitCounts.gardenSlide).toBe(4);
   await expect.poll(async () => (await getUiState(page)).transitCounts.sproutConveyor).toBe(30);
   await page.waitForTimeout(2_000);
+  expect(await page.evaluate(() => {
+    const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
+    return { width: canvas.width, height: canvas.height };
+  })).toEqual({ width: 360, height: 225 });
   const highFrameP95 = await sampleFrameP95(page);
   expect(highFrameP95).toBeLessThan(100);
   await frame(page, { x: 7, z: 8 }, 9.2);

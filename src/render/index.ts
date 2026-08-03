@@ -282,15 +282,45 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
   const automation = createAutomationManager(scene, bus, lighting.shadowGenerator);
   const stopVisibilityThrottle = installVisibilityThrottle(engine, scene);
 
+  // Keep ordinary gardens crisp. The old 4x buffer was only needed at the
+  // Phase 1 transit cap, so use it as a crowded-garden fallback instead of
+  // making every viewport render at 320x180-ish resolution.
+  const TRANSIT_RESOLUTION_FALLBACK_COUNT = 24;
+  let transitArtifactCount = 0;
+  let hardwareScalingLevel = 0;
+  const applyHardwareResolution = (): void => {
+    const nextLevel = transitArtifactCount >= TRANSIT_RESOLUTION_FALLBACK_COUNT ? 4 : 1;
+    if (nextLevel === hardwareScalingLevel) return;
+    hardwareScalingLevel = nextLevel;
+    engine.setHardwareScalingLevel(nextLevel);
+    engine.resize();
+  };
+
   const applyQuality = (level: 'high' | 'low'): void => {
     lighting.setQuality(level);
-    // ponytail: 4x hardware scaling keeps the 30-segment cap under the p95
-    // budget; revisit after static garden meshes are batched.
-    engine.setHardwareScalingLevel(4);
-    engine.resize();
+    applyHardwareResolution();
   };
   applyQuality(getQualityLevel());
   const stopQualityWatch = onQualityChange(applyQuality);
+
+  const resolutionSubscriptions = [
+    bus.subscribe('transit:slideBuilt', () => {
+      transitArtifactCount += 1;
+      applyHardwareResolution();
+    }),
+    bus.subscribe('transit:conveyorBuilt', () => {
+      transitArtifactCount += 1;
+      applyHardwareResolution();
+    }),
+    bus.subscribe('transit:artifactRemoved', () => {
+      transitArtifactCount = Math.max(0, transitArtifactCount - 1);
+      applyHardwareResolution();
+    }),
+    bus.subscribe('save:loaded', (event) => {
+      transitArtifactCount = (event.snapshot.slides?.length ?? 0) + (event.snapshot.conveyors?.length ?? 0);
+      applyHardwareResolution();
+    }),
+  ];
 
   // Tracks the RESOLVED reduced-motion preference: the OS media query, plus
   // the Settings panel's own toggle (reflected onto <html data-reduced-motion>
@@ -366,6 +396,7 @@ export async function initRenderer(deps: RendererDeps): Promise<RendererHandle> 
   const dispose = (): void => {
     clearInterval(integrationInterval);
     for (const unsubscribe of feedbackSubscriptions) unsubscribe();
+    for (const unsubscribe of resolutionSubscriptions) unsubscribe();
     scene.onBeforeRenderObservable.remove(renderObserver);
     stopReducedMotionWatch();
     stopQualityWatch();
