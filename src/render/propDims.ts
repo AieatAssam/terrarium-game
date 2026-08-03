@@ -236,6 +236,37 @@ export const AUTOMATION_PREVIEW_BODY: PropBody = {
   },
 };
 
+/** Low, rounded bedding for one Sprout Conveyor tile. The channel is built
+ * from this shared footprint plus directional arms, so neighbouring pieces
+ * meet at the tile seam instead of looking like repeated floating markers. */
+export const SPROUT_CONVEYOR_BODY: PropBody = {
+  centreY: 0.065,
+  halfWidth: 0.41,
+  halfDepth: 0.41,
+  cornerRadius: 0.12,
+  radialSegments: 24,
+  profile: {
+    height: 0.13,
+    topBevel: 0.035,
+    bottomBevel: 0.025,
+    taperInset: 0.02,
+    foot: { height: 0.045, outset: 0.035, bevel: 0.02 },
+  },
+};
+
+/** Local dimensions for the grown/carved channel laid over the bedding. */
+export const SPROUT_CONVEYOR = {
+  armHalfLength: TILE_WORLD_SIZE * 0.29,
+  armCentre: TILE_WORLD_SIZE * 0.25,
+  channelHalfWidth: 0.15,
+  channelInsetHalfWidth: 0.095,
+  channelThickness: 0.055,
+  rimWidth: 0.042,
+  rimHeight: 0.065,
+  arrowY: 0.215,
+  arrowOffset: 0.13,
+} as const;
+
 export function habitatTopY(id: HabitatId): number {
   return topSurfaceY(HABITAT_BODIES[id]);
 }

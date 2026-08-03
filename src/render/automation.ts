@@ -57,10 +57,11 @@ import {
   COLOUR_GATE_LANE_HABITATS,
   COLOUR_GATE_LANE_LIST,
   HABITAT_TILES,
+  NURSERY_TILE,
   isReservedTile,
 } from './layout';
 import { prefersReducedMotion, watchReducedMotion } from './motion';
-import { createPaintedMetalMaterial, createStoneBodyMaterial, createWoodBodyMaterial } from './pbrMaterials';
+import { createFoliageBodyMaterial, createPaintedMetalMaterial, createStoneBodyMaterial, createWoodBodyMaterial } from './pbrMaterials';
 import {
   bodyRings,
   footprintRadius,
@@ -68,6 +69,8 @@ import {
   AUTOMATION_BELT,
   AUTOMATION_BODIES,
   AUTOMATION_PREVIEW_BODY,
+  SPROUT_CONVEYOR,
+  SPROUT_CONVEYOR_BODY,
   GARDEN_SLIDE,
   type GardenSlidePathPoint,
   type PropBody,
@@ -330,6 +333,191 @@ function buildBeltRig(scene: Scene, parent: Mesh, name: string, deckMaterial: PB
   }
 
   return { root, rollers };
+}
+
+type ConveyorDirection = 0 | 1 | 2 | 3; // north, east, south, west
+
+interface ConveyorVisualLayout {
+  connections: ConveyorDirection[];
+  flowDirection: ConveyorDirection | null;
+  connected: boolean;
+}
+
+interface ConveyorMaterials {
+  bedding: PBRMetallicRoughnessMaterial;
+  channel: PBRMetallicRoughnessMaterial;
+  inset: PBRMetallicRoughnessMaterial;
+  rim: PBRMetallicRoughnessMaterial;
+  marker: PBRMetallicRoughnessMaterial;
+}
+
+function conveyorDirectionRotation(direction: ConveyorDirection): number {
+  if (direction === 0) return Math.PI;
+  if (direction === 1) return Math.PI / 2;
+  if (direction === 3) return -Math.PI / 2;
+  return 0;
+}
+
+function directionVector(direction: ConveyorDirection): { x: number; z: number } {
+  if (direction === 0) return { x: 0, z: -1 };
+  if (direction === 1) return { x: 1, z: 0 };
+  if (direction === 3) return { x: -1, z: 0 };
+  return { x: 0, z: 1 };
+}
+
+/** A small raised leaf-shaped arrow. Its silhouette, rather than its tint,
+ * carries direction so a desaturated or colour-impaired view still works. */
+function buildConveyorArrow(scene: Scene, name: string, material: PBRMetallicRoughnessMaterial): Mesh {
+  const width = 0.075;
+  const length = 0.12;
+  const depth = 0.026;
+  const positions = [
+    -width, 0, -length * 0.55,
+    width, 0, -length * 0.55,
+    0, 0, length,
+    -width, -depth, -length * 0.55,
+    width, -depth, -length * 0.55,
+    0, -depth, length,
+  ];
+  const indices = [
+    0, 1, 2,
+    5, 4, 3,
+    0, 3, 4, 0, 4, 1,
+    1, 4, 5, 1, 5, 2,
+    2, 5, 3, 2, 3, 0,
+  ];
+  const mesh = new Mesh(name, scene);
+  const data = new VertexData();
+  data.positions = positions;
+  data.indices = indices;
+  const normals: number[] = [];
+  VertexData.ComputeNormals(positions, indices, normals);
+  data.normals = normals;
+  data.applyToMesh(mesh);
+  mesh.material = material;
+  mesh.isPickable = false;
+  return mesh;
+}
+
+function createConveyorMaterials(scene: Scene, prefix: string): ConveyorMaterials {
+  const bedding = createFoliageBodyMaterial(scene, `${prefix}.bedding`, new Color3(0.22, 0.3, 0.18));
+  const channel = createWoodBodyMaterial(scene, `${prefix}.channel`, new Color3(0.42, 0.28, 0.16));
+  const inset = createFoliageBodyMaterial(scene, `${prefix}.inset`, new Color3(0.16, 0.32, 0.18));
+  const rim = createStoneBodyMaterial(scene, `${prefix}.rim`, new Color3(0.62, 0.53, 0.37));
+  const marker = createWoodBodyMaterial(scene, `${prefix}.marker`, new Color3(0.9, 0.74, 0.4));
+  marker.emissiveColor = new Color3(0.08, 0.055, 0.02);
+  return { bedding, channel, inset, rim, marker };
+}
+
+function buildConveyorVisual(
+  scene: Scene,
+  name: string,
+  layout: ConveyorVisualLayout,
+  materials: ConveyorMaterials,
+): Mesh {
+  const root = buildAutomationMesh(scene, name, SPROUT_CONVEYOR_BODY);
+  root.material = materials.bedding;
+  root.isPickable = false;
+
+  const deckLocalY = halfHeight(SPROUT_CONVEYOR_BODY) + SPROUT_CONVEYOR.channelThickness / 2;
+  const centre = bevelledSlab(
+    scene,
+    `${name}.channel.centre`,
+    SPROUT_CONVEYOR.channelHalfWidth,
+    SPROUT_CONVEYOR.channelThickness / 2,
+    SPROUT_CONVEYOR.channelHalfWidth,
+    0.032,
+  );
+  centre.parent = root;
+  centre.position.y = deckLocalY;
+  centre.material = materials.channel;
+  centre.isPickable = false;
+
+  const inset = bevelledSlab(
+    scene,
+    `${name}.channel.inset`,
+    SPROUT_CONVEYOR.channelInsetHalfWidth,
+    0.014,
+    SPROUT_CONVEYOR.channelInsetHalfWidth,
+    0.018,
+  );
+  inset.parent = root;
+  inset.position.y = deckLocalY + SPROUT_CONVEYOR.channelThickness / 2 + 0.012;
+  inset.material = materials.inset;
+  inset.isPickable = false;
+
+  for (const direction of layout.connections) {
+    const vector = directionVector(direction);
+    const armRoot = new TransformNode(`${name}.arm.${direction}`, scene);
+    armRoot.parent = root;
+    armRoot.position.set(vector.x * SPROUT_CONVEYOR.armCentre, deckLocalY, vector.z * SPROUT_CONVEYOR.armCentre);
+    armRoot.rotation.y = conveyorDirectionRotation(direction);
+
+    const arm = bevelledSlab(
+      scene,
+      `${name}.arm.${direction}.channel`,
+      SPROUT_CONVEYOR.channelHalfWidth,
+      SPROUT_CONVEYOR.channelThickness / 2,
+      SPROUT_CONVEYOR.armHalfLength,
+      0.028,
+    );
+    arm.parent = armRoot;
+    arm.material = materials.channel;
+    arm.isPickable = false;
+
+    const armInset = bevelledSlab(
+      scene,
+      `${name}.arm.${direction}.inset`,
+      SPROUT_CONVEYOR.channelInsetHalfWidth,
+      0.014,
+      SPROUT_CONVEYOR.armHalfLength,
+      0.016,
+    );
+    armInset.parent = armRoot;
+    armInset.position.y = SPROUT_CONVEYOR.channelThickness / 2 + 0.012;
+    armInset.material = materials.inset;
+    armInset.isPickable = false;
+
+    for (const side of [-1, 1]) {
+      const rim = bevelledSlab(
+        scene,
+        `${name}.arm.${direction}.rim.${side > 0 ? 'right' : 'left'}`,
+        SPROUT_CONVEYOR.rimWidth / 2,
+        SPROUT_CONVEYOR.rimHeight / 2,
+        SPROUT_CONVEYOR.armHalfLength,
+        0.018,
+      );
+      rim.parent = armRoot;
+      rim.position.set(side * (SPROUT_CONVEYOR.channelHalfWidth - SPROUT_CONVEYOR.rimWidth / 2), SPROUT_CONVEYOR.rimHeight / 2, 0);
+      rim.material = materials.rim;
+      rim.isPickable = false;
+    }
+  }
+
+  if (layout.flowDirection !== null && layout.connected) {
+    const arrow = buildConveyorArrow(scene, `${name}.direction`, materials.marker);
+    arrow.parent = root;
+    arrow.position.set(
+      directionVector(layout.flowDirection).x * SPROUT_CONVEYOR.arrowOffset,
+      SPROUT_CONVEYOR.arrowY,
+      directionVector(layout.flowDirection).z * SPROUT_CONVEYOR.arrowOffset,
+    );
+    arrow.rotation.y = conveyorDirectionRotation(layout.flowDirection);
+  } else {
+    // A loose segment is deliberately capped with a visible planted bud: it
+    // reads as waiting for a neighbour, not as a broken industrial machine.
+    const bud = MeshBuilder.CreateCylinder(`${name}.waiting.bud`, {
+      diameter: 0.14,
+      height: 0.045,
+      tessellation: 8,
+    }, scene);
+    bud.parent = root;
+    bud.position.y = SPROUT_CONVEYOR.arrowY;
+    bud.material = materials.rim;
+    bud.isPickable = false;
+  }
+
+  return root;
 }
 
 interface GardenSlideMaterials {
@@ -639,6 +827,7 @@ interface TransitMarker {
   bodyMaterial: PBRMetallicRoughnessMaterial;
   capMaterial: PBRMetallicRoughnessMaterial | null;
   tile: TileCoord;
+  ownsBodyMaterial: boolean;
 }
 
 export interface AutomationManager {
@@ -745,6 +934,9 @@ function activityOf(site: SiteMarker): SiteActivity {
 export function createAutomationManager(scene: Scene, bus: EventBus, shadowGenerator: ShadowGenerator): AutomationManager {
   const sites = {} as Record<AutomationId, SiteMarker>;
   const transitMarkers = new Map<string, TransitMarker>();
+  const conveyorMaterials = createConveyorMaterials(scene, 'terrarium.transit.conveyor');
+  let knownSlides: Array<{ id: string; tile: TileCoord }> = [];
+  let knownConveyors: Array<{ id: string; tile: TileCoord }> = [];
   const slideMaterials: GardenSlideMaterials = {
     channel: createWoodBodyMaterial(scene, 'terrarium.automation.slide.channel.mat', GARDEN_SLIDE_CHANNEL_COLOR.clone()),
     inset: createWoodBodyMaterial(scene, 'terrarium.automation.slide.inset.mat', GARDEN_SLIDE_INSET_COLOR.clone()),
@@ -753,13 +945,115 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
   };
   slideMaterials.frame.emissiveColor = new Color3(0.08, 0.055, 0.02);
 
+  const tileKey = (tile: TileCoord): string => `${tile.x},${tile.z}`;
+  const directionOffsets: Array<{ x: number; z: number }> = [
+    { x: 0, z: -1 },
+    { x: 1, z: 0 },
+    { x: 0, z: 1 },
+    { x: -1, z: 0 },
+  ];
+
+  const conveyorVisuals = (): Map<string, ConveyorVisualLayout> => {
+    const endpointTiles = [
+      NURSERY_TILE,
+      ...knownSlides.map((slide) => slide.tile),
+      ...Object.values(HABITAT_TILES),
+    ];
+    const nodeTiles = [...knownConveyors.map((conveyor) => conveyor.tile), ...endpointTiles];
+    const nodeKeys = new Set(nodeTiles.map(tileKey));
+    const distance = new Map<string, number>();
+    const frontier: TileCoord[] = [];
+    for (const tile of [...knownSlides.map((slide) => slide.tile), NURSERY_TILE]) {
+      const key = tileKey(tile);
+      if (distance.has(key)) continue;
+      distance.set(key, 0);
+      frontier.push(tile);
+    }
+    for (let index = 0; index < frontier.length; index += 1) {
+      const tile = frontier[index];
+      const here = distance.get(tileKey(tile)) as number;
+      for (const offset of directionOffsets) {
+        const neighbour = { x: tile.x + offset.x, z: tile.z + offset.z };
+        const key = tileKey(neighbour);
+        if (!nodeKeys.has(key) || distance.has(key)) continue;
+        distance.set(key, here + 1);
+        frontier.push(neighbour);
+      }
+    }
+
+    const visuals = new Map<string, ConveyorVisualLayout>();
+    for (const conveyor of knownConveyors) {
+      const here = distance.get(tileKey(conveyor.tile));
+      const connections = directionOffsets
+        .map((offset, direction) => ({
+          direction: direction as ConveyorDirection,
+          key: tileKey({ x: conveyor.tile.x + offset.x, z: conveyor.tile.z + offset.z }),
+        }))
+        .filter(({ key }) => nodeKeys.has(key))
+        .map(({ direction }) => direction);
+      const outward = connections.find((direction) => {
+        const offset = directionOffsets[direction];
+        return (distance.get(tileKey({ x: conveyor.tile.x + offset.x, z: conveyor.tile.z + offset.z })) ?? -1) > (here ?? -1);
+      });
+      visuals.set(conveyor.id, {
+        connections,
+        flowDirection: outward ?? connections[0] ?? null,
+        connected: here !== undefined,
+      });
+    }
+    return visuals;
+  };
+
+  const refreshConveyorVisuals = (): void => {
+    const visuals = conveyorVisuals();
+    for (const marker of transitMarkers.values()) {
+      if (marker.kind !== 'sproutConveyor') continue;
+      const oldMesh = marker.mesh;
+      const mesh = buildConveyorVisual(
+        scene,
+        `terrarium.transit.${marker.kind}.${marker.id}`,
+        visuals.get(marker.id) ?? { connections: [], flowDirection: null, connected: false },
+        conveyorMaterials,
+      );
+      const world = tileToWorld(marker.tile);
+      mesh.position.set(world.x, SPROUT_CONVEYOR_BODY.centreY, world.z);
+      mesh.metadata = { kind: 'transit', transitKind: marker.kind, artifactId: marker.id, tile: marker.tile };
+      marker.mesh = mesh;
+      marker.bodyMaterial = conveyorMaterials.bedding;
+      oldMesh.dispose(false, false);
+      shadowGenerator.addShadowCaster(mesh);
+    }
+  };
+
   const addTransitMarker = (id: string, kind: PricedTransitKind, tile: TileCoord): void => {
     const existing = transitMarkers.get(id);
     if (existing) {
       existing.tile = tile;
       const world = tileToWorld(tile);
-      existing.mesh.position.set(world.x, AUTOMATION_BODIES.gardenSlide.centreY, world.z);
+      existing.mesh.position.set(world.x, kind === 'sproutConveyor' ? SPROUT_CONVEYOR_BODY.centreY : AUTOMATION_BODIES.gardenSlide.centreY, world.z);
       existing.mesh.metadata = { kind: 'transit', transitKind: kind, artifactId: id, tile };
+      return;
+    }
+    if (kind === 'sproutConveyor') {
+      const mesh = buildConveyorVisual(
+        scene,
+        `terrarium.transit.${kind}.${id}`,
+        conveyorVisuals().get(id) ?? { connections: [], flowDirection: null, connected: false },
+        conveyorMaterials,
+      );
+      const world = tileToWorld(tile);
+      mesh.position.set(world.x, SPROUT_CONVEYOR_BODY.centreY, world.z);
+      mesh.metadata = { kind: 'transit', transitKind: kind, artifactId: id, tile };
+      shadowGenerator.addShadowCaster(mesh);
+      transitMarkers.set(id, {
+        id,
+        kind,
+        mesh,
+        bodyMaterial: conveyorMaterials.bedding,
+        capMaterial: null,
+        tile,
+        ownsBodyMaterial: false,
+      });
       return;
     }
     const body = AUTOMATION_BODIES.gardenSlide;
@@ -791,14 +1085,14 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     mesh.position.set(world.x, body.centreY, world.z);
     mesh.metadata = { kind: 'transit', transitKind: kind, artifactId: id, tile };
     shadowGenerator.addShadowCaster(mesh);
-    transitMarkers.set(id, { id, kind, mesh, bodyMaterial, capMaterial, tile });
+    transitMarkers.set(id, { id, kind, mesh, bodyMaterial, capMaterial, tile, ownsBodyMaterial: true });
   };
 
   const removeTransitMarker = (id: string): void => {
     const marker = transitMarkers.get(id);
     if (!marker) return;
     marker.mesh.dispose();
-    marker.bodyMaterial.dispose();
+    if (marker.ownsBodyMaterial) marker.bodyMaterial.dispose();
     marker.capMaterial?.dispose();
     transitMarkers.delete(id);
   };
@@ -807,11 +1101,14 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     slides: Array<{ id: string; tile: TileCoord }> | undefined,
     conveyors: Array<{ id: string; tile: TileCoord }> | undefined,
   ): void => {
+    knownSlides = slides ?? [];
+    knownConveyors = conveyors ?? [];
     const next = new Map<string, { kind: PricedTransitKind; tile: TileCoord }>();
     for (const slide of slides ?? []) next.set(slide.id, { kind: 'gardenSlide', tile: slide.tile });
     for (const conveyor of conveyors ?? []) next.set(conveyor.id, { kind: 'sproutConveyor', tile: conveyor.tile });
     for (const id of transitMarkers.keys()) if (!next.has(id)) removeTransitMarker(id);
     for (const [id, marker] of next) addTransitMarker(id, marker.kind, marker.tile);
+    refreshConveyorVisuals();
   };
 
   // Shared across every automation site (there are only three, but this is the
@@ -1111,11 +1408,21 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
   const unsubscribers = [
     bus.subscribe('automation:built', (e) => markBuilt(e.automationId, e.siteTile, e.targetHabitatId ?? null)),
 
-    bus.subscribe('transit:slideBuilt', (e) => addTransitMarker(e.slide.id, 'gardenSlide', e.slide.tile)),
-    bus.subscribe('transit:slideConfigured', (e) => addTransitMarker(e.slide.id, 'gardenSlide', e.slide.tile)),
-    bus.subscribe('transit:conveyorBuilt', (e) => addTransitMarker(e.conveyor.id, 'sproutConveyor', e.conveyor.tile)),
-    bus.subscribe('transit:artifactMoved', (e) => addTransitMarker(e.artifactId, e.artifactKind, e.tile)),
-    bus.subscribe('transit:artifactRemoved', (e) => removeTransitMarker(e.artifactId)),
+    bus.subscribe('transit:slideBuilt', (e) => syncTransitMarkers([...knownSlides.filter((slide) => slide.id !== e.slide.id), { id: e.slide.id, tile: e.slide.tile }], knownConveyors)),
+    bus.subscribe('transit:slideConfigured', (e) => syncTransitMarkers([...knownSlides.filter((slide) => slide.id !== e.slide.id), { id: e.slide.id, tile: e.slide.tile }], knownConveyors)),
+    bus.subscribe('transit:conveyorBuilt', (e) => syncTransitMarkers(knownSlides, [...knownConveyors.filter((conveyor) => conveyor.id !== e.conveyor.id), { id: e.conveyor.id, tile: e.conveyor.tile }])),
+    bus.subscribe('transit:artifactMoved', (e) => syncTransitMarkers(
+      e.artifactKind === 'gardenSlide'
+        ? knownSlides.map((slide) => slide.id === e.artifactId ? { ...slide, tile: e.tile } : slide)
+        : knownSlides,
+      e.artifactKind === 'sproutConveyor'
+        ? knownConveyors.map((conveyor) => conveyor.id === e.artifactId ? { ...conveyor, tile: e.tile } : conveyor)
+        : knownConveyors,
+    )),
+    bus.subscribe('transit:artifactRemoved', (e) => syncTransitMarkers(
+      e.artifactKind === 'gardenSlide' ? knownSlides.filter((slide) => slide.id !== e.artifactId) : knownSlides,
+      e.artifactKind === 'sproutConveyor' ? knownConveyors.filter((conveyor) => conveyor.id !== e.artifactId) : knownConveyors,
+    )),
 
     bus.subscribe('automation:colourGateRuleChanged', (e) => applyGateRule(e.lanes)),
 
@@ -1358,23 +1665,44 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
   let previewBodyMaterial: PBRMetallicRoughnessMaterial | undefined;
   let previewCap: FlatCap | undefined;
   let previewSlideMaterials: PBRMetallicRoughnessMaterial[] = [];
+  let previewConveyorMaterials: PBRMetallicRoughnessMaterial[] = [];
+  let previewCentreY = AUTOMATION_PREVIEW_BODY.centreY;
   let previewKey: string | undefined;
 
   const clearPreview = (): void => {
     previewMesh?.dispose(); // recursively disposes the cap child mesh too
-    previewBodyMaterial?.dispose();
+    if (previewBodyMaterial && !previewConveyorMaterials.includes(previewBodyMaterial)) previewBodyMaterial.dispose();
     previewCap?.material.dispose();
     for (const material of previewSlideMaterials) material.dispose();
+    for (const material of previewConveyorMaterials) material.dispose();
     previewMesh = undefined;
     previewBodyMaterial = undefined;
     previewCap = undefined;
     previewSlideMaterials = [];
+    previewConveyorMaterials = [];
+    previewCentreY = AUTOMATION_PREVIEW_BODY.centreY;
     previewKey = undefined;
   };
 
-  const ensurePreview = (key: string, artId: AutomationId): void => {
+  const ensurePreview = (key: string, artId: AutomationId, transitKind?: PricedTransitKind): void => {
     if (previewMesh && previewBodyMaterial && previewKey === key) return;
     clearPreview();
+    if (transitKind === 'sproutConveyor') {
+      const materials = createConveyorMaterials(scene, 'terrarium.automation.preview.conveyor');
+      previewConveyorMaterials = Object.values(materials);
+      for (const material of previewConveyorMaterials) material.alpha = 0.55;
+      const mesh = buildConveyorVisual(
+        scene,
+        'terrarium.automation.preview.conveyor',
+        { connections: [0, 1, 2, 3], flowDirection: 2, connected: true },
+        materials,
+      );
+      previewMesh = mesh;
+      previewBodyMaterial = materials.bedding;
+      previewCentreY = SPROUT_CONVEYOR_BODY.centreY;
+      previewKey = key;
+      return;
+    }
     const mesh = buildAutomationMesh(scene, 'terrarium.automation.preview', AUTOMATION_PREVIEW_BODY);
     mesh.isPickable = false;
     const bodyMaterial = artId === 'gardenSlide'
@@ -1408,17 +1736,19 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     }
     previewMesh = mesh;
     previewBodyMaterial = bodyMaterial;
+    previewCentreY = AUTOMATION_PREVIEW_BODY.centreY;
     previewKey = key;
   };
 
   const updatePreview = (tile: TileCoord, status: 'valid' | 'invalid' | 'blocked'): void => {
     if (!previewMesh || !previewBodyMaterial) return;
     const world = tileToWorld(tile);
-    previewMesh.position.set(world.x, AUTOMATION_PREVIEW_BODY.centreY, world.z);
+    previewMesh.position.set(world.x, previewCentreY, world.z);
     const tint = status === 'valid' ? PREVIEW_VALID : status === 'blocked' ? PREVIEW_BLOCKED : PREVIEW_INVALID;
     previewBodyMaterial.emissiveColor.copyFrom(tint);
     previewCap?.material.emissiveColor.copyFrom(tint);
     for (const material of previewSlideMaterials) material.emissiveColor.copyFrom(tint);
+    for (const material of previewConveyorMaterials) material.emissiveColor.copyFrom(tint);
     previewMesh.scaling.setAll(status === 'blocked' ? 1.08 : status === 'invalid' ? 0.96 : 1);
   };
 
@@ -1428,9 +1758,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
   };
 
   const previewTransitAt = (kind: PricedTransitKind, tile: TileCoord, status: 'valid' | 'invalid' | 'blocked'): void => {
-    // Slides use the same physical silhouette as a built artifact; Conveyors
-    // keep the shared marker until their dedicated identity pass in 7.11.
-    ensurePreview(`transit:${kind}`, 'gardenSlide');
+    ensurePreview(`transit:${kind}`, 'gardenSlide', kind);
     updatePreview(tile, status);
   };
 
@@ -1459,7 +1787,7 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     for (const marker of transitMarkers.values()) {
       const centre = tileToWorld(marker.tile);
       const distance = Math.hypot(world.x - centre.x, world.z - centre.z);
-      const limit = footprintRadius(AUTOMATION_BODIES.gardenSlide) + marginTiles;
+      const limit = footprintRadius(marker.kind === 'sproutConveyor' ? SPROUT_CONVEYOR_BODY : AUTOMATION_BODIES.gardenSlide) + marginTiles;
       if (distance <= limit && distance < bestDist) {
         bestDist = distance;
         best = { id: marker.id, kind: marker.kind };
@@ -1499,10 +1827,15 @@ export function createAutomationManager(scene: Scene, bus: EventBus, shadowGener
     }
     for (const marker of transitMarkers.values()) {
       marker.mesh.dispose();
-      marker.bodyMaterial.dispose();
+      if (marker.ownsBodyMaterial) marker.bodyMaterial.dispose();
       marker.capMaterial?.dispose();
     }
     transitMarkers.clear();
+    conveyorMaterials.bedding.dispose();
+    conveyorMaterials.channel.dispose();
+    conveyorMaterials.inset.dispose();
+    conveyorMaterials.rim.dispose();
+    conveyorMaterials.marker.dispose();
     slideMaterials.channel.dispose();
     slideMaterials.inset.dispose();
     slideMaterials.frame.dispose();

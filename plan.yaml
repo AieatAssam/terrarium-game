@@ -2133,7 +2133,7 @@ steps:
 
   - phase: "7.11"
     title: Give Conveyors an original grown-garden identity and build flow
-    status: planned
+    status: completed
     why: >
       GameRules §14's 2026-08-02 amendment makes this the guardrail task: a
       Conveyor that reads as a rubber belt on rollers fails the design
@@ -2182,7 +2182,7 @@ steps:
       looking industrial. Require an explicit visual review against §14's
       amendment before acceptance.
     commit: "feat(render): give Sprout Conveyors a grown-garden identity"
-    verification: Ten-segment joint inspection; desaturated direction check; §14 tone review.
+    verification: Ten-segment joint inspection; desaturated direction check; §14 tone review; desktop/mobile browser evidence and break/repair rerun.
     depends_on: ["7.7", "7.10"]
 
   - phase: "7.12"

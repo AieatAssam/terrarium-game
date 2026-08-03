@@ -2,6 +2,30 @@
 
 ---
 
+## 2026-08-03 — Sprout Conveyor grown-garden identity
+
+Phase 7.11 replaced the temporary Conveyor plinth marker with low rounded
+bedding, shared foliage/wood/stone PBR surfaces, flush channel arms, raised
+edge lips, and a raised leaf direction cue. Loose segments show a planted
+waiting bud, so connection state remains readable without colour. A focused
+headed browser pass placed ten segments including corners at desktop and
+mobile sizes, then inspected a close joint and a desaturated capture. The
+Phase 7.10 complete/broken/repaired delivery scenario was rerun against the
+new art with no console/page errors.
+
+Evidence: `docs/visual-qa/transit/conveyor-straight.png`,
+`conveyor-corner.png`, `conveyor-ten-segment.png`,
+`conveyor-joint-closeup.png`, `conveyor-desaturated.png`,
+`conveyor-mobile.png`, plus the refreshed
+`conveyor-route-{complete,broken,repaired}.png` set.
+
+Scores: automation readability 4/5, material richness 4/5, direction in
+desaturation 4/5, garden integration 4/5. Remaining debt: the route-state
+label/configuration surface and mid-ride edit safety remain planned 7.12–7.16
+work; the channel art is intentionally the Phase 7.11 scope.
+
+---
+
 ## 2026-08-03 — Conveyor route composition, repair, and delivery
 
 Phase 7.10 browser pass: a real Slide route was built from six paid Conveyor

@@ -2305,6 +2305,37 @@ decisions:
       delivery, and no console/page errors. Empty-conveyor compatibility
       fallback remains documented for the staged migration.
 
+  - owner: codex session 2026-08-03 (Phase 7.11 intent)
+    files:
+      [
+        src/render/automation.ts,
+        src/render/propDims.ts,
+        tests/e2e/conveyorArt.dev.spec.ts,
+        plan.yaml,
+        docs/ARCHITECTURE.md,
+        docs/visual-qa/improvement-log.md,
+        work_progress.yaml,
+      ]
+    task: >
+      Replace the current Conveyor placeholder marker and industrial belt
+      silhouette with a modular grown-garden channel. Reuse shared PBR
+      families and prop dimensions, make straight/corner joins flush, show
+      direction and connection state without colour, keep placement preview
+      aligned with the built artifact, then validate with fresh browser
+      screenshots and the exact project gate.
+    status: >
+      DONE, 2026-08-03: replaced the old Conveyor plinth/belt marker with
+      shared foliage, wood, and stone PBR channel geometry. Connected arms,
+      raised lips, and leaf-shaped direction markers meet tile seams; loose
+      segments show a planted waiting bud. The same geometry drives previews.
+      Focused conveyorArt.dev.spec.ts passed at desktop and mobile viewports
+      with straight/corner/ten-segment/joint/desaturated screenshots and no
+      console/page errors. conveyorRoute.dev.spec.ts was rerun successfully
+      for complete/broken/repaired delivery evidence. Exact gate passed:
+      typecheck, lint, 367 unit tests, and production build. Rendering remains
+      intentionally topology-derived until later route-state/configuration
+      phases add richer in-world status labels.
+
 open_questions:
   - Re-run the Playwright e2e suite and refresh docs/QA_REPORT.md?
   - Should SPROUT_PICK_RADIUS/HOVER_MARGIN_TILES scale with viewport width
