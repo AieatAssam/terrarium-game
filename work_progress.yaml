@@ -16,7 +16,7 @@
 
 meta:
   updated: 2026-08-03
-  head: 80b4a78 Phase 7.14 Garden Transit material and terrain integration (codex/phase-7.11; 52a0c98 = Phase 2 buildable habitats)
+  head: a7a9760 Phase 7.14 Garden Transit material and terrain integration (codex/phase-7.11; 52a0c98 = Phase 2 buildable habitats)
   repo: https://github.com/AieatAssam/terrarium-game
   live: https://aieatassam.github.io/terrarium-game/
   tests_passing: "375 unit tests / 36 files (re-verified 2026-08-03 via the exact required gate — all green)"
