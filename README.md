@@ -1,5 +1,10 @@
 # Tiny Terrarium Works
 
+> [!CAUTION]
+> **ABANDONED:** This project is no longer maintained, updated, or supported.
+> Do not rely on it for production use. Development stalled and I was unable to achieve targets so will start fresh with learnings from this project
+
+
 A cosy 2.5D automation-and-collection browser game: sort adorable Sprouts into their matching habitats, earn Dewdrops, and unlock gentle garden automation. Built with TypeScript, Vite, and Babylon.js.
 
 ## Quick start
