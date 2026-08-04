@@ -2,7 +2,7 @@
 
 > [!CAUTION]
 > **ABANDONED:** This project is no longer maintained, updated, or supported.
-> Do not rely on it for production use. Development stalled and I was unable to achieve targets so will start fresh with learnings from this project
+> Do not rely on it for production use. The goal of the project was to test limits of AI use for game engine development and these limits have been reached. Subsequent changes are stalled and core capabilities are not reached. Major redesign and rework is needed and as such I am archiving this project as lessons learned
 
 
 A cosy 2.5D automation-and-collection browser game: sort adorable Sprouts into their matching habitats, earn Dewdrops, and unlock gentle garden automation. Built with TypeScript, Vite, and Babylon.js.
